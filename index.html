@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>住造 DFC Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">筑</div>
+          <div>
+            <strong>住造 DFC</strong>
+            <span>Web 模型 + 招采</span>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="主导航">
+          <button class="nav-item active" type="button">
+            <i data-lucide="layout-dashboard"></i>
+            <span>项目总览</span>
+          </button>
+          <button class="nav-item" type="button">
+            <i data-lucide="box"></i>
+            <span>DFC 模型</span>
+          </button>
+          <button class="nav-item" type="button">
+            <i data-lucide="list-checks"></i>
+            <span>招标清单</span>
+          </button>
+          <button class="nav-item" type="button">
+            <i data-lucide="truck"></i>
+            <span>采购履约</span>
+          </button>
+        </nav>
+
+        <div class="side-metric">
+          <span>当前项目</span>
+          <strong>上海 · 98m² 精装改造</strong>
+          <small>模型预决算阶段</small>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Project DFC-0428</p>
+            <h1>网页版 DFC 装修协同与采购</h1>
+          </div>
+
+          <div class="topbar-actions">
+            <div class="segmented" role="tablist" aria-label="角色视角">
+              <button class="segment active" type="button" data-role="owner">
+                <i data-lucide="home"></i>
+                <span>业主</span>
+              </button>
+              <button class="segment" type="button" data-role="designer">
+                <i data-lucide="pen-tool"></i>
+                <span>设计师</span>
+              </button>
+            </div>
+            <button class="icon-button" type="button" aria-label="通知" title="通知">
+              <i data-lucide="bell"></i>
+            </button>
+          </div>
+        </header>
+
+        <section class="summary-grid" aria-label="项目指标">
+          <article class="metric-card">
+            <span>目标预算</span>
+            <strong id="budgetCap">¥320,000</strong>
+            <small>设计、主材、履约合计</small>
+          </article>
+          <article class="metric-card">
+            <span>已锁定清单</span>
+            <strong id="approvedAmount">¥0</strong>
+            <small id="approvalRatio">0% 已锁定</small>
+          </article>
+          <article class="metric-card">
+            <span>招采进度</span>
+            <strong id="purchaseProgress">38%</strong>
+            <small>6 个报价待回传</small>
+          </article>
+          <article class="metric-card attention">
+            <span>待处理</span>
+            <strong id="pendingCount">4 项</strong>
+            <small id="pendingLabel">清单待确认</small>
+          </article>
+        </section>
+
+        <section class="strategy-grid" aria-label="产品定位">
+          <article class="panel opportunity-panel">
+            <div class="panel-header compact">
+              <div>
+                <p class="eyebrow">Opportunity</p>
+                <h2>把 DFC 做成业主和设计师都能用的网页版</h2>
+              </div>
+            </div>
+            <p>
+              核心不是再做一个复杂 CAD，而是用轻量模型承接方案、工程量、材料白皮书、招标清单和采购履约，让业主看得懂，设计师交付得快，供应商按清单报价。
+            </p>
+            <div class="position-chips">
+              <span>Web 端协同</span>
+              <span>模型生成 BOM</span>
+              <span>清单驱动招采</span>
+              <span>变更反算成本</span>
+            </div>
+          </article>
+
+          <article class="panel dfc-flow-panel">
+            <div class="flow-column participants">
+              <span>业主</span>
+              <span>设计师</span>
+              <span>施工方</span>
+              <span>材料商</span>
+            </div>
+            <div class="flow-core">
+              <small>云端协作</small>
+              <strong>Web DFC 模型</strong>
+              <small>户型 · 构件 · 材料 · 工程量</small>
+            </div>
+            <div class="flow-column outputs">
+              <span>图纸信息</span>
+              <span>BOM 清单</span>
+              <span>招标报价</span>
+              <span>采购履约</span>
+            </div>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <div class="panel design-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Web Model</p>
+                <h2 id="roomTitle">客餐厅方案 A</h2>
+              </div>
+              <button class="primary-button" id="primaryAction" type="button">
+                <i data-lucide="check-circle-2"></i>
+                <span>确认模型版本</span>
+              </button>
+            </div>
+
+            <div class="room-tabs" role="tablist" aria-label="空间">
+              <button class="room-tab active" type="button" data-room="living">客餐厅</button>
+              <button class="room-tab" type="button" data-room="kitchen">厨房</button>
+              <button class="room-tab" type="button" data-room="bath">主卫</button>
+              <button class="room-tab" type="button" data-room="bedroom">主卧</button>
+            </div>
+
+            <div class="plan-import">
+              <label class="plan-upload" for="planFileInput">
+                <i data-lucide="scan-line"></i>
+                <span>导入图纸</span>
+              </label>
+              <input id="planFileInput" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" />
+              <div class="plan-status">
+                <span id="planStatus">尚未导入图纸</span>
+                <strong id="planMeta">支持 JPG / PNG / PDF</strong>
+              </div>
+              <label class="plan-field">
+                <span>图宽</span>
+                <input id="planWidthInput" type="number" min="0.5" max="200" step="0.1" value="8.2" />
+                <b>m</b>
+              </label>
+              <label class="plan-field opacity-field">
+                <span>透明度</span>
+                <input id="planOpacityRange" type="range" min="20" max="100" step="5" value="82" />
+              </label>
+              <button class="secondary-button compact-action" id="rotatePlan" type="button">
+                <i data-lucide="rotate-cw"></i>
+                <span>旋转</span>
+              </button>
+              <button class="secondary-button compact-action" id="selectPlanRegion" type="button">
+                <i data-lucide="crop"></i>
+                <span>框选区域</span>
+              </button>
+              <button class="secondary-button compact-action" id="keepPlanRegion" type="button">
+                <i data-lucide="check"></i>
+                <span>保留框选</span>
+              </button>
+              <button
+                class="icon-button compact"
+                id="clearPlanRegion"
+                type="button"
+                aria-label="取消框选"
+                title="取消框选"
+              >
+                <i data-lucide="square-x"></i>
+              </button>
+              <button class="icon-button compact" id="clearPlan" type="button" aria-label="清除图纸" title="清除图纸">
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+
+            <div class="plan-scale-strip" aria-label="比例尺">
+              <div class="scale-strip-heading">
+                <span>比例尺</span>
+                <strong>按已知长度校准图纸</strong>
+              </div>
+              <button class="secondary-button compact-action" id="calibrateScale" type="button">
+                <i data-lucide="ruler"></i>
+                <span>标定比例</span>
+              </button>
+              <label class="plan-field scale-length-field">
+                <span>实长</span>
+                <input id="scaleLengthInput" type="number" min="0.1" max="100" step="0.1" value="3" />
+                <b>m</b>
+              </label>
+              <button class="secondary-button compact-action" id="applyPlanScale" type="button">
+                <i data-lucide="check"></i>
+                <span>应用比例</span>
+              </button>
+            </div>
+
+            <div class="recognition-strip">
+              <div>
+                <span>读图结果</span>
+                <strong id="recognitionStatus">等待识别</strong>
+              </div>
+              <div class="recognition-actions">
+                <button class="secondary-button compact-action detect-action" id="detectWalls" type="button">
+                  <i data-lucide="scan-search"></i>
+                  <span>识别墙线</span>
+                </button>
+                <label class="plan-field wall-height-field">
+                  <span>墙高</span>
+                  <input id="wallHeightInput" type="number" min="2.2" max="4.5" step="0.1" value="2.8" />
+                  <b>m</b>
+                </label>
+                <button class="primary-button compact-action" id="build3DModel" type="button">
+                  <i data-lucide="box"></i>
+                  <span>生成 3D</span>
+                </button>
+                <button class="secondary-button compact-action" id="clear3DModel" type="button">
+                  <i data-lucide="cuboid"></i>
+                  <span>清空 3D</span>
+                </button>
+                <button class="secondary-button compact-action" id="clearWalls" type="button">
+                  <i data-lucide="eraser"></i>
+                  <span>清空墙线</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="wall-editor is-disabled" id="wallEditor" aria-label="墙体修正">
+              <div class="wall-editor-heading">
+                <span>当前墙体</span>
+                <strong id="wallSelection">识别后点击蓝色墙体</strong>
+              </div>
+              <button class="icon-button compact wall-delete-button" id="deleteWall" type="button" aria-label="删除墙体" title="删除墙体">
+                <i data-lucide="trash-2"></i>
+              </button>
+              <label class="plan-field wall-length-field">
+                <span>总长</span>
+                <input id="wallLengthInput" type="number" min="0.2" max="60" step="0.1" value="0" readonly />
+                <b>m</b>
+              </label>
+              <div class="wall-side-controls">
+                <label class="plan-field wall-offset-field">
+                  <span>起点修正</span>
+                  <input id="wallStartOffsetInput" type="number" min="-30" max="30" step="0.1" value="0" />
+                  <b>m</b>
+                </label>
+                <label class="plan-field wall-offset-field">
+                  <span>终点修正</span>
+                  <input id="wallEndOffsetInput" type="number" min="-30" max="30" step="0.1" value="0" />
+                  <b>m</b>
+                </label>
+              </div>
+            </div>
+
+            <div class="design-stage">
+              <canvas id="modelCanvas" aria-label="Web DFC 三维模型"></canvas>
+              <div class="model-boot-status" id="modelBootStatus" role="status">
+                <strong>3D 模型加载中</strong>
+                <span>正在准备 Web 模型环境</span>
+              </div>
+              <div class="model-toolbar" aria-label="三维模型视角">
+                <button class="model-tool active" type="button" data-model-view="orbit" title="自由视角">
+                  <i data-lucide="rotate-3d"></i>
+                  <span>自由</span>
+                </button>
+                <button class="model-tool" type="button" data-model-view="top" title="俯视图">
+                  <i data-lucide="scan"></i>
+                  <span>俯视</span>
+                </button>
+                <button class="model-tool" type="button" data-model-view="walk" title="漫游视角">
+                  <i data-lucide="move-3d"></i>
+                  <span>漫游</span>
+                </button>
+              </div>
+              <div class="model-hud">
+                <span id="modelRoomLabel">客餐厅模型</span>
+                <strong id="modelSelection">未选择构件</strong>
+              </div>
+              <div class="plan-drop-hint" id="planDropHint">
+                <i data-lucide="file-image"></i>
+                <span>把平面图拖进来，或点击上方导入</span>
+              </div>
+              <div class="annotation-pin pin-one">
+                <span>1</span>
+              </div>
+              <div class="annotation-pin pin-two">
+                <span>2</span>
+              </div>
+            </div>
+
+            <div class="model-library" aria-label="内置模型库">
+              <button type="button" data-add-model="sofa">
+                <i data-lucide="armchair"></i>
+                <span>沙发</span>
+              </button>
+              <button type="button" data-add-model="cabinet">
+                <i data-lucide="archive"></i>
+                <span>柜体</span>
+              </button>
+              <button type="button" data-add-model="island">
+                <i data-lucide="cuboid"></i>
+                <span>岛台</span>
+              </button>
+              <button type="button" data-add-model="light">
+                <i data-lucide="lamp-ceiling"></i>
+                <span>灯具</span>
+              </button>
+              <div class="library-count">
+                <span>内置模型</span>
+                <strong id="modelCount">0 件</strong>
+              </div>
+            </div>
+
+            <div class="scene-editor" aria-label="陈设调整">
+              <div class="editor-heading">
+                <div>
+                  <span>当前家具</span>
+                  <strong id="editorSelection">未选择</strong>
+                </div>
+                <button class="icon-button compact" id="deleteModel" type="button" aria-label="删除家具" title="删除家具">
+                  <i data-lucide="trash-2"></i>
+                </button>
+              </div>
+
+              <div class="editor-layout">
+                <section class="editor-group">
+                  <span>款式</span>
+                  <div class="variant-row" id="variantOptions"></div>
+                </section>
+
+                <section class="editor-group">
+                  <span>饰面</span>
+                  <div class="swatch-row" id="furnitureSwatches">
+                    <button class="swatch active" type="button" data-furniture-finish="default" aria-label="默认" title="默认"></button>
+                    <button class="swatch fabric" type="button" data-furniture-finish="fabric" aria-label="织物" title="织物"></button>
+                    <button class="swatch moss" type="button" data-furniture-finish="moss" aria-label="苔绿" title="苔绿"></button>
+                    <button class="swatch clay" type="button" data-furniture-finish="clay" aria-label="陶土" title="陶土"></button>
+                    <button class="swatch oak" type="button" data-furniture-finish="oak" aria-label="橡木" title="橡木"></button>
+                  </div>
+                </section>
+
+                <section class="editor-group transform-group">
+                  <label>
+                    <span>X</span>
+                    <input id="positionXRange" type="range" min="-3.4" max="3.4" step="0.1" value="0" />
+                  </label>
+                  <label>
+                    <span>Z</span>
+                    <input id="positionZRange" type="range" min="-2.2" max="2.2" step="0.1" value="0" />
+                  </label>
+                  <label>
+                    <span>方向</span>
+                    <input id="rotationRange" type="range" min="0" max="360" step="5" value="0" />
+                  </label>
+                  <label>
+                    <span>比例</span>
+                    <input id="scaleRange" type="range" min="70" max="135" step="5" value="100" />
+                  </label>
+                </section>
+
+                <section class="editor-group room-effect-group">
+                  <div class="effect-row">
+                    <span>墙面</span>
+                    <div class="swatch-row compact">
+                      <button class="swatch wall-ivory active" type="button" data-wall-finish="ivory" aria-label="象牙白" title="象牙白"></button>
+                      <button class="swatch wall-greige" type="button" data-wall-finish="greige" aria-label="暖灰" title="暖灰"></button>
+                      <button class="swatch wall-sage" type="button" data-wall-finish="sage" aria-label="鼠尾草" title="鼠尾草"></button>
+                    </div>
+                  </div>
+                  <div class="effect-row">
+                    <span>地面</span>
+                    <div class="swatch-row compact">
+                      <button class="swatch floor-stone active" type="button" data-floor-finish="stone" aria-label="石材" title="石材"></button>
+                      <button class="swatch floor-oak" type="button" data-floor-finish="oak" aria-label="浅木" title="浅木"></button>
+                      <button class="swatch floor-walnut" type="button" data-floor-finish="walnut" aria-label="胡桃" title="胡桃"></button>
+                    </div>
+                  </div>
+                  <div class="effect-row light-row">
+                    <span>灯光</span>
+                    <div class="light-controls">
+                      <div class="tone-row">
+                        <button class="tone active" type="button" data-light-tone="warm">暖</button>
+                        <button class="tone" type="button" data-light-tone="neutral">中</button>
+                        <button class="tone" type="button" data-light-tone="cool">冷</button>
+                      </div>
+                      <input id="lightRange" type="range" min="35" max="150" step="5" value="100" />
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div class="annotation-strip">
+              <div class="annotation-item">
+                <b>1</b>
+                <span id="noteOne">木饰面改为暖灰橡木，降低色差。</span>
+              </div>
+              <div class="annotation-item">
+                <b>2</b>
+                <span id="noteTwo">电视墙预留 86 寸投影幕布槽。</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel conversation-panel">
+            <div class="panel-header compact">
+              <div>
+                <p class="eyebrow">Collaboration</p>
+                <h2>模型协同</h2>
+              </div>
+              <button class="icon-button" id="addComment" type="button" aria-label="新增批注" title="新增批注">
+                <i data-lucide="message-square-plus"></i>
+              </button>
+            </div>
+
+            <div class="message-list" id="messageList" aria-live="polite">
+              <div class="message owner">
+                <span>业主</span>
+                <p>我想先看预算影响，再决定岩板和木饰面是否保留。</p>
+              </div>
+              <div class="message designer">
+                <span>设计师</span>
+                <p>模型里已同步替代材料，工程量和报价会自动重算。</p>
+              </div>
+              <div class="message system">
+                <span>平台</span>
+                <p>已生成 3 家供应商询价单，预计可节省 ¥12,400。</p>
+              </div>
+            </div>
+
+            <div class="approval-box">
+              <div>
+                <span>方案版本</span>
+                <strong>DFC-V3 · 2026-05-11</strong>
+              </div>
+              <button class="secondary-button" type="button" id="versionButton">
+                <i data-lucide="git-compare-arrows"></i>
+                <span>对比</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="panel materials-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">BOM / Tender</p>
+                <h2>模型清单与招采</h2>
+              </div>
+              <div class="budget-control">
+                <label for="savingRange">议价幅度</label>
+                <input id="savingRange" type="range" min="0" max="18" value="8" />
+                <span id="savingValue">8%</span>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>清单项</th>
+                    <th>规格/来源</th>
+                    <th>工程量</th>
+                    <th>预估价</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="materialRows"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel purchase-panel">
+            <div class="panel-header compact">
+              <div>
+                <p class="eyebrow">Procurement</p>
+                <h2>招采履约</h2>
+              </div>
+              <button class="icon-button" type="button" aria-label="筛选订单" title="筛选订单">
+                <i data-lucide="sliders-horizontal"></i>
+              </button>
+            </div>
+
+            <div class="purchase-timeline">
+              <div class="timeline-step done">
+                <i data-lucide="file-check-2"></i>
+                <div>
+                  <strong>模型锁定</strong>
+                  <span>16 项构件已确认</span>
+                </div>
+              </div>
+              <div class="timeline-step done">
+                <i data-lucide="badge-dollar-sign"></i>
+                <div>
+                  <strong>导出招标清单</strong>
+                  <span>工程量、成本、利润同步</span>
+                </div>
+              </div>
+              <div class="timeline-step active">
+                <i data-lucide="package-check"></i>
+                <div>
+                  <strong>供应商报价</strong>
+                  <span>瓷砖、岩板本周六截标</span>
+                </div>
+              </div>
+              <div class="timeline-step">
+                <i data-lucide="clipboard-check"></i>
+                <div>
+                  <strong>下单验收</strong>
+                  <span>等待现场节点确认</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="supplier-card">
+              <img
+                src="https://images.unsplash.com/photo-1618220179428-22790b461013?auto=format&fit=crop&w=560&q=80"
+                alt="软装材料搭配"
+              />
+              <div>
+                <span>采购包建议</span>
+                <strong>瓷砖 / 岩板 / 五金分包询价，按交期拆单履约</strong>
+                <small>供应商回价后自动对比预算差异</small>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script src="./app.js"></script>
+    <script>
+      window.__MODEL_READY__ = false;
+
+      window.addEventListener("DOMContentLoaded", () => {
+        const status = document.querySelector("#modelBootStatus");
+        if (!status) return;
+
+        window.setTimeout(() => {
+          if (window.__MODEL_READY__) return;
+
+          const title = status.querySelector("strong");
+          const detail = status.querySelector("span");
+
+          if (location.protocol === "file:") {
+            title.textContent = "请通过本地服务打开页面";
+            detail.textContent = "当前是 file:// 打开，3D 模块无法正常加载。Windows 上可运行 start-demo.bat。";
+            return;
+          }
+
+          title.textContent = "3D 模型还没加载出来";
+          detail.textContent = "请检查网络、浏览器硬件加速，或打开 F12 查看控制台报错。";
+        }, 1400);
+      });
+    </script>
+    <script type="module" src="./model.js"></script>
+  </body>
+</html>

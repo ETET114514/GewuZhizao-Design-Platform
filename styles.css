@@ -769,6 +769,33 @@ h2 {
   background: #dfe7e7;
 }
 
+.design-stage.is-expanded {
+  position: fixed;
+  inset: 16px;
+  z-index: 50;
+  width: auto;
+  height: auto;
+  aspect-ratio: auto;
+  border-radius: 8px;
+  box-shadow: 0 24px 90px rgba(20, 28, 32, 0.36);
+}
+
+.design-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.design-stage:fullscreen canvas,
+.design-stage.is-expanded canvas {
+  height: 100%;
+}
+
+body.stage-expanded {
+  overflow: hidden;
+}
+
 .design-stage canvas {
   display: block;
   width: 100%;
@@ -831,6 +858,20 @@ h2 {
   backdrop-filter: blur(10px);
 }
 
+.stage-size-tools {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(58px, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(10px);
+}
+
 .model-tool {
   display: inline-flex;
   align-items: center;
@@ -847,6 +888,11 @@ h2 {
 
 .model-tool.active {
   background: var(--charcoal);
+  color: #ffffff;
+}
+
+.stage-size-tools .model-tool.active {
+  background: var(--green);
   color: #ffffff;
 }
 
@@ -1686,6 +1732,12 @@ tbody tr:last-child td {
 
   .model-toolbar {
     grid-template-columns: repeat(3, minmax(48px, 1fr));
+    max-width: calc(100% - 24px);
+  }
+
+  .stage-size-tools {
+    top: 58px;
+    grid-template-columns: repeat(2, minmax(48px, 1fr));
     max-width: calc(100% - 24px);
   }
 

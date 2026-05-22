@@ -11,6 +11,8 @@ const roomLabel = document.querySelector("#modelRoomLabel");
 const selectionLabel = document.querySelector("#modelSelection");
 const modelCount = document.querySelector("#modelCount");
 const viewButtons = document.querySelectorAll("[data-model-view]");
+const resetStageSizeButton = document.querySelector("#resetStageSize");
+const toggleStageFullscreenButton = document.querySelector("#toggleStageFullscreen");
 const addButtons = document.querySelectorAll("[data-add-model]");
 const sceneEditor = document.querySelector(".scene-editor");
 const editorSelection = document.querySelector("#editorSelection");
@@ -86,6 +88,7 @@ const colors = {
   green: 0x24745b,
   coral: 0xc7644e,
   blue: 0x356d8a,
+  gold: 0xbd8b2f,
   light: 0xffd98a,
   white: 0xffffff,
 };
@@ -173,6 +176,7 @@ let generated3DActive = false;
 let isDraggingModel = false;
 let dragPointerId = null;
 let dragOffset = new THREE.Vector3();
+let isStageExpanded = false;
 const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 let lastAnimationTime = 0;
 const walkKeys = new Set();
@@ -953,13 +957,19 @@ function showModelBootIssue(title, detail) {
   modelBootStatus.querySelector("span").textContent = detail;
 }
 
+function disposeMaterial(material) {
+  if (!material) return;
+  material.map?.dispose?.();
+  material.dispose?.();
+}
+
 function disposeObjectTree(object) {
   object.traverse((child) => {
     child.geometry?.dispose?.();
     if (Array.isArray(child.material)) {
-      child.material.forEach((material) => material.dispose?.());
+      child.material.forEach(disposeMaterial);
     } else {
-      child.material?.dispose?.();
+      disposeMaterial(child.material);
     }
   });
 }
@@ -2282,6 +2292,134 @@ function worldLengthForSegment(segment, result) {
   return Math.hypot(to.x - from.x, to.z - from.z);
 }
 
+function formatWallLength(length) {
+  if (!Number.isFinite(length)) return "0.0 m";
+  return `${length >= 1 ? length.toFixed(1) : length.toFixed(2)} m`;
+}
+
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + safeRadius, y);
+  ctx.lineTo(x + width - safeRadius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  ctx.lineTo(x + width, y + height - safeRadius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  ctx.lineTo(x + safeRadius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  ctx.lineTo(x, y + safeRadius);
+  ctx.quadraticCurveTo(x, y, x + safeRadius, y);
+  ctx.closePath();
+}
+
+function makeWallLengthSprite(text, options = {}) {
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  const fontSize = options.fontSize ?? 34;
+  const paddingX = 20;
+  const paddingY = 10;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.font = `700 ${fontSize}px "Noto Sans SC", Arial, sans-serif`;
+  const textWidth = ctx.measureText(text).width;
+  const logicalWidth = textWidth + paddingX * 2;
+  const logicalHeight = fontSize + paddingY * 2;
+
+  canvas.width = Math.ceil(logicalWidth * pixelRatio);
+  canvas.height = Math.ceil(logicalHeight * pixelRatio);
+  ctx.scale(pixelRatio, pixelRatio);
+  ctx.font = `700 ${fontSize}px "Noto Sans SC", Arial, sans-serif`;
+  ctx.textBaseline = "middle";
+
+  ctx.shadowColor = "rgba(31, 37, 43, 0.16)";
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 3;
+  drawRoundedRect(ctx, 2, 2, logicalWidth - 4, logicalHeight - 4, 14);
+  ctx.fillStyle = "rgba(255, 241, 169, 0.96)";
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(189, 139, 47, 0.95)";
+  ctx.stroke();
+  ctx.fillStyle = "#1d252c";
+  ctx.fillText(text, paddingX, logicalHeight / 2 + 1);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  const labelHeight = options.height ?? 0.28;
+  sprite.scale.set(labelHeight * (logicalWidth / logicalHeight), labelHeight, 1);
+  sprite.renderOrder = options.renderOrder ?? 12;
+  sprite.userData.featureKind = "wall-length-label";
+  return sprite;
+}
+
+function makeWallLengthAnnotation(segment, result, options = {}) {
+  const { from, to } = worldEndpointsForSegment(segment, result);
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const length = Math.hypot(dx, dz);
+  if (length < 0.08) return null;
+
+  const wallThickness = worldThicknessForFeature(segment, result, 0.08);
+  const normalX = -dz / length;
+  const normalZ = dx / length;
+  const midpoint = new THREE.Vector3((from.x + to.x) / 2, options.y ?? 0.24, (from.z + to.z) / 2);
+  const edgeOffset = wallThickness / 2 + 0.04;
+  const labelOffset = options.offset ?? Math.max(0.32, wallThickness * 2.2);
+  const lineStart = new THREE.Vector3(
+    midpoint.x + normalX * edgeOffset,
+    midpoint.y,
+    midpoint.z + normalZ * edgeOffset,
+  );
+  const lineEnd = new THREE.Vector3(
+    midpoint.x + normalX * labelOffset,
+    midpoint.y,
+    midpoint.z + normalZ * labelOffset,
+  );
+
+  const annotation = new THREE.Group();
+  annotation.userData.featureKind = "wall-length-annotation";
+
+  const lineGeometry = new THREE.BufferGeometry().setFromPoints([lineStart, lineEnd]);
+  const lineMaterial = new THREE.LineBasicMaterial({
+    color: colors.gold,
+    transparent: true,
+    opacity: 0.92,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const guideLine = new THREE.Line(lineGeometry, lineMaterial);
+  guideLine.renderOrder = options.renderOrder ?? 12;
+  annotation.add(guideLine);
+
+  const label = makeWallLengthSprite(formatWallLength(length), {
+    height: options.height,
+    renderOrder: options.renderOrder,
+  });
+  label.position.set(
+    lineEnd.x + normalX * (options.labelGap ?? 0.04),
+    lineEnd.y,
+    lineEnd.z + normalZ * (options.labelGap ?? 0.04),
+  );
+  annotation.add(label);
+  return annotation;
+}
+
+function addWallLengthAnnotations(group, result, options = {}) {
+  result.segments.forEach((segment) => {
+    const annotation = makeWallLengthAnnotation(segment, result, options);
+    if (annotation) group.add(annotation);
+  });
+}
+
 function pixelLengthForWorldLength(length, result, orientation = "horizontal") {
   const axis = orientation === "horizontal" ? "x" : "y";
   return Math.max(0.2, length) / Math.max(0.001, worldUnitsPerDetectionPixel(result, axis));
@@ -2738,6 +2876,13 @@ function build3DFromDetectedWalls() {
     generatedModelGroup.add(lintel);
   });
 
+  addWallLengthAnnotations(generatedModelGroup, detectedWallResult, {
+    y: wallHeight + 0.18,
+    offset: 0.42,
+    height: 0.28,
+    renderOrder: 14,
+  });
+
   scene.add(generatedModelGroup);
   generated3DActive = true;
   const collisionResult = settleFurnitureAgainstGeneratedWalls();
@@ -2761,10 +2906,7 @@ function build3DFromDetectedWalls() {
 function clearDetectedWallOverlay() {
   if (detectedWallGroup) {
     scene.remove(detectedWallGroup);
-    detectedWallGroup.traverse((child) => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
+    disposeObjectTree(detectedWallGroup);
     detectedWallGroup = null;
   }
 }
@@ -2810,6 +2952,13 @@ function renderDetectedWalls(result) {
       0.095,
     );
     detectedWallGroup.add(mesh);
+  });
+
+  addWallLengthAnnotations(detectedWallGroup, result, {
+    y: 0.24,
+    offset: 0.36,
+    height: 0.26,
+    renderOrder: 14,
   });
 
   scene.add(detectedWallGroup);
@@ -3050,6 +3199,63 @@ function resizeRenderer() {
   camera.updateProjectionMatrix();
 }
 
+function isNativeFullscreenActive() {
+  return document.fullscreenElement === designStage;
+}
+
+function updateStageSizeButtons() {
+  const active = isStageExpanded || isNativeFullscreenActive();
+  toggleStageFullscreenButton?.classList.toggle("active", active);
+  if (toggleStageFullscreenButton) {
+    const label = toggleStageFullscreenButton.querySelector("span");
+    const icon = toggleStageFullscreenButton.querySelector("i");
+    toggleStageFullscreenButton.title = active ? "退出全屏" : "全屏查看";
+    toggleStageFullscreenButton.setAttribute("aria-label", active ? "退出全屏" : "全屏查看");
+    if (label) label.textContent = active ? "退出" : "全屏";
+    if (icon) icon.dataset.lucide = active ? "minimize-2" : "maximize-2";
+  }
+  resetStageSizeButton?.classList.toggle("active", !active);
+  window.lucide?.createIcons();
+}
+
+function setStageExpanded(expanded) {
+  isStageExpanded = expanded;
+  designStage?.classList.toggle("is-expanded", expanded);
+  document.body.classList.toggle("stage-expanded", expanded);
+  updateStageSizeButtons();
+  requestAnimationFrame(resizeRenderer);
+}
+
+async function exitStageFullscreen() {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen?.();
+  }
+  setStageExpanded(false);
+}
+
+async function toggleStageFullscreen() {
+  if (!designStage) return;
+
+  if (isStageExpanded || isNativeFullscreenActive()) {
+    await exitStageFullscreen();
+    return;
+  }
+
+  try {
+    await designStage.requestFullscreen?.();
+    isStageExpanded = false;
+    document.body.classList.remove("stage-expanded");
+    updateStageSizeButtons();
+    requestAnimationFrame(resizeRenderer);
+  } catch (error) {
+    setStageExpanded(true);
+  }
+}
+
+function resetStageSize() {
+  exitStageFullscreen();
+}
+
 function animate(time) {
   const deltaSeconds = lastAnimationTime ? Math.min((time - lastAnimationTime) / 1000, 0.05) : 0.016;
   lastAnimationTime = time;
@@ -3121,6 +3327,14 @@ function init() {
   window.addEventListener("keydown", (event) => handleWalkKey(event, true));
   window.addEventListener("keyup", (event) => handleWalkKey(event, false));
   window.addEventListener("blur", () => walkKeys.clear());
+  document.addEventListener("fullscreenchange", () => {
+    if (!isNativeFullscreenActive()) {
+      isStageExpanded = false;
+      document.body.classList.remove("stage-expanded");
+    }
+    updateStageSizeButtons();
+    requestAnimationFrame(resizeRenderer);
+  });
   new ResizeObserver(resizeRenderer).observe(canvas);
 
   document.addEventListener("roomchange", (event) => {
@@ -3135,6 +3349,14 @@ function init() {
     button.addEventListener("click", () => {
       setView(button.dataset.modelView);
     });
+  });
+
+  resetStageSizeButton?.addEventListener("click", () => {
+    resetStageSize();
+  });
+
+  toggleStageFullscreenButton?.addEventListener("click", () => {
+    toggleStageFullscreen();
   });
 
   addButtons.forEach((button) => {
@@ -3315,6 +3537,7 @@ function init() {
   applyLightIntensity(lightRange?.value ?? 100);
   updatePlanRegionControls();
   updateScaleControls();
+  updateStageSizeButtons();
 
   markModelReady();
   requestAnimationFrame(animate);

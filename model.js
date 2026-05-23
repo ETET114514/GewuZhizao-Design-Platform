@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -46,6 +47,14 @@ const recognitionStatus = document.querySelector("#recognitionStatus");
 const wallHeightInput = document.querySelector("#wallHeightInput");
 const build3DModelButton = document.querySelector("#build3DModel");
 const clear3DModelButton = document.querySelector("#clear3DModel");
+const sitePhotoInput = document.querySelector("#sitePhotoInput");
+const sitePhotoStatus = document.querySelector("#sitePhotoStatus");
+const sitePhotoMeta = document.querySelector("#sitePhotoMeta");
+const generatePhotoModelButton = document.querySelector("#generatePhotoModel");
+const matchSitePhotosButton = document.querySelector("#matchSitePhotos");
+const trellisEndpointInput = document.querySelector("#trellisEndpointInput");
+const generateTrellisModelButton = document.querySelector("#generateTrellisModel");
+const clearPhotoModelButton = document.querySelector("#clearPhotoModel");
 const wallEditor = document.querySelector("#wallEditor");
 const wallSelection = document.querySelector("#wallSelection");
 const deleteWallButton = document.querySelector("#deleteWall");
@@ -173,6 +182,16 @@ let generatedWallMeshes = [];
 let generatedDoorMeshes = [];
 let generatedFloorMesh;
 let generated3DActive = false;
+let generated3DSource = null;
+let sitePhotoCanvas;
+let sitePhotoCanvases = [];
+let sitePhotoTexture;
+let sitePhotoTextures = [];
+let sitePhotoAnalysis;
+let sitePhotoMatches = [];
+let trellisModelGroup;
+let trellisAssetUrl;
+let gltfLoader;
 let isDraggingModel = false;
 let dragPointerId = null;
 let dragOffset = new THREE.Vector3();
@@ -972,6 +991,18 @@ function disposeObjectTree(object) {
       disposeMaterial(child.material);
     }
   });
+}
+
+function clearTrellisModel() {
+  if (trellisModelGroup) {
+    scene.remove(trellisModelGroup);
+    disposeObjectTree(trellisModelGroup);
+    trellisModelGroup = null;
+  }
+  if (trellisAssetUrl) {
+    URL.revokeObjectURL(trellisAssetUrl);
+    trellisAssetUrl = null;
+  }
 }
 
 function activePlanPlaneSize() {
@@ -2496,6 +2527,7 @@ function makeDoorLintelFromOpening(opening, result, wallHeight, wallThickness) {
 }
 
 function clearGenerated3D() {
+  clearTrellisModel();
   if (generatedModelGroup) {
     scene.remove(generatedModelGroup);
     disposeObjectTree(generatedModelGroup);
@@ -2506,12 +2538,885 @@ function clearGenerated3D() {
   generatedDoorMeshes = [];
   generatedFloorMesh = null;
   generated3DActive = false;
+  generated3DSource = null;
   if (roomLabel) roomLabel.textContent = roomNames[activeRoom] ?? "DFC 模型";
 
   if (detectedWallGroup) detectedWallGroup.visible = true;
   shellMeshes.floor.forEach((mesh) => {
     mesh.visible = true;
   });
+  shellMeshes.wall.forEach((mesh) => {
+    mesh.visible = true;
+  });
+}
+
+function setSitePhotoStatus(status, meta) {
+  if (sitePhotoStatus) sitePhotoStatus.textContent = status;
+  if (sitePhotoMeta) sitePhotoMeta.textContent = meta;
+}
+
+function rgbToHex(r, g, b) {
+  return (r << 16) + (g << 8) + b;
+}
+
+function mixChannel(value, target, ratio) {
+  return Math.round(value * (1 - ratio) + target * ratio);
+}
+
+function colorFromImageAverage(avg, target = 255, ratio = 0.45) {
+  return rgbToHex(
+    mixChannel(avg.r, target, ratio),
+    mixChannel(avg.g, target, ratio),
+    mixChannel(avg.b, target, ratio),
+  );
+}
+
+function averageRgb(items) {
+  if (items.length === 0) return { r: 180, g: 180, b: 180 };
+  const total = items.reduce(
+    (sum, item) => ({
+      r: sum.r + item.r,
+      g: sum.g + item.g,
+      b: sum.b + item.b,
+    }),
+    { r: 0, g: 0, b: 0 },
+  );
+  return {
+    r: Math.round(total.r / items.length),
+    g: Math.round(total.g / items.length),
+    b: Math.round(total.b / items.length),
+  };
+}
+
+function rgbLum(rgb) {
+  return (rgb.r * 0.2126 + rgb.g * 0.7152 + rgb.b * 0.0722) / 255;
+}
+
+function samplePhotoRegion(pixels, size, region) {
+  const x1 = Math.max(0, Math.floor(region.x * size));
+  const y1 = Math.max(0, Math.floor(region.y * size));
+  const x2 = Math.min(size, Math.ceil((region.x + region.width) * size));
+  const y2 = Math.min(size, Math.ceil((region.y + region.height) * size));
+  const samples = [];
+
+  for (let y = y1; y < y2; y += 2) {
+    for (let x = x1; x < x2; x += 2) {
+      const index = (y * size + x) * 4;
+      samples.push({
+        r: pixels[index],
+        g: pixels[index + 1],
+        b: pixels[index + 2],
+      });
+    }
+  }
+
+  return averageRgb(samples);
+}
+
+function findBrightRectCandidate(pixels, size) {
+  let best = null;
+  const cellCount = 8;
+
+  for (let gy = 1; gy <= 4; gy += 1) {
+    for (let gx = 0; gx < cellCount; gx += 1) {
+      const region = {
+        x: gx / cellCount,
+        y: gy / cellCount,
+        width: 1 / cellCount,
+        height: 1 / cellCount,
+      };
+      const avg = samplePhotoRegion(pixels, size, region);
+      const lum = rgbLum(avg);
+      const score = lum + (gx >= 2 && gx <= 5 ? 0.06 : 0);
+      if (!best || score > best.score) {
+        best = { ...region, avg, score, confidence: THREE.MathUtils.clamp((lum - 0.58) / 0.32, 0, 1) };
+      }
+    }
+  }
+
+  return best?.confidence > 0.18 ? best : null;
+}
+
+function findDarkVerticalCandidate(pixels, size) {
+  let best = null;
+  const cellCount = 8;
+
+  for (let gx = 0; gx < cellCount; gx += 1) {
+    const region = {
+      x: gx / cellCount,
+      y: 0.34,
+      width: 1 / cellCount,
+      height: 0.54,
+    };
+    const avg = samplePhotoRegion(pixels, size, region);
+    const darkness = 1 - rgbLum(avg);
+    const centerPenalty = Math.abs(gx - 3.5) * 0.02;
+    const score = darkness - centerPenalty;
+    if (!best || score > best.score) {
+      best = { ...region, avg, score, confidence: THREE.MathUtils.clamp((darkness - 0.36) / 0.38, 0, 1) };
+    }
+  }
+
+  return best?.confidence > 0.2 ? best : null;
+}
+
+function findFurnitureCandidate(pixels, size) {
+  let best = null;
+  const cellCount = 8;
+
+  for (let gy = 5; gy < cellCount; gy += 1) {
+    for (let gx = 1; gx < cellCount - 1; gx += 1) {
+      const region = {
+        x: gx / cellCount,
+        y: gy / cellCount,
+        width: 1 / cellCount,
+        height: 1 / cellCount,
+      };
+      const avg = samplePhotoRegion(pixels, size, region);
+      const lum = rgbLum(avg);
+      const score = (1 - lum) * 0.7 + (gy / cellCount) * 0.18;
+      if (!best || score > best.score) {
+        best = { ...region, avg, score, confidence: THREE.MathUtils.clamp((score - 0.32) / 0.38, 0, 1) };
+      }
+    }
+  }
+
+  return best?.confidence > 0.22 ? best : null;
+}
+
+function analyzeSitePhoto(canvas) {
+  const sampleSize = 64;
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = sampleSize;
+  sampleCanvas.height = sampleSize;
+  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  sampleContext.drawImage(canvas, 0, 0, sampleSize, sampleSize);
+  const pixels = sampleContext.getImageData(0, 0, sampleSize, sampleSize).data;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let count = 0;
+  let edgeTotal = 0;
+  let edgeCount = 0;
+  let leftLum = 0;
+  let centerLum = 0;
+  let rightLum = 0;
+  let leftCount = 0;
+  let centerCount = 0;
+  let rightCount = 0;
+
+  for (let index = 0; index < pixels.length; index += 16) {
+    r += pixels[index];
+    g += pixels[index + 1];
+    b += pixels[index + 2];
+    count += 1;
+  }
+
+  const luminanceAt = (x, y) => {
+    const index = (y * sampleSize + x) * 4;
+    return pixels[index] * 0.2126 + pixels[index + 1] * 0.7152 + pixels[index + 2] * 0.0722;
+  };
+
+  for (let y = 0; y < sampleSize; y += 2) {
+    for (let x = 0; x < sampleSize; x += 2) {
+      const lum = luminanceAt(x, y);
+      if (x < sampleSize / 3) {
+        leftLum += lum;
+        leftCount += 1;
+      } else if (x > (sampleSize * 2) / 3) {
+        rightLum += lum;
+        rightCount += 1;
+      } else {
+        centerLum += lum;
+        centerCount += 1;
+      }
+
+      if (x + 2 < sampleSize) {
+        edgeTotal += Math.abs(lum - luminanceAt(x + 2, y));
+        edgeCount += 1;
+      }
+      if (y + 2 < sampleSize) {
+        edgeTotal += Math.abs(lum - luminanceAt(x, y + 2));
+        edgeCount += 1;
+      }
+    }
+  }
+
+  const avg = {
+    r: Math.round(r / count),
+    g: Math.round(g / count),
+    b: Math.round(b / count),
+  };
+  const ceilingAvg = samplePhotoRegion(pixels, sampleSize, { x: 0, y: 0, width: 1, height: 0.24 });
+  const wallAvg = samplePhotoRegion(pixels, sampleSize, { x: 0, y: 0.24, width: 1, height: 0.42 });
+  const floorAvg = samplePhotoRegion(pixels, sampleSize, { x: 0, y: 0.66, width: 1, height: 0.34 });
+  const windowCandidate = findBrightRectCandidate(pixels, sampleSize);
+  const doorCandidate = findDarkVerticalCandidate(pixels, sampleSize);
+  const furnitureCandidate = findFurnitureCandidate(pixels, sampleSize);
+  const aspect = canvas.width / Math.max(1, canvas.height);
+  const luminance = (avg.r * 0.2126 + avg.g * 0.7152 + avg.b * 0.0722) / 255;
+  const leftAverage = leftLum / Math.max(1, leftCount);
+  const centerAverage = centerLum / Math.max(1, centerCount);
+  const rightAverage = rightLum / Math.max(1, rightCount);
+
+  return {
+    aspect,
+    avg,
+    detail: edgeTotal / Math.max(1, edgeCount) / 255,
+    sideBias: (rightAverage - leftAverage) / 255,
+    centerWeight: centerAverage / 255,
+    zones: {
+      ceiling: ceilingAvg,
+      wall: wallAvg,
+      floor: floorAvg,
+    },
+    features: {
+      window: windowCandidate,
+      door: doorCandidate,
+      furniture: furnitureCandidate,
+    },
+    wallColor: colorFromImageAverage(wallAvg, 255, luminance > 0.62 ? 0.28 : 0.5),
+    floorColor: colorFromImageAverage(floorAvg, 92, 0.38),
+    ceilingColor: colorFromImageAverage(ceilingAvg, 255, 0.52),
+    accentColor: colorFromImageAverage(avg, 44, 0.38),
+    width: THREE.MathUtils.clamp(4.2 + aspect * 1.3, 4.6, 7.8),
+    depth: THREE.MathUtils.clamp(3.6 + (1 / Math.max(0.7, aspect)) * 1.4, 3.8, 6.4),
+    height: Math.max(2.4, Number(wallHeightInput?.value || 2.8)),
+  };
+}
+
+function analyzeSitePhotoSet(canvases) {
+  const analyses = canvases.map(analyzeSitePhoto);
+  const count = Math.max(1, analyses.length);
+  const avg = analyses.reduce(
+    (sum, item) => ({
+      r: sum.r + item.avg.r,
+      g: sum.g + item.avg.g,
+      b: sum.b + item.avg.b,
+    }),
+    { r: 0, g: 0, b: 0 },
+  );
+  const combinedAvg = {
+    r: Math.round(avg.r / count),
+    g: Math.round(avg.g / count),
+    b: Math.round(avg.b / count),
+  };
+  const ceilingAvg = averageRgb(analyses.map((item) => item.zones.ceiling));
+  const wallAvg = averageRgb(analyses.map((item) => item.zones.wall));
+  const floorAvg = averageRgb(analyses.map((item) => item.zones.floor));
+  const aspect = analyses.reduce((sum, item) => sum + item.aspect, 0) / count;
+  const luminance = (combinedAvg.r * 0.2126 + combinedAvg.g * 0.7152 + combinedAvg.b * 0.0722) / 255;
+
+  return {
+    aspect,
+    avg: combinedAvg,
+    zones: {
+      ceiling: ceilingAvg,
+      wall: wallAvg,
+      floor: floorAvg,
+    },
+    wallColor: colorFromImageAverage(wallAvg, 255, luminance > 0.62 ? 0.28 : 0.5),
+    floorColor: colorFromImageAverage(floorAvg, 92, 0.38),
+    ceilingColor: colorFromImageAverage(ceilingAvg, 255, 0.52),
+    accentColor: colorFromImageAverage(combinedAvg, 44, 0.38),
+    width: THREE.MathUtils.clamp(4.2 + aspect * 1.2 + Math.min(count, 4) * 0.22, 4.8, 8.2),
+    depth: THREE.MathUtils.clamp(3.8 + (1 / Math.max(0.7, aspect)) * 1.4 + Math.min(count, 4) * 0.16, 4.0, 6.8),
+    height: Math.max(2.4, Number(wallHeightInput?.value || 2.8)),
+    count,
+  };
+}
+
+function scorePhotoForSlot(photo, slot) {
+  const landscapeScore = THREE.MathUtils.clamp((photo.aspect - 0.75) / 1.4, 0, 1);
+  const portraitScore = 1 - Math.abs(photo.aspect - 0.9);
+  const detailScore = THREE.MathUtils.clamp(photo.detail * 4.8, 0, 1);
+  const centerScore = THREE.MathUtils.clamp(photo.centerWeight, 0, 1);
+
+  if (slot === "main") {
+    return landscapeScore * 0.42 + detailScore * 0.34 + centerScore * 0.24;
+  }
+  if (slot === "right") {
+    return Math.max(0, photo.sideBias) * 0.5 + detailScore * 0.28 + THREE.MathUtils.clamp(portraitScore, 0, 1) * 0.22;
+  }
+  return Math.max(0, -photo.sideBias) * 0.5 + detailScore * 0.28 + THREE.MathUtils.clamp(portraitScore, 0, 1) * 0.22;
+}
+
+function matchSitePhotosToModel(canvases) {
+  const photos = canvases.map((canvas, index) => ({
+    canvas,
+    index,
+    ...analyzeSitePhoto(canvas),
+  }));
+  const slots = [
+    { id: "main", label: "主墙" },
+    { id: "right", label: "右侧墙" },
+    { id: "left", label: "左侧墙" },
+  ];
+  const matches = [];
+  const used = new Set();
+
+  slots.forEach((slot) => {
+    const best = photos
+      .filter((photo) => !used.has(photo.index))
+      .map((photo) => ({
+        ...photo,
+        slot: slot.id,
+        label: slot.label,
+        score: scorePhotoForSlot(photo, slot.id),
+      }))
+      .sort((a, b) => b.score - a.score)[0];
+
+    if (!best) return;
+    used.add(best.index);
+    matches.push(best);
+  });
+
+  return matches;
+}
+
+function sitePhotoMatchSummary(matches = sitePhotoMatches) {
+  if (matches.length === 0) return "尚未完成照片匹配";
+  return matches.map((match) => `${match.label}: 第 ${match.index + 1} 张`).join(" / ");
+}
+
+function refreshSitePhotoMatches() {
+  if (sitePhotoCanvases.length === 0) {
+    sitePhotoMatches = [];
+    setSitePhotoStatus("请先选择现场图片", "支持多张 JPG / PNG / WEBP");
+    return [];
+  }
+
+  sitePhotoMatches = matchSitePhotosToModel(sitePhotoCanvases);
+  setSitePhotoStatus("已自动匹配照片", sitePhotoMatchSummary(sitePhotoMatches));
+  return sitePhotoMatches;
+}
+
+function makeSitePhotoTexture(canvas) {
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = renderer?.capabilities?.getMaxAnisotropy?.() ?? 1;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function photoPanelSize(canvas, maxWidth, maxHeight) {
+  const aspect = canvas.width / Math.max(1, canvas.height);
+  let width = Math.min(maxWidth, maxHeight * aspect);
+  let height = width / aspect;
+
+  if (height > maxHeight) {
+    height = maxHeight;
+    width = height * aspect;
+  }
+
+  return { width, height };
+}
+
+function addPhotoReferencePanel(group, canvas, texture, placement, analysis) {
+  const panelSize = photoPanelSize(canvas, placement.maxWidth, placement.maxHeight);
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(panelSize.width, panelSize.height),
+    new THREE.MeshStandardMaterial({
+      map: texture,
+      roughness: 0.78,
+      metalness: 0,
+    }),
+  );
+
+  panel.position.copy(placement.position);
+  panel.rotation.y = placement.rotationY ?? 0;
+  panel.userData.selectName = placement.name;
+  group.add(panel);
+  panel.renderOrder = 2;
+}
+
+function wallSurfaceTransform(slot, nx, ny, analysis) {
+  const { width, depth, height } = analysis;
+  const y = THREE.MathUtils.clamp((1 - ny) * height, 0.35, height - 0.25);
+
+  if (slot === "right") {
+    return {
+      position: new THREE.Vector3(width / 2 - 0.052, y, (nx - 0.5) * depth * 0.76),
+      rotationY: -Math.PI / 2,
+    };
+  }
+
+  if (slot === "left") {
+    return {
+      position: new THREE.Vector3(-width / 2 + 0.052, y, (0.5 - nx) * depth * 0.76),
+      rotationY: Math.PI / 2,
+    };
+  }
+
+  return {
+    position: new THREE.Vector3((nx - 0.5) * width * 0.82, y, -depth / 2 + 0.052),
+    rotationY: 0,
+  };
+}
+
+function makeSurfacePanel(width, height, color, options = {}) {
+  return new THREE.Mesh(
+    new THREE.PlaneGeometry(width, height),
+    mat(color, {
+      transparent: options.transparent ?? false,
+      opacity: options.opacity ?? 1,
+      roughness: options.roughness ?? 0.5,
+      metalness: options.metalness ?? 0,
+      emissive: options.emissive ?? 0x000000,
+      emissiveIntensity: options.emissiveIntensity ?? 0,
+    }),
+  );
+}
+
+function addRecognizedPhotoFeatures(group, matches, analysis) {
+  const featureSummary = {
+    windows: 0,
+    doors: 0,
+    furniture: 0,
+  };
+
+  matches.forEach((match) => {
+    const windowFeature = match.features?.window;
+    if (windowFeature?.confidence > 0.18) {
+      const centerX = windowFeature.x + windowFeature.width / 2;
+      const centerY = windowFeature.y + windowFeature.height / 2;
+      const transform = wallSurfaceTransform(match.slot, centerX, centerY, analysis);
+      const windowWidth = THREE.MathUtils.clamp(
+        (match.slot === "main" ? analysis.width : analysis.depth) * (0.18 + windowFeature.confidence * 0.18),
+        0.72,
+        2.2,
+      );
+      const windowHeight = THREE.MathUtils.clamp(analysis.height * (0.18 + windowFeature.confidence * 0.18), 0.56, 1.45);
+      const glass = makeSurfacePanel(windowWidth, windowHeight, colors.glass, {
+        transparent: true,
+        opacity: 0.44,
+        roughness: 0.18,
+        emissive: 0x7fb6c8,
+        emissiveIntensity: 0.08,
+      });
+      glass.position.copy(transform.position);
+      glass.rotation.y = transform.rotationY;
+      glass.userData.selectName = `${match.label}识别窗`;
+      group.add(glass);
+
+      const frame = makeSurfacePanel(windowWidth + 0.08, windowHeight + 0.08, 0xd9e3e2, {
+        transparent: true,
+        opacity: 0.34,
+      });
+      frame.position.copy(transform.position);
+      frame.position.y -= 0.01;
+      frame.rotation.y = transform.rotationY;
+      group.add(frame);
+      featureSummary.windows += 1;
+    }
+
+    const doorFeature = match.features?.door;
+    if (doorFeature?.confidence > 0.24) {
+      const centerX = doorFeature.x + doorFeature.width / 2;
+      const transform = wallSurfaceTransform(match.slot, centerX, 0.62, analysis);
+      const doorWidth = THREE.MathUtils.clamp((match.slot === "main" ? analysis.width : analysis.depth) * 0.16, 0.68, 1.1);
+      const doorHeight = Math.min(2.15, analysis.height - 0.18);
+      const door = makeSurfacePanel(doorWidth, doorHeight, colorFromImageAverage(doorFeature.avg, 34, 0.22), {
+        transparent: true,
+        opacity: 0.72,
+        roughness: 0.76,
+      });
+      door.position.copy(transform.position);
+      door.position.y = doorHeight / 2;
+      door.rotation.y = transform.rotationY;
+      door.userData.selectName = `${match.label}识别门洞`;
+      group.add(door);
+      featureSummary.doors += 1;
+    }
+
+    if (match.features?.furniture?.confidence > 0.22) {
+      featureSummary.furniture += 1;
+    }
+  });
+
+  return featureSummary;
+}
+
+function furniturePositionFromFeature(feature, match, analysis, fallback) {
+  if (!feature || !match) return fallback;
+
+  const nx = feature.x + feature.width / 2;
+  const ny = feature.y + feature.height / 2;
+  const xOffset = (nx - 0.5) * analysis.width * 0.56;
+  const zOffset = THREE.MathUtils.clamp((ny - 0.5) * analysis.depth * 0.42, -analysis.depth * 0.1, analysis.depth * 0.28);
+
+  if (match.slot === "right") {
+    return new THREE.Vector3(analysis.width * 0.2, 0, zOffset);
+  }
+  if (match.slot === "left") {
+    return new THREE.Vector3(-analysis.width * 0.2, 0, zOffset);
+  }
+  return new THREE.Vector3(xOffset, 0, analysis.depth * 0.18 + zOffset);
+}
+
+function addDisplayFurniture(group, analysis, matches = []) {
+  const sofaColor = analysis.accentColor;
+  const woodColor = colorFromImageAverage(analysis.avg, 112, 0.5);
+  const furnitureMatch = matches
+    .filter((match) => match.features?.furniture)
+    .sort((a, b) => b.features.furniture.confidence - a.features.furniture.confidence)[0];
+  const sofaPosition = furniturePositionFromFeature(
+    furnitureMatch?.features?.furniture,
+    furnitureMatch,
+    analysis,
+    new THREE.Vector3(-analysis.width * 0.18, 0, analysis.depth * 0.22),
+  );
+
+  const sofa = new THREE.Group();
+  sofa.add(place(box(2.2, 0.34, 0.82, sofaColor), 0, 0.24, 0));
+  sofa.add(place(box(2.28, 0.62, 0.18, sofaColor), 0, 0.6, -0.36));
+  sofa.add(place(box(0.2, 0.42, 0.82, sofaColor), -1.14, 0.38, 0));
+  sofa.add(place(box(0.2, 0.42, 0.82, sofaColor), 1.14, 0.38, 0));
+  sofa.position.copy(sofaPosition);
+  group.add(sofa);
+
+  const table = new THREE.Group();
+  table.add(place(cylinder(0.45, 0.45, 0.08, colors.stone), 0, 0.42, 0));
+  table.add(place(cylinder(0.08, 0.1, 0.38, colors.metal, { metalness: 0.4 }), 0, 0.2, 0));
+  table.position.set(0.15, 0, analysis.depth * 0.12);
+  group.add(table);
+
+  const cabinet = new THREE.Group();
+  cabinet.add(place(box(2.4, 0.62, 0.38, woodColor), 0, 0.35, 0));
+  cabinet.add(place(box(2.5, 0.06, 0.44, colors.woodDark), 0, 0.7, 0));
+  cabinet.position.set(sofaPosition.x * -0.28, 0, -analysis.depth * 0.5 + 0.42);
+  group.add(cabinet);
+
+  const ceilingLight = box(1.8, 0.05, 0.08, colors.light, {
+    emissive: colors.light,
+    emissiveIntensity: 0.28,
+  });
+  ceilingLight.position.set(0, analysis.height - 0.16, -0.15);
+  group.add(ceilingLight);
+}
+
+function buildDisplayModelFromSitePhoto() {
+  if (sitePhotoCanvases.length === 0) {
+    setSitePhotoStatus("请先选择现场图片", "支持多张 JPG / PNG / WEBP");
+    return;
+  }
+
+  clearGenerated3D();
+  sitePhotoAnalysis = analyzeSitePhotoSet(sitePhotoCanvases);
+  const matches = sitePhotoMatches.length > 0 ? sitePhotoMatches : refreshSitePhotoMatches();
+  sitePhotoTextures = matches.map((match) => makeSitePhotoTexture(match.canvas));
+  sitePhotoCanvas = matches[0]?.canvas ?? sitePhotoCanvases[0];
+  sitePhotoTexture = sitePhotoTextures[0];
+
+  const { width, depth, height, wallColor, floorColor, ceilingColor } = sitePhotoAnalysis;
+  generatedModelGroup = new THREE.Group();
+  generatedModelGroup.name = "site-photo-display-model";
+
+  generatedFloorMesh = box(width, 0.08, depth, floorColor, { castShadow: false });
+  generatedFloorMesh.position.set(0, -0.04, 0);
+  generatedModelGroup.add(generatedFloorMesh);
+
+  const ceilingMesh = box(width, 0.06, depth, ceilingColor, { castShadow: false });
+  ceilingMesh.position.set(0, height + 0.03, 0);
+  generatedModelGroup.add(ceilingMesh);
+
+  const wallThickness = 0.12;
+  const backWall = box(width, height, wallThickness, wallColor, { castShadow: false });
+  backWall.position.set(0, height / 2, -depth / 2);
+  const leftWall = box(wallThickness, height, depth, wallColor, { castShadow: false });
+  leftWall.position.set(-width / 2, height / 2, 0);
+  const rightWall = box(wallThickness, height, depth, wallColor, { castShadow: false });
+  rightWall.position.set(width / 2, height / 2, 0);
+  generatedWallMeshes.push(backWall, leftWall, rightWall);
+  generatedModelGroup.add(backWall, leftWall, rightWall);
+
+  const panelPlacements = [
+    {
+      name: "现场图片参考墙 1",
+      position: new THREE.Vector3(0, height * 0.56, -depth / 2 + wallThickness / 2 + 0.014),
+      rotationY: 0,
+      maxWidth: width * 0.76,
+      maxHeight: height * 0.68,
+    },
+    {
+      name: "现场图片参考墙 2",
+      position: new THREE.Vector3(width / 2 - wallThickness / 2 - 0.014, height * 0.56, depth * 0.02),
+      rotationY: -Math.PI / 2,
+      maxWidth: depth * 0.58,
+      maxHeight: height * 0.62,
+    },
+    {
+      name: "现场图片参考墙 3",
+      position: new THREE.Vector3(-width / 2 + wallThickness / 2 + 0.014, height * 0.56, depth * 0.02),
+      rotationY: Math.PI / 2,
+      maxWidth: depth * 0.58,
+      maxHeight: height * 0.62,
+    },
+  ];
+
+  sitePhotoTextures.forEach((texture, index) => {
+    const match = matches[index];
+    const placement = {
+      ...panelPlacements[index],
+      name: `${match.label}参考图 · 第 ${match.index + 1} 张`,
+    };
+    addPhotoReferencePanel(generatedModelGroup, match.canvas, texture, placement, sitePhotoAnalysis);
+  });
+
+  const featureSummary = addRecognizedPhotoFeatures(generatedModelGroup, matches, sitePhotoAnalysis);
+  if (featureSummary.windows === 0) {
+    const windowGlass = box(width * 0.24, height * 0.34, 0.035, colors.glass, {
+      transparent: true,
+      opacity: 0.38,
+      castShadow: false,
+    });
+    windowGlass.position.set(-width / 2 + 0.08, height * 0.58, -depth * 0.18);
+    generatedModelGroup.add(windowGlass);
+  }
+
+  addDisplayFurniture(generatedModelGroup, sitePhotoAnalysis, matches);
+
+  scene.add(generatedModelGroup);
+  generated3DActive = true;
+  generated3DSource = "site-photo";
+  shellMeshes.floor.forEach((mesh) => {
+    mesh.visible = false;
+  });
+  shellMeshes.wall.forEach((mesh) => {
+    mesh.visible = false;
+  });
+  if (detectedWallGroup) detectedWallGroup.visible = false;
+
+  roomLabel.textContent = "现场图片展示模型";
+  updateSelection("现场图片生成草模");
+  setRecognitionStatus(
+    `已识别 ${featureSummary.windows} 处窗 / ${featureSummary.doors} 处门洞 / ${featureSummary.furniture} 组家具块，并优化展示模型`,
+  );
+  setSitePhotoStatus("已生成展示模型", sitePhotoMatchSummary(matches));
+  setView("orbit");
+}
+
+function loadImageFileToCanvas(file) {
+  return new Promise((resolve, reject) => {
+    if (!file?.type?.startsWith("image/")) {
+      reject(new Error("unsupported-file"));
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      const maxSize = 1600;
+      const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve({ file, canvas });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image-load-failed"));
+    };
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas, type = "image/png", quality = 0.92) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error("canvas-blob-failed"));
+        }
+      },
+      type,
+      quality,
+    );
+  });
+}
+
+function base64ToBlob(base64, contentType = "model/gltf-binary") {
+  const raw = atob(base64);
+  const bytes = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) {
+    bytes[index] = raw.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: contentType });
+}
+
+function fitTrellisModelToScene(object) {
+  const box3 = new THREE.Box3().setFromObject(object);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box3.getSize(size);
+  box3.getCenter(center);
+
+  const maxAxis = Math.max(size.x, size.y, size.z, 0.001);
+  const targetSize = generated3DActive ? 1.65 : 2.2;
+  const scale = targetSize / maxAxis;
+  object.scale.multiplyScalar(scale);
+  object.position.sub(center.multiplyScalar(scale));
+  object.position.y += 0.08;
+  object.position.z += generated3DActive ? 0.95 : 0.35;
+
+  object.traverse((child) => {
+    if (!child.isMesh) return;
+    child.castShadow = true;
+    child.receiveShadow = true;
+    child.userData.selectName = "TRELLIS.2 生成资产";
+  });
+}
+
+function loadTrellisModelFromUrl(url, ownsUrl = false) {
+  return new Promise((resolve, reject) => {
+    gltfLoader.load(
+      url,
+      (gltf) => {
+        clearTrellisModel();
+        trellisModelGroup = gltf.scene;
+        trellisModelGroup.name = "trellis2-generated-asset";
+        fitTrellisModelToScene(trellisModelGroup);
+        scene.add(trellisModelGroup);
+        if (ownsUrl) trellisAssetUrl = url;
+        updateSelection("TRELLIS.2 生成资产已加载");
+        setSitePhotoStatus("TRELLIS.2 资产已加载", "GLB 已加入当前展示模型");
+        setView("orbit");
+        resolve(gltf);
+      },
+      undefined,
+      (error) => {
+        if (ownsUrl) URL.revokeObjectURL(url);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function loadTrellisModelFromResponse(response) {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const payload = await response.json();
+    const url = payload.glb_url ?? payload.model_url ?? payload.url;
+    const base64 = payload.glb_base64 ?? payload.model_base64;
+
+    if (url) {
+      return loadTrellisModelFromUrl(new URL(url, response.url).href);
+    }
+    if (base64) {
+      const blob = base64ToBlob(base64);
+      const objectUrl = URL.createObjectURL(blob);
+      return loadTrellisModelFromUrl(objectUrl, true);
+    }
+    throw new Error("trellis-response-missing-model");
+  }
+
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new Error("trellis-empty-model");
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  return loadTrellisModelFromUrl(objectUrl, true);
+}
+
+function activeTrellisPhotoMatch() {
+  if (sitePhotoMatches.length === 0) {
+    refreshSitePhotoMatches();
+  }
+  return sitePhotoMatches.find((match) => match.slot === "main") ?? sitePhotoMatches[0] ?? null;
+}
+
+async function generateTrellisModelFromSitePhoto() {
+  const endpoint = trellisEndpointInput?.value?.trim();
+  if (!endpoint) {
+    setSitePhotoStatus("请填写 TRELLIS.2 服务地址", "例如 http://127.0.0.1:7861/api/trellis/image-to-3d");
+    return;
+  }
+
+  const match = activeTrellisPhotoMatch();
+  if (!match?.canvas) {
+    setSitePhotoStatus("请先上传现场图片", "TRELLIS.2 需要一张主视角参考图");
+    return;
+  }
+
+  try {
+    if (trellisEndpointInput) {
+      localStorage.setItem("trellis2Endpoint", endpoint);
+    }
+    generateTrellisModelButton.disabled = true;
+    setSitePhotoStatus("TRELLIS.2 正在生成", `使用${match.label} · 第 ${match.index + 1} 张`);
+
+    const blob = await canvasToBlob(match.canvas);
+    const body = new FormData();
+    body.append("image", blob, `site-photo-${match.index + 1}.png`);
+    body.append("slot", match.slot);
+    body.append("output", "glb");
+    body.append("source", "GewuZhizao-Design-Platform");
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      body,
+    });
+
+    if (!response.ok) {
+      throw new Error(`trellis-http-${response.status}`);
+    }
+
+    await loadTrellisModelFromResponse(response);
+  } catch (error) {
+    console.error(error);
+    setSitePhotoStatus("TRELLIS.2 调用失败", "请确认服务已启动、地址正确，并允许跨域请求");
+  } finally {
+    generateTrellisModelButton.disabled = false;
+  }
+}
+
+async function loadSitePhotoFiles(files, autoBuild = false) {
+  const imageFiles = Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
+  if (imageFiles.length === 0) {
+    setSitePhotoStatus("请选择图片文件", "支持多张 JPG / PNG / WEBP");
+    return;
+  }
+
+  setSitePhotoStatus("正在读取现场图片", `${imageFiles.length} 张图片处理中`);
+
+  try {
+    const results = await Promise.all(imageFiles.map(loadImageFileToCanvas));
+    sitePhotoCanvases = results.map((item) => item.canvas);
+    sitePhotoCanvas = sitePhotoCanvases[0];
+    sitePhotoMatches = matchSitePhotosToModel(sitePhotoCanvases);
+    const totalPixels = sitePhotoCanvases.reduce((sum, canvas) => sum + canvas.width * canvas.height, 0);
+    const megapixels = (totalPixels / 1000000).toFixed(1);
+    setSitePhotoStatus(
+      `${sitePhotoCanvases.length} 张现场图片已导入`,
+      `${megapixels}MP · ${sitePhotoMatchSummary(sitePhotoMatches)}`,
+    );
+    if (autoBuild) buildDisplayModelFromSitePhoto();
+  } catch (error) {
+    setSitePhotoStatus("图片读取失败", "请换一组现场图片再试");
+  }
+}
+
+function loadSitePhotoFile(file, autoBuild = false) {
+  loadSitePhotoFiles(file ? [file] : [], autoBuild);
+}
+
+function clearSitePhotoModel() {
+  clearGenerated3D();
+  sitePhotoCanvas = null;
+  sitePhotoCanvases = [];
+  sitePhotoTexture = null;
+  sitePhotoTextures = [];
+  sitePhotoAnalysis = null;
+  sitePhotoMatches = [];
+  if (sitePhotoInput) sitePhotoInput.value = "";
+  setSitePhotoStatus("尚未导入现场图片", "可同时上传多张现场图");
+  setRecognitionStatus(planCanvas ? "可识别墙线" : "等待识别");
 }
 
 function wallSummaryText(suffix = "") {
@@ -2885,6 +3790,7 @@ function build3DFromDetectedWalls() {
 
   scene.add(generatedModelGroup);
   generated3DActive = true;
+  generated3DSource = "detected-walls";
   const collisionResult = settleFurnitureAgainstGeneratedWalls();
   if (detectedWallGroup) detectedWallGroup.visible = false;
   shellMeshes.floor.forEach((mesh) => {
@@ -3315,6 +4221,12 @@ function init() {
 
   raycaster = new THREE.Raycaster();
   pointer = new THREE.Vector2();
+  gltfLoader = new GLTFLoader();
+
+  if (trellisEndpointInput) {
+    trellisEndpointInput.value =
+      localStorage.getItem("trellis2Endpoint") || trellisEndpointInput.value || "http://127.0.0.1:7861/api/trellis/image-to-3d";
+  }
 
   resizeRenderer();
   loadRoom(activeRoom);
@@ -3490,8 +4402,36 @@ function init() {
     if (planCanvas) setView("top");
   });
 
+  sitePhotoInput?.addEventListener("change", (event) => {
+    loadSitePhotoFiles(event.target.files);
+  });
+
+  generatePhotoModelButton?.addEventListener("click", () => {
+    buildDisplayModelFromSitePhoto();
+  });
+
+  matchSitePhotosButton?.addEventListener("click", () => {
+    refreshSitePhotoMatches();
+    if (generated3DSource === "site-photo") {
+      buildDisplayModelFromSitePhoto();
+    }
+  });
+
+  generateTrellisModelButton?.addEventListener("click", () => {
+    generateTrellisModelFromSitePhoto();
+  });
+
+  clearPhotoModelButton?.addEventListener("click", () => {
+    clearSitePhotoModel();
+  });
+
   wallHeightInput?.addEventListener("input", () => {
-    if (generated3DActive) build3DFromDetectedWalls();
+    if (!generated3DActive) return;
+    if (generated3DSource === "site-photo") {
+      buildDisplayModelFromSitePhoto();
+    } else {
+      build3DFromDetectedWalls();
+    }
   });
 
   wallStartOffsetInput?.addEventListener("input", () => {

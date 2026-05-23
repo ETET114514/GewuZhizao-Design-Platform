@@ -201,6 +201,42 @@
               </button>
             </div>
 
+            <div class="site-photo-import">
+              <label class="plan-upload site-photo-upload" for="sitePhotoInput">
+                <i data-lucide="image-up"></i>
+                <span>现场图片</span>
+              </label>
+              <input id="sitePhotoInput" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+              <div class="plan-status">
+                <span id="sitePhotoStatus">尚未导入现场图片</span>
+                <strong id="sitePhotoMeta">可同时上传多张现场图</strong>
+              </div>
+              <button class="primary-button compact-action" id="generatePhotoModel" type="button">
+                <i data-lucide="sparkles"></i>
+                <span>生成展示模型</span>
+              </button>
+              <button class="secondary-button compact-action" id="matchSitePhotos" type="button">
+                <i data-lucide="scan-search"></i>
+                <span>自动匹配</span>
+              </button>
+              <label class="plan-field trellis-endpoint-field">
+                <span>TRELLIS</span>
+                <input
+                  id="trellisEndpointInput"
+                  type="url"
+                  value="http://127.0.0.1:7861/api/trellis/image-to-3d"
+                />
+              </label>
+              <button class="secondary-button compact-action" id="generateTrellisModel" type="button">
+                <i data-lucide="box"></i>
+                <span>TRELLIS 生成</span>
+              </button>
+              <button class="secondary-button compact-action" id="clearPhotoModel" type="button">
+                <i data-lucide="eraser"></i>
+                <span>清空展示模型</span>
+              </button>
+            </div>
+
             <div class="plan-scale-strip" aria-label="比例尺">
               <div class="scale-strip-heading">
                 <span>比例尺</span>

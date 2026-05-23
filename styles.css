@@ -492,7 +492,8 @@ h2 {
   font-weight: 700;
 }
 
-.plan-import {
+.plan-import,
+.site-photo-import {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -503,6 +504,14 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfb;
+}
+
+.site-photo-import {
+  background: #f7fbff;
+}
+
+.site-photo-upload {
+  background: var(--blue);
 }
 
 .plan-upload {
@@ -526,7 +535,8 @@ h2 {
   height: 16px;
 }
 
-#planFileInput {
+#planFileInput,
+#sitePhotoInput {
   display: none;
 }
 
@@ -597,6 +607,19 @@ h2 {
 
 .scale-length-field input[type="number"] {
   width: 58px;
+}
+
+.trellis-endpoint-field {
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+.trellis-endpoint-field input[type="url"] {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  color: var(--ink);
+  outline: 0;
 }
 
 .secondary-button.compact-action {

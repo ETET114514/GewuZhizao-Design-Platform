@@ -724,7 +724,7 @@ h2 {
 
 .wall-editor {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) 38px 118px minmax(250px, auto);
+  grid-template-columns: minmax(150px, 1fr) 38px 112px 112px minmax(250px, auto) auto;
   align-items: center;
   gap: 8px;
   min-height: 48px;
@@ -755,6 +755,10 @@ h2 {
   min-width: 118px;
 }
 
+.wall-thickness-field {
+  min-width: 112px;
+}
+
 .wall-delete-button {
   color: var(--coral);
 }
@@ -774,13 +778,130 @@ h2 {
   min-width: 124px;
 }
 
+.manual-wall-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .wall-editor.is-disabled {
   opacity: 0.58;
 }
 
 .wall-editor.is-disabled input,
-.wall-editor.is-disabled button {
+.wall-editor.is-disabled .wall-delete-button {
   pointer-events: none;
+}
+
+.wall-editor.is-disabled .manual-wall-actions button {
+  pointer-events: auto;
+}
+
+.linear-plan-editor {
+  display: grid;
+  gap: 8px;
+  margin: -6px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.linear-plan-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.linear-plan-heading span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.linear-plan-heading strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.linear-plan-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: 176px;
+  overflow: auto;
+}
+
+.linear-plan-empty,
+.linear-plan-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.linear-plan-empty {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.linear-plan-item.is-selected {
+  border-color: var(--gold);
+  background: #fff8df;
+}
+
+.linear-plan-main {
+  min-width: 0;
+}
+
+.linear-plan-title,
+.linear-plan-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linear-plan-title {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.linear-plan-meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.linear-plan-badge {
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: rgba(47, 132, 109, 0.14);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.linear-plan-badge.is-door {
+  background: rgba(207, 114, 86, 0.14);
+  color: var(--coral);
+}
+
+.linear-plan-badge.is-window {
+  background: rgba(135, 196, 210, 0.22);
+  color: #37788a;
+}
+
+.linear-plan-delete {
+  min-width: 34px;
+  padding: 6px;
 }
 
 .design-stage {

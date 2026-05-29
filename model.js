@@ -29,6 +29,9 @@ const rotationRange = document.querySelector("#rotationRange");
 const scaleRange = document.querySelector("#scaleRange");
 const lightRange = document.querySelector("#lightRange");
 const deleteModelButton = document.querySelector("#deleteModel");
+const copyComponentButton = document.querySelector("#copyComponent");
+const pasteComponentButton = document.querySelector("#pasteComponent");
+const saveProjectButton = document.querySelector("#saveProject");
 const clearOriginalModelButton = document.querySelector("#clearOriginalModel");
 const planFileInput = document.querySelector("#planFileInput");
 const planStatus = document.querySelector("#planStatus");
@@ -43,6 +46,7 @@ const selectPlanRegionButton = document.querySelector("#selectPlanRegion");
 const keepPlanRegionButton = document.querySelector("#keepPlanRegion");
 const clearPlanRegionButton = document.querySelector("#clearPlanRegion");
 const clearPlanButton = document.querySelector("#clearPlan");
+const deleteOriginalPlanButton = document.querySelector("#deleteOriginalPlan");
 const analyzePlanPhotoButton = document.querySelector("#analyzePlanPhoto");
 const cleanPlanPhotoButton = document.querySelector("#cleanPlanPhoto");
 const restoreOriginalPlanPhotoButton = document.querySelector("#restoreOriginalPlanPhoto");
@@ -81,6 +85,8 @@ const optMinWallLengthInput = document.querySelector("#optMinWallLength");
 const linearPlanSummary = document.querySelector("#linearPlanSummary");
 const linearPlanList = document.querySelector("#linearPlanList");
 const addLinearWallButton = document.querySelector("#addLinearWall");
+const addVerticalWallButton = document.querySelector("#addVerticalWall");
+const drawLinearWallButton = document.querySelector("#drawLinearWall");
 const addLinearDoorButton = document.querySelector("#addLinearDoor");
 const addLinearWindowButton = document.querySelector("#addLinearWindow");
 const workflowSteps = {
@@ -170,7 +176,10 @@ let pointer;
 let selectedHelper;
 let selectedObject;
 let selectedGroup;
+let selectedModelResizeHandleGroup = null;
+let copiedComponent = null;
 let activeRoom = "living";
+const loadBuiltinRoomModel = false;
 let currentView = "orbit";
 let pulseLight;
 let ambientLight;
@@ -217,6 +226,7 @@ let generatedModelGroup;
 let generatedWallMeshes = [];
 let generatedDoorMeshes = [];
 let generatedWindowMeshes = [];
+let generatedOpeningHandleGroup = null;
 let generatedFloorMesh;
 let generated3DActive = false;
 let generated3DSource = null;
@@ -232,6 +242,10 @@ let gltfLoader;
 let isDraggingModel = false;
 let dragPointerId = null;
 let dragOffset = new THREE.Vector3();
+let isDraggingModelResizeHandle = false;
+let modelResizePointerId = null;
+let modelResizeStartScale = 1;
+let modelResizeStartDistance = 1;
 let isDraggingDetectedWall = false;
 let detectedWallDragPointerId = null;
 let detectedWallDragIndex = null;
@@ -239,6 +253,35 @@ let detectedWallDragEndpoint = null;
 let detectedWallDragLastPixel = null;
 let detectedWallDragStartSegment = null;
 let detectedWallDragMoved = false;
+let detectedWallDragUndoSaved = false;
+let isDraggingLinearOpening = false;
+let linearOpeningDragPointerId = null;
+let linearOpeningDragKind = null;
+let linearOpeningDragIndex = null;
+let linearOpeningDragHandle = null;
+let linearOpeningDragLastPixel = null;
+let linearOpeningDragStart = null;
+let linearOpeningDragMoved = false;
+let linearOpeningDragUndoSaved = false;
+let isDraggingGeneratedOpeningHandle = false;
+let generatedOpeningDragPointerId = null;
+let generatedOpeningDragKind = null;
+let generatedOpeningDragIndex = null;
+let generatedOpeningDragHandle = null;
+let generatedOpeningDragUndoSaved = false;
+let isDraggingGeneratedOpeningMove = false;
+let generatedOpeningMovePointerId = null;
+let generatedOpeningMoveKind = null;
+let generatedOpeningMoveIndex = null;
+let generatedOpeningMoveLastPixel = null;
+let generatedOpeningMoveUndoSaved = false;
+let manualWallInsertCount = 0;
+let isWallLineDrawMode = false;
+let wallLineDraftPixel = null;
+let isDoorOpeningPlaceMode = false;
+const planUndoStack = [];
+const maxPlanUndoSteps = 40;
+let isRestoringPlanUndo = false;
 let isStageExpanded = false;
 const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 let lastAnimationTime = 0;
@@ -282,6 +325,7 @@ const planOptimizerDefaults = {
   lengthLabels: true,
   minWallLength: 0.6,
 };
+const savedProjectStorageKey = "gewuzhizao-design-platform-project";
 const floorPlanReadingProfiles = {
   luxuryFlat: {
     label: "大平层深度读图",
@@ -338,7 +382,7 @@ function applyPlanOptimizerDisplayOnly() {
     renderDetectedWalls(detectedWallResult);
   }
   if (generated3DActive && generated3DSource === "detected-walls") {
-    build3DFromDetectedWalls();
+    build3DFromDetectedWalls({ preserveView: currentView === "top" });
   }
 }
 
@@ -390,6 +434,28 @@ function register(group, meta) {
     selectableMeshes.push(child);
   });
 
+  captureDefaultColors(group);
+  root.add(group);
+  updateModelCount();
+  return group;
+}
+
+function registerClonedModel(group) {
+  modelObjects.push(group);
+  group.traverse((child) => {
+    if (!child.isMesh) return;
+    if (Array.isArray(child.material)) {
+      child.material = child.material.map((item) => item.clone());
+    } else if (child.material) {
+      child.material = child.material.clone();
+    }
+    child.userData = {
+      ...child.userData,
+      selectName: group.userData.selectName ?? group.userData.name ?? "Copied component",
+      modelRoot: group,
+    };
+    selectableMeshes.push(child);
+  });
   captureDefaultColors(group);
   root.add(group);
   updateModelCount();
@@ -737,6 +803,7 @@ function clearRoom() {
     scene.remove(selectedHelper);
     selectedHelper = null;
   }
+  clearSelectedModelResizeHandles();
   selectedObject = null;
   selectedGroup = null;
   root.clear();
@@ -880,12 +947,14 @@ const variantPresets = {
 function loadRoom(room) {
   activeRoom = room;
   clearRoom();
-  roomLabel.textContent = roomNames[room] ?? "DFC 模型";
-  builders[room]?.();
-  applyWallFinish(activeWallFinish);
-  applyFloorFinish(activeFloorFinish);
+  roomLabel.textContent = loadBuiltinRoomModel ? roomNames[room] ?? "DFC 模型" : "空场景";
+  if (loadBuiltinRoomModel) {
+    builders[room]?.();
+    applyWallFinish(activeWallFinish);
+    applyFloorFinish(activeFloorFinish);
+  }
   if (planCanvas) updatePlanMesh();
-  selectFirstEditableModel();
+  if (loadBuiltinRoomModel) selectFirstEditableModel();
   setView(planCanvas ? "top" : "orbit");
 }
 
@@ -1023,6 +1092,60 @@ function updateSelection(text) {
   }
 }
 
+function clearSelectedModelResizeHandles() {
+  if (!selectedModelResizeHandleGroup) return;
+  scene.remove(selectedModelResizeHandleGroup);
+  disposeObjectTree(selectedModelResizeHandleGroup);
+  selectedModelResizeHandleGroup = null;
+}
+
+function selectedModelBounds() {
+  if (!selectedGroup?.userData?.editable) return null;
+  selectedGroup.updateWorldMatrix?.(true, true);
+  const bounds = new THREE.Box3().setFromObject(selectedGroup);
+  if (!Number.isFinite(bounds.min.x) || bounds.isEmpty()) return null;
+  return bounds;
+}
+
+function renderSelectedModelResizeHandles() {
+  clearSelectedModelResizeHandles();
+  const bounds = selectedModelBounds();
+  if (!bounds || currentView === "top") return;
+
+  const center = bounds.getCenter(new THREE.Vector3());
+  const y = bounds.max.y + 0.08;
+  const corners = [
+    new THREE.Vector3(bounds.min.x, y, bounds.min.z),
+    new THREE.Vector3(bounds.max.x, y, bounds.min.z),
+    new THREE.Vector3(bounds.max.x, y, bounds.max.z),
+    new THREE.Vector3(bounds.min.x, y, bounds.max.z),
+  ];
+
+  selectedModelResizeHandleGroup = new THREE.Group();
+  selectedModelResizeHandleGroup.userData.featureKind = "model-resize-handles";
+  corners.forEach((position, index) => {
+    const handle = box(0.14, 0.14, 0.14, colors.gold, {
+      castShadow: false,
+      receiveShadow: false,
+      transparent: true,
+      opacity: 0.96,
+    });
+    handle.position.copy(position);
+    handle.userData.featureKind = "model-resize-handle";
+    handle.userData.handleIndex = index;
+    handle.userData.centerX = center.x;
+    handle.userData.centerZ = center.z;
+    handle.userData.selectName = "Model resize handle";
+    selectedModelResizeHandleGroup.add(handle);
+  });
+  scene.add(selectedModelResizeHandleGroup);
+}
+
+function updateSelectedModelResizeHandles() {
+  if (!selectedModelResizeHandleGroup) return;
+  renderSelectedModelResizeHandles();
+}
+
 function selectedMeta() {
   return selectedGroup?.userData ?? null;
 }
@@ -1133,11 +1256,13 @@ function removeModel(group) {
     scene.remove(selectedHelper);
     selectedHelper = null;
   }
+  clearSelectedModelResizeHandles();
 
   selectedGroup = null;
   selectedObject = null;
   updateModelCount();
-  selectFirstEditableModel();
+  updateSelection("未选择构件");
+  updateEditor();
 }
 
 function replaceSelectedVariant(variantId) {
@@ -1183,6 +1308,24 @@ function selectFirstEditableModel() {
   updateEditor();
 }
 
+function clearCurrentSelection() {
+  selectedObject = null;
+  selectedGroup = null;
+  selectedDetectedWallIndex = null;
+  selectedLinearFeature = null;
+  if (selectedHelper) {
+    scene.remove(selectedHelper);
+    selectedHelper = null;
+  }
+  clearSelectedModelResizeHandles();
+  updateEditor();
+  updateWallEditor();
+  renderLinearPlanEditor(detectedWallResult);
+  if (detectedWallResult) renderDetectedWalls(detectedWallResult);
+  renderGeneratedOpeningHandles();
+  updateSelection("未选择构件");
+}
+
 function selectByGroup(group) {
   const firstMesh = [];
   group.traverse((child) => {
@@ -1196,13 +1339,18 @@ function selectByGroup(group) {
 function selectMesh(mesh) {
   selectedObject = mesh;
   selectedGroup = mesh.userData.modelRoot ?? null;
+  selectedDetectedWallIndex = null;
+  selectedLinearFeature = null;
 
   if (selectedHelper) {
     scene.remove(selectedHelper);
   }
+  clearSelectedModelResizeHandles();
 
   selectedHelper = new THREE.BoxHelper(selectedGroup ?? mesh, colors.coral);
   scene.add(selectedHelper);
+  renderSelectedModelResizeHandles();
+  renderGeneratedOpeningHandles();
   updateSelection(mesh.userData.selectName || "已选择构件");
   updateEditor();
 }
@@ -1346,6 +1494,9 @@ function updatePlanRegionControls() {
   }
   if (clearPlanRegionButton) {
     clearPlanRegionButton.disabled = !hasPlan || (!hasRegion && !isPlanRegionSelectionMode);
+  }
+  if (deleteOriginalPlanButton) {
+    deleteOriginalPlanButton.disabled = !hasPlan;
   }
   if (label) {
     label.textContent = isPlanRegionSelectionMode ? "拖拽框选" : hasRegion ? "重画区域" : "框选区域";
@@ -1952,7 +2103,7 @@ function updatePlanMesh() {
     renderDetectedWalls(detectedWallResult);
   }
   if (generated3DActive && detectedWallResult) {
-    build3DFromDetectedWalls();
+    build3DFromDetectedWalls({ preserveView: true });
   }
   renderPlanRegionOverlay(isDrawingPlanRegion ? planRegionDraft : planRegion);
   renderScaleOverlay(isDrawingScaleCalibration ? scaleCalibrationDraft : scaleCalibration);
@@ -1962,6 +2113,7 @@ function updatePlanMesh() {
 
 function clearPlan() {
   clearDetectedWalls();
+  planUndoStack.length = 0;
   clearGenerated3D();
   resetPlanRegionState();
   resetScaleCalibrationState();
@@ -3058,7 +3210,11 @@ function snapWallEndpointsToPerpendiculars(segments, width, height, options = {}
 }
 
 function closeWallTopology(segments, width, height, options = {}) {
-  let closed = snapParallelWallAxes(segments, Math.max(6, Math.round(Math.max(width, height) * 0.01)));
+  const lockedSegments = segments.filter((segment) => segment.manualLock);
+  let closed = snapParallelWallAxes(
+    segments.filter((segment) => !segment.manualLock),
+    Math.max(6, Math.round(Math.max(width, height) * 0.01)),
+  );
   closed = mergeCollinearWallSpans(closed, width, height);
 
   let totalSnaps = 0;
@@ -3070,12 +3226,15 @@ function closeWallTopology(segments, width, height, options = {}) {
     });
   }
 
-  return closed.map((segment) => ({
-    ...segment,
-    topologyClosed: segment.topologyClosed || totalSnaps > 0,
-    ltJunctionSnapped: segment.ltJunctionSnapped || segment.ltJunctionBridged,
-    source: segment.source === "topology-merged" ? segment.source : `${segment.source ?? "wall"}-closed`,
-  }));
+  return [
+    ...closed.map((segment) => ({
+      ...segment,
+      topologyClosed: segment.topologyClosed || totalSnaps > 0,
+      ltJunctionSnapped: segment.ltJunctionSnapped || segment.ltJunctionBridged,
+      source: segment.source === "topology-merged" ? segment.source : `${segment.source ?? "wall"}-closed`,
+    })),
+    ...lockedSegments.map((segment) => ({ ...segment })),
+  ];
 }
 
 function detectionWorldSizeForSource(sourceRect = null) {
@@ -4929,6 +5088,49 @@ function makeWallHandleNode(handle, segment, result) {
   return group;
 }
 
+function makeOpeningHandleNode(kind, index, handle, opening, result) {
+  const positions = wallHandlePixelPositions(opening);
+  const pixel = positions[handle];
+  if (!pixel) return null;
+
+  const world = worldPositionForPixel(pixel.x, pixel.y, result.width, result.height, result);
+  const isSideHandle = handle === "side-min" || handle === "side-max";
+  const radius = isSideHandle ? 0.08 : 0.07;
+  const color = kind === "window" ? colors.glass : colors.coral;
+  const node = cylinder(radius, radius, 0.05, color, {
+    segments: 24,
+    castShadow: false,
+    receiveShadow: false,
+    transparent: true,
+    opacity: 0.98,
+  });
+  node.position.set(world.x, 0.34, world.z);
+  node.userData.featureKind = "opening-handle";
+  node.userData.linearKind = kind;
+  node.userData.linearIndex = index;
+  node.userData.linearHandle = handle;
+  node.renderOrder = 34;
+
+  const halo = cylinder(radius * 1.65, radius * 1.65, 0.026, colors.gold, {
+    segments: 24,
+    castShadow: false,
+    receiveShadow: false,
+    transparent: true,
+    opacity: 0.82,
+  });
+  halo.position.set(world.x, 0.305, world.z);
+  halo.userData.featureKind = "opening-handle-halo";
+  halo.renderOrder = 33;
+
+  const group = new THREE.Group();
+  group.add(halo, node);
+  group.userData.featureKind = "opening-handle-group";
+  group.userData.linearKind = kind;
+  group.userData.linearIndex = index;
+  group.userData.linearHandle = handle;
+  return group;
+}
+
 function addSelectedWallHandles(group, result) {
   const segment =
     selectedDetectedWallIndex === null ? null : result?.segments?.[selectedDetectedWallIndex] ?? null;
@@ -4936,6 +5138,18 @@ function addSelectedWallHandles(group, result) {
 
   ["start", "end", "side-min", "side-max"].forEach((handle) => {
     const node = makeWallHandleNode(handle, segment, result);
+    if (node) group.add(node);
+  });
+}
+
+function addSelectedOpeningHandles(group, result) {
+  if (!selectedLinearFeature || !["door", "window"].includes(selectedLinearFeature.kind)) return;
+  const collection = linearFeatureCollection(selectedLinearFeature.kind);
+  const opening = collection?.[selectedLinearFeature.index];
+  if (!opening) return;
+
+  ["start", "end", "side-min", "side-max"].forEach((handle) => {
+    const node = makeOpeningHandleNode(selectedLinearFeature.kind, selectedLinearFeature.index, handle, opening, result);
     if (node) group.add(node);
   });
 }
@@ -5272,55 +5486,82 @@ function openingsForWallSegment(wall, result) {
   return openings.sort((a, b) => a.start - b.start || a.end - b.end);
 }
 
-function addGeneratedWallPiece(group, segment, result, height, thickness, centerY) {
-  if (segment.end - segment.start < 1 || height <= 0.03) return null;
-  const mesh = makeWallMeshFromSegment(segment, result, height, thickness, wallFinishes[activeWallFinish], centerY);
+function addGeneratedWallPiece(group, segment, result, height, thickness, centerY, wallIndex = null) {
+  const actualHeight = Math.max(0.03, segment.heightMeters ?? height);
+  const actualCenterY = segment.heightMeters ? actualHeight / 2 : centerY;
+  if (segment.end - segment.start < 1 || actualHeight <= 0.03) return null;
+  const mesh = makeWallMeshFromSegment(segment, result, actualHeight, thickness, wallFinishes[activeWallFinish], actualCenterY);
   mesh.userData.collider = "solid-wall";
+  if (Number.isInteger(wallIndex)) {
+    mesh.userData.featureKind = "generated-wall";
+    mesh.userData.linearKind = "wall";
+    mesh.userData.linearIndex = wallIndex;
+    mesh.userData.selectName = "3D wall";
+  }
   generatedWallMeshes.push(mesh);
   group.add(mesh);
   return mesh;
 }
 
-function addSolidWallSpansAroundOpenings(group, wall, openings, result, wallHeight, wallThickness) {
+function addSolidWallSpansAroundOpenings(group, wall, openings, result, wallHeight, wallThickness, wallIndex = null) {
   let cursor = wall.start;
+  const actualWallHeight = wall.heightMeters ?? wallHeight;
   openings.forEach((opening) => {
     if (opening.start > cursor + 1) {
-      addGeneratedWallPiece(group, { ...wall, start: cursor, end: opening.start }, result, wallHeight, wallThickness, wallHeight / 2);
+      addGeneratedWallPiece(
+        group,
+        { ...wall, start: cursor, end: opening.start },
+        result,
+        actualWallHeight,
+        wallThickness,
+        actualWallHeight / 2,
+        wallIndex,
+      );
     }
     cursor = Math.max(cursor, opening.end);
   });
 
   if (wall.end > cursor + 1) {
-    addGeneratedWallPiece(group, { ...wall, start: cursor, end: wall.end }, result, wallHeight, wallThickness, wallHeight / 2);
+    addGeneratedWallPiece(
+      group,
+      { ...wall, start: cursor, end: wall.end },
+      result,
+      actualWallHeight,
+      wallThickness,
+      actualWallHeight / 2,
+      wallIndex,
+    );
   }
 }
 
-function windowVerticalProfile(type, wallHeight) {
+function windowVerticalProfile(type, wallHeight, opening = null) {
   const sillHeight =
-    type === "floor"
+    opening?.sillHeightMeters ??
+    (type === "floor"
       ? 0.08
       : type === "high"
         ? THREE.MathUtils.clamp(wallHeight * 0.64, 1.55, 2.1)
         : type === "bay"
           ? THREE.MathUtils.clamp(wallHeight * 0.28, 0.62, 0.9)
-          : THREE.MathUtils.clamp(wallHeight * 0.36, 0.72, 1.08);
+          : THREE.MathUtils.clamp(wallHeight * 0.36, 0.72, 1.08));
   const windowHeight =
-    type === "floor"
+    opening?.heightMeters ??
+    (type === "floor"
       ? THREE.MathUtils.clamp(wallHeight * 0.78, 1.75, wallHeight - 0.18)
       : type === "high"
         ? THREE.MathUtils.clamp(wallHeight * 0.22, 0.48, 0.82)
         : type === "bay"
           ? THREE.MathUtils.clamp(wallHeight * 0.42, 0.96, 1.42)
-          : THREE.MathUtils.clamp(wallHeight * 0.34, 0.78, 1.32);
+          : THREE.MathUtils.clamp(wallHeight * 0.34, 0.78, 1.32));
   return {
-    sillHeight,
-    windowHeight: Math.min(windowHeight, Math.max(0.2, wallHeight - sillHeight - 0.08)),
+    sillHeight: THREE.MathUtils.clamp(sillHeight, 0, Math.max(0, wallHeight - 0.28)),
+    windowHeight: THREE.MathUtils.clamp(windowHeight, 0.24, Math.max(0.24, wallHeight - sillHeight - 0.08)),
   };
 }
 
 function addWindowWallInfill(group, opening, result, wallHeight, wallThickness) {
   const type = opening.windowType ?? "standard";
-  const profile = windowVerticalProfile(type, wallHeight);
+  const profile = windowVerticalProfile(type, wallHeight, opening);
   if (profile.sillHeight > 0.16) {
     addGeneratedWallPiece(group, opening, result, profile.sillHeight, wallThickness, profile.sillHeight / 2);
   }
@@ -5333,7 +5574,7 @@ function addWindowWallInfill(group, opening, result, wallHeight, wallThickness) 
 }
 
 function makeDoorLintelFromOpening(opening, result, wallHeight, wallThickness) {
-  const doorHeight = Math.min(2.15, wallHeight - 0.08);
+  const doorHeight = THREE.MathUtils.clamp(opening.heightMeters ?? 2.15, 1.55, wallHeight - 0.08);
   if (wallHeight <= doorHeight + 0.08) return null;
 
   const lintelHeight = wallHeight - doorHeight;
@@ -5362,19 +5603,11 @@ function openingCenterTransform(opening, result) {
 function makeDoorAssemblyFromOpening(opening, result, wallHeight, wallThickness) {
   const group = new THREE.Group();
   const transform = openingCenterTransform(opening, result);
-  const doorHeight = Math.min(2.15, wallHeight - 0.08);
+  const doorHeight = THREE.MathUtils.clamp(opening.heightMeters ?? 2.15, 1.55, wallHeight - 0.08);
   const doorWidth = Math.max(0.62, transform.length);
   const doorThickness = Math.max(0.035, wallThickness * 0.28);
 
-  const panel = box(doorWidth * 0.84, doorHeight * 0.88, doorThickness, 0x8e6d4e, {
-    castShadow: false,
-    transparent: true,
-    opacity: 0.86,
-  });
-  panel.position.set(transform.centerX, doorHeight * 0.44, transform.centerZ);
-  panel.rotation.y = transform.rotationY;
-  panel.userData.selectName = "图纸识别门板";
-  group.add(panel);
+  // Door openings are intentionally empty; keep the frame but do not add a door slab.
 
   const topFrame = box(doorWidth, 0.08, doorThickness * 1.7, colors.woodDark, { castShadow: false });
   topFrame.position.set(transform.centerX, doorHeight + 0.04, transform.centerZ);
@@ -5389,7 +5622,7 @@ function makeDoorAssemblyFromOpening(opening, result, wallHeight, wallThickness)
     group.add(post);
   });
 
-  group.userData.selectName = "图纸识别门洞";
+  group.userData.selectName = "3D door opening";
   return group;
 }
 
@@ -5397,7 +5630,7 @@ function makeWindowAssemblyFromOpening(opening, result, wallHeight, wallThicknes
   const group = new THREE.Group();
   const transform = openingCenterTransform(opening, result);
   const type = opening.windowType ?? "standard";
-  const { sillHeight, windowHeight } = windowVerticalProfile(type, wallHeight);
+  const { sillHeight, windowHeight } = windowVerticalProfile(type, wallHeight, opening);
   const windowWidth = Math.max(0.72, transform.length);
   const glassThickness = Math.max(0.025, wallThickness * 0.2);
 
@@ -5467,7 +5700,103 @@ function makeWindowAssemblyFromOpening(opening, result, wallHeight, wallThicknes
   return group;
 }
 
-function clearGenerated3D() {
+function tagGeneratedOpeningGroup(group, kind, index) {
+  group.userData.featureKind = "generated-opening";
+  group.userData.linearKind = kind;
+  group.userData.linearIndex = index;
+  group.traverse((child) => {
+    if (!child.isMesh) return;
+    child.userData.featureKind = "generated-opening";
+    child.userData.linearKind = kind;
+    child.userData.linearIndex = index;
+    child.userData.selectName = kind === "window" ? "3D window" : "3D door opening";
+  });
+  return group;
+}
+
+function generatedOpeningProfile(kind, opening, wallHeight) {
+  if (kind === "wall") {
+    return {
+      bottom: 0,
+      height: THREE.MathUtils.clamp(opening.heightMeters ?? wallHeight, 0.6, 5),
+    };
+  }
+  if (kind === "door") {
+    return {
+      bottom: 0,
+      height: THREE.MathUtils.clamp(opening.heightMeters ?? 2.15, 1.55, wallHeight - 0.08),
+    };
+  }
+  const profile = windowVerticalProfile(opening.windowType ?? "standard", wallHeight, opening);
+  return {
+    bottom: profile.sillHeight,
+    height: profile.windowHeight,
+  };
+}
+
+function generatedOpeningHandlePositions(kind, opening, result, wallHeight) {
+  const { from, to } = worldEndpointsForSegment(opening, result);
+  const profile = generatedOpeningProfile(kind, opening, wallHeight);
+  const bottom = profile.bottom;
+  const top = profile.bottom + profile.height;
+  return {
+    "start-bottom": new THREE.Vector3(from.x, bottom, from.z),
+    "start-top": new THREE.Vector3(from.x, top, from.z),
+    "end-bottom": new THREE.Vector3(to.x, bottom, to.z),
+    "end-top": new THREE.Vector3(to.x, top, to.z),
+  };
+}
+
+function makeGeneratedOpeningHandle(kind, index, handle, position) {
+  const node = cylinder(0.075, 0.075, 0.06, colors.gold, {
+    segments: 24,
+    castShadow: false,
+    receiveShadow: false,
+    transparent: true,
+    opacity: 0.96,
+  });
+  node.rotation.x = Math.PI / 2;
+  node.position.copy(position);
+  node.userData.featureKind = "generated-opening-handle";
+  node.userData.linearKind = kind;
+  node.userData.linearIndex = index;
+  node.userData.linearHandle = handle;
+  node.userData.selectName = kind === "window" ? "Window control point" : "Door opening control point";
+  return node;
+}
+
+function renderGeneratedOpeningHandles() {
+  if (!generatedModelGroup) return;
+  if (generatedOpeningHandleGroup) {
+    generatedModelGroup.remove(generatedOpeningHandleGroup);
+    disposeObjectTree(generatedOpeningHandleGroup);
+    generatedOpeningHandleGroup = null;
+  }
+  if (!selectedLinearFeature || !["wall", "door", "window"].includes(selectedLinearFeature.kind) || !detectedWallResult) return;
+
+  const collection = linearFeatureCollection(selectedLinearFeature.kind);
+  const opening = collection?.[selectedLinearFeature.index];
+  if (!opening) return;
+
+  const wallHeight = Math.max(2.2, Number(wallHeightInput?.value || 2.8));
+  generatedOpeningHandleGroup = new THREE.Group();
+  generatedOpeningHandleGroup.userData.featureKind = "generated-opening-handles";
+  const positions = generatedOpeningHandlePositions(
+    selectedLinearFeature.kind,
+    opening,
+    detectedWallResult,
+    wallHeight,
+  );
+  Object.entries(positions).forEach(([handle, position]) => {
+    generatedOpeningHandleGroup.add(
+      makeGeneratedOpeningHandle(selectedLinearFeature.kind, selectedLinearFeature.index, handle, position),
+    );
+  });
+  generatedModelGroup.add(generatedOpeningHandleGroup);
+}
+
+function clearGenerated3D(options = {}) {
+  const resetPresentation = options.resetPresentation ?? true;
   clearTrellisModel();
   if (generatedModelGroup) {
     scene.remove(generatedModelGroup);
@@ -5478,18 +5807,21 @@ function clearGenerated3D() {
   generatedWallMeshes = [];
   generatedDoorMeshes = [];
   generatedWindowMeshes = [];
+  generatedOpeningHandleGroup = null;
   generatedFloorMesh = null;
   generated3DActive = false;
   generated3DSource = null;
-  if (roomLabel) roomLabel.textContent = roomNames[activeRoom] ?? "DFC 模型";
+  if (resetPresentation && roomLabel) roomLabel.textContent = roomNames[activeRoom] ?? "DFC 模型";
 
-  if (detectedWallGroup) detectedWallGroup.visible = true;
-  shellMeshes.floor.forEach((mesh) => {
-    mesh.visible = true;
-  });
-  shellMeshes.wall.forEach((mesh) => {
-    mesh.visible = true;
-  });
+  if (resetPresentation) {
+    if (detectedWallGroup) detectedWallGroup.visible = true;
+    shellMeshes.floor.forEach((mesh) => {
+      mesh.visible = true;
+    });
+    shellMeshes.wall.forEach((mesh) => {
+      mesh.visible = true;
+    });
+  }
   updateWorkflowBoard();
   updateDecisionBoard();
 }
@@ -6083,7 +6415,7 @@ function buildDisplayModelFromSitePhoto() {
     return;
   }
 
-  clearGenerated3D();
+  clearGenerated3D({ resetPresentation: false });
   sitePhotoAnalysis = analyzeSitePhotoSet(sitePhotoCanvases);
   const matches = sitePhotoMatches.length > 0 ? sitePhotoMatches : refreshSitePhotoMatches();
   sitePhotoTextures = matches.map((match) => makeSitePhotoTexture(match.canvas));
@@ -6153,7 +6485,7 @@ function buildDisplayModelFromSitePhoto() {
     `已识别 ${featureSummary.windows} 处窗 / ${featureSummary.doors} 处门洞 / ${featureSummary.furniture} 组家具块，并优化展示模型`,
   );
   setSitePhotoStatus("已生成展示模型", sitePhotoMatchSummary(matches));
-  setView("orbit");
+  setView(currentView);
 }
 
 function applySitePhotosToPlanModel() {
@@ -6175,7 +6507,7 @@ function applySitePhotosToPlanModel() {
 
   sitePhotoAnalysis = analyzeSitePhotoSet(sitePhotoCanvases);
   const matches = sitePhotoMatches.length > 0 ? sitePhotoMatches : refreshSitePhotoMatches();
-  build3DFromDetectedWalls();
+  build3DFromDetectedWalls({ preserveView: true });
 
   if (!generatedModelGroup) return;
 
@@ -6225,7 +6557,7 @@ function applySitePhotosToPlanModel() {
     `已按真实比例墙体深化：${detectedWallResult.segments.length} 段墙 / ${detectedWallResult.doors.length} 处图纸门洞 / ${(detectedWallResult.windows ?? []).length} 处图纸窗洞 / ${featureSummary.windows} 处现场窗`,
   );
   setSitePhotoStatus("已完成图纸深化", sitePhotoMatchSummary(matches));
-  setView("orbit");
+  setView(currentView);
 }
 
 function loadImageFileToCanvas(file) {
@@ -6317,7 +6649,7 @@ function loadTrellisModelFromUrl(url, ownsUrl = false) {
         if (ownsUrl) trellisAssetUrl = url;
         updateSelection("TRELLIS.2 生成资产已加载");
         setSitePhotoStatus("TRELLIS.2 资产已加载", "GLB 已加入当前展示模型");
-        setView("orbit");
+        setView(currentView);
         resolve(gltf);
       },
       undefined,
@@ -6545,12 +6877,29 @@ function selectLinearFeature(kind, index) {
     kind === "wall" ? detectedWallResult.segments : kind === "door" ? detectedWallResult.doors : detectedWallResult.windows;
   if (!collection?.[index]) return;
 
+  selectedObject = null;
+  selectedGroup = null;
+  if (selectedHelper) {
+    scene.remove(selectedHelper);
+    selectedHelper = null;
+  }
+  clearSelectedModelResizeHandles();
+  updateEditor();
   selectedLinearFeature = { kind, index };
   selectedDetectedWallIndex = kind === "wall" ? index : null;
   syncDetectedWallMeshStyles();
   updateWallEditor();
   renderLinearPlanEditor(detectedWallResult);
+  renderGeneratedOpeningHandles();
   updateSelection(linearFeatureTitle(kind, collection[index], index));
+}
+
+function linearFeatureCollection(kind) {
+  if (!detectedWallResult) return null;
+  if (kind === "wall") return detectedWallResult.segments;
+  if (kind === "door") return detectedWallResult.doors;
+  if (kind === "window") return detectedWallResult.windows;
+  return null;
 }
 
 function makeLinearFeatureRow(kind, item, index, result) {
@@ -6586,6 +6935,29 @@ function makeLinearFeatureRow(kind, item, index, result) {
       select.append(option);
     });
     row.append(select);
+    const shrinkButton = document.createElement("button");
+    shrinkButton.className = "secondary-button compact-action linear-plan-delete";
+    shrinkButton.type = "button";
+    shrinkButton.title = "缩短窗户";
+    shrinkButton.setAttribute("aria-label", "缩短窗户");
+    shrinkButton.dataset.linearResize = "";
+    shrinkButton.dataset.linearKind = kind;
+    shrinkButton.dataset.linearIndex = String(index);
+    shrinkButton.dataset.resizeDirection = "-1";
+    shrinkButton.innerHTML = '<i data-lucide="minus"></i>';
+    row.append(shrinkButton);
+
+    const expandButton = document.createElement("button");
+    expandButton.className = "secondary-button compact-action linear-plan-delete";
+    expandButton.type = "button";
+    expandButton.title = "加长窗户";
+    expandButton.setAttribute("aria-label", "加长窗户");
+    expandButton.dataset.linearResize = "";
+    expandButton.dataset.linearKind = kind;
+    expandButton.dataset.linearIndex = String(index);
+    expandButton.dataset.resizeDirection = "1";
+    expandButton.innerHTML = '<i data-lucide="plus"></i>';
+    row.append(expandButton);
   } else {
     const badge = document.createElement("span");
     badge.className = `linear-plan-badge ${linearFeatureClass(kind)}`;
@@ -6645,7 +7017,507 @@ function rebuildGeneratedModelAfterPlanEdit() {
     applySitePhotosToPlanModel();
     return;
   }
-  build3DFromDetectedWalls();
+  build3DFromDetectedWalls({ preserveView: true });
+}
+
+function clonePlanEditState() {
+  return {
+    detectedWallResult: detectedWallResult ? structuredClone(detectedWallResult) : null,
+    selectedDetectedWallIndex,
+    selectedLinearFeature: selectedLinearFeature ? { ...selectedLinearFeature } : null,
+    manualWallInsertCount,
+  };
+}
+
+function savePlanUndoSnapshot() {
+  if (isRestoringPlanUndo) return;
+  planUndoStack.push(clonePlanEditState());
+  if (planUndoStack.length > maxPlanUndoSteps) {
+    planUndoStack.shift();
+  }
+}
+
+function restorePlanUndoSnapshot() {
+  if (planUndoStack.length === 0) {
+    setRecognitionStatus("没有可撤销的上一步操作");
+    return true;
+  }
+
+  const snapshot = planUndoStack.pop();
+  isRestoringPlanUndo = true;
+  try {
+    clearDetectedWallOverlay();
+    detectedWallResult = snapshot.detectedWallResult ? structuredClone(snapshot.detectedWallResult) : null;
+    selectedDetectedWallIndex = snapshot.selectedDetectedWallIndex;
+    selectedLinearFeature = snapshot.selectedLinearFeature ? { ...snapshot.selectedLinearFeature } : null;
+    manualWallInsertCount = snapshot.manualWallInsertCount ?? 0;
+
+    if (detectedWallResult) {
+      if (!detectedWallResult.segments?.[selectedDetectedWallIndex]) selectedDetectedWallIndex = null;
+      if (selectedLinearFeature) {
+        const collection = linearFeatureCollection(selectedLinearFeature.kind);
+        if (!collection?.[selectedLinearFeature.index]) selectedLinearFeature = null;
+      }
+      renderDetectedWalls(detectedWallResult);
+      setRecognitionStatus(wallSummaryText("已撤销上一步操作"));
+      if (generated3DActive && generated3DSource === "detected-walls") {
+        build3DFromDetectedWalls({ preserveView: currentView === "top" });
+      }
+      return true;
+    }
+
+    detectedWallSegments = [];
+    detectedDoorOpenings = [];
+    detectedWindowOpenings = [];
+    detectedRoomRegions = [];
+    detectedWallMeshes = [];
+    updateWallEditor();
+    renderLinearPlanEditor(null);
+    if (generated3DActive && generated3DSource === "detected-walls") clearGenerated3D();
+    setRecognitionStatus("已撤销上一步操作");
+    return true;
+  } finally {
+    isRestoringPlanUndo = false;
+  }
+}
+
+function handleUndoKey(event) {
+  if (isTypingTarget(event.target)) return false;
+  const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z";
+  if (!isUndo) return false;
+  event.preventDefault();
+  return restorePlanUndoSnapshot();
+}
+
+function copiedComponentLabel() {
+  if (!copiedComponent) return "";
+  if (copiedComponent.type === "model") return copiedComponent.name ?? "模型构件";
+  if (copiedComponent.kind === "wall") return "墙体";
+  if (copiedComponent.kind === "door") return "门洞";
+  if (copiedComponent.kind === "window") return "窗户";
+  return "构件";
+}
+
+function copySelectedComponent() {
+  if (selectedLinearFeature && detectedWallResult) {
+    const collection = linearFeatureCollection(selectedLinearFeature.kind);
+    const item = collection?.[selectedLinearFeature.index];
+    if (!item) return false;
+    copiedComponent = {
+      type: "linear",
+      kind: selectedLinearFeature.kind,
+      item: structuredClone(item),
+    };
+    setRecognitionStatus(`已复制${copiedComponentLabel()}`);
+    return true;
+  }
+
+  if (selectedGroup?.userData?.editable) {
+    copiedComponent = {
+      type: "model",
+      name: selectedGroup.userData.selectName ?? selectedGroup.userData.name ?? "模型构件",
+      group: selectedGroup.clone(true),
+    };
+    setRecognitionStatus(`已复制${copiedComponentLabel()}`);
+    return true;
+  }
+
+  setRecognitionStatus("请先点击选中一个构件，再复制");
+  return true;
+}
+
+function pasteCopiedModel() {
+  if (copiedComponent?.type !== "model" || !copiedComponent.group) return false;
+
+  const clone = copiedComponent.group.clone(true);
+  clone.userData = {
+    ...clone.userData,
+    name: `${copiedComponent.name ?? "模型构件"} copy`,
+    selectName: `${copiedComponent.name ?? "模型构件"} copy`,
+    editable: true,
+    deletable: true,
+  };
+  clone.position.x += 0.35;
+  clone.position.z += 0.35;
+  if (generated3DActive) {
+    findNearestValidFurniturePosition(clone, clone.position.clone());
+  } else {
+    constrainFurniturePosition(clone, clone.position.clone());
+  }
+  registerClonedModel(clone);
+  selectByGroup(clone);
+  setRecognitionStatus(`已粘贴${copiedComponentLabel()}`);
+  return true;
+}
+
+function pasteCopiedLinearFeature() {
+  if (copiedComponent?.type !== "linear") return false;
+  if (!detectedWallResult) {
+    setRecognitionStatus("请先生成或识别墙体，再粘贴平面构件");
+    return true;
+  }
+
+  const { kind } = copiedComponent;
+  const item = structuredClone(copiedComponent.item);
+  savePlanUndoSnapshot();
+
+  if (kind === "wall") {
+    const axisLimit = item.orientation === "horizontal" ? detectedWallResult.height : detectedWallResult.width;
+    const offsetOrientation = item.orientation === "horizontal" ? "vertical" : "horizontal";
+    const offset = Math.max(8, pixelLengthForWorldLength(0.3, detectedWallResult, offsetOrientation));
+    item.axisCenter = THREE.MathUtils.clamp((item.axisCenter ?? 0) + offset, 0, axisLimit);
+    item.baseStart = item.start;
+    item.baseEnd = item.end;
+    item.startCorrectionMeters = 0;
+    item.endCorrectionMeters = 0;
+    item.source = item.source ?? "manual-copy";
+    detectedWallResult.segments.push(item);
+    selectedDetectedWallIndex = detectedWallResult.segments.length - 1;
+    selectedLinearFeature = { kind: "wall", index: selectedDetectedWallIndex };
+    commitManualWallEdit("已粘贴墙体", { glue: false, preserveView: true });
+    return true;
+  }
+
+  if (!["door", "window"].includes(kind)) return false;
+  detectedWallResult.doors = detectedWallResult.doors ?? [];
+  detectedWallResult.windows = detectedWallResult.windows ?? [];
+  const collection = kind === "door" ? detectedWallResult.doors : detectedWallResult.windows;
+  const spanLimit = wallAxisLimit(item, detectedWallResult);
+  const length = item.end - item.start;
+  const offset = Math.max(6, pixelLengthForWorldLength(0.25, detectedWallResult, item.orientation));
+  item.start = THREE.MathUtils.clamp(item.start + offset, 0, Math.max(0, spanLimit - length));
+  item.end = item.start + length;
+  item.source = item.source ?? `manual-${kind}-copy`;
+  collection.push(item);
+  selectedDetectedWallIndex = null;
+  selectedLinearFeature = { kind, index: collection.length - 1 };
+  commitOpeningPlanEdit(kind === "window" ? "已粘贴窗户" : "已粘贴门洞");
+  return true;
+}
+
+function pasteCopiedComponent() {
+  if (!copiedComponent) {
+    setRecognitionStatus("没有可粘贴的构件");
+    return true;
+  }
+  if (copiedComponent.type === "model") return pasteCopiedModel();
+  return pasteCopiedLinearFeature();
+}
+
+function canvasToProjectDataUrl(sourceCanvas) {
+  if (!sourceCanvas) return null;
+  try {
+    const webp = sourceCanvas.toDataURL("image/webp", 0.9);
+    if (webp.startsWith("data:image/webp")) return webp;
+  } catch {
+    // Some browsers or canvases may not support WebP export.
+  }
+  return sourceCanvas.toDataURL("image/png");
+}
+
+function canvasFromProjectDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    if (!dataUrl) {
+      resolve(null);
+      return;
+    }
+    const image = new Image();
+    image.onload = () => {
+      const restoredCanvas = document.createElement("canvas");
+      restoredCanvas.width = image.naturalWidth || image.width;
+      restoredCanvas.height = image.naturalHeight || image.height;
+      restoredCanvas.getContext("2d").drawImage(image, 0, 0);
+      resolve(restoredCanvas);
+    };
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+}
+
+function serializeModelObject(group) {
+  const meta = group.userData ?? {};
+  if (!meta.kind) return null;
+  return {
+    name: meta.name ?? meta.selectName ?? "模型构件",
+    kind: meta.kind,
+    variant: meta.variant ?? null,
+    finishKey: meta.finishKey ?? "default",
+    editable: meta.editable ?? true,
+    deletable: meta.deletable ?? true,
+    position: group.position.toArray(),
+    rotation: [group.rotation.x, group.rotation.y, group.rotation.z],
+    scale: group.scale.toArray(),
+  };
+}
+
+function restoreModelObject(item) {
+  if (!item?.kind) return null;
+  const variantBuilder = variantPresets[item.kind]?.find((variant) => variant.id === item.variant)?.build;
+  const fallbackBuilder = addFactories[item.kind];
+  const group = variantBuilder ? variantBuilder(item.name) : fallbackBuilder?.();
+  if (!group) return null;
+
+  group.userData.name = item.name ?? group.userData.name;
+  group.userData.selectName = item.name ?? group.userData.selectName;
+  group.userData.editable = item.editable ?? group.userData.editable;
+  group.userData.deletable = item.deletable ?? group.userData.deletable;
+  if (item.finishKey) applyFurnitureFinish(group, item.finishKey);
+  if (Array.isArray(item.position)) group.position.fromArray(item.position);
+  if (Array.isArray(item.rotation)) group.rotation.set(item.rotation[0] ?? 0, item.rotation[1] ?? 0, item.rotation[2] ?? 0);
+  if (Array.isArray(item.scale)) group.scale.fromArray(item.scale);
+  return group;
+}
+
+function currentCameraSnapshot() {
+  return {
+    view: currentView,
+    position: camera.position.toArray(),
+    target: controls.target.toArray(),
+  };
+}
+
+function serializeDetectedWallResult(result) {
+  if (!result) return null;
+  const {
+    segments,
+    doors,
+    windows,
+    rooms,
+    width,
+    height,
+    sourceRect,
+    sourceLabel,
+    quality,
+    layoutLogic,
+    architecturalBounds,
+    optimizer,
+  } = result;
+  return structuredClone({
+    segments: segments ?? [],
+    doors: doors ?? [],
+    windows: windows ?? [],
+    rooms: rooms ?? [],
+    width,
+    height,
+    sourceRect,
+    sourceLabel,
+    quality,
+    layoutLogic,
+    architecturalBounds,
+    optimizer,
+  });
+}
+
+function createProjectSnapshot() {
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    activeRoom,
+    currentView,
+    camera: currentCameraSnapshot(),
+    finishes: {
+      wall: activeWallFinish,
+      floor: activeFloorFinish,
+      light: activeLightTone,
+    },
+    plan: planCanvas
+      ? {
+          dataUrl: canvasToProjectDataUrl(planCanvas),
+          originalDataUrl: canvasToProjectDataUrl(originalPlanCanvas),
+          aspect: planAspect,
+          rotation: planRotation,
+          widthMeters: planWidthInput?.value ?? null,
+          opacity: planOpacityRange?.value ?? null,
+          region: planRegion ? { ...planRegion } : null,
+          scaleCalibration: scaleCalibration ? { ...scaleCalibration } : null,
+        }
+      : null,
+    recognition: serializeDetectedWallResult(detectedWallResult),
+    selected: {
+      detectedWallIndex: selectedDetectedWallIndex,
+      linearFeature: selectedLinearFeature ? { ...selectedLinearFeature } : null,
+    },
+    generated: {
+      active: generated3DActive,
+      source: generated3DSource,
+      wallHeight: wallHeightInput?.value ?? null,
+    },
+    optimizer: planOptimizerSettings(),
+    sitePhotos: sitePhotoCanvases.map((item) => canvasToProjectDataUrl(item)),
+    models: modelObjects.map(serializeModelObject).filter(Boolean),
+  };
+}
+
+function downloadProjectSnapshot(snapshot) {
+  const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `gewuzhizao-project-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function saveCurrentProject() {
+  const snapshot = createProjectSnapshot();
+  try {
+    localStorage.setItem(savedProjectStorageKey, JSON.stringify(snapshot));
+    setRecognitionStatus(`已保存当前设计 · ${new Date(snapshot.savedAt).toLocaleString("zh-CN")}`);
+  } catch (error) {
+    console.warn("Project local save failed, downloading backup instead.", error);
+    downloadProjectSnapshot(snapshot);
+    setRecognitionStatus("浏览器本地空间不足，已下载项目备份文件");
+  }
+  return true;
+}
+
+async function restoreSavedProject() {
+  let raw = null;
+  try {
+    raw = localStorage.getItem(savedProjectStorageKey);
+  } catch (error) {
+    console.warn("Saved project storage is not available.", error);
+  }
+  if (!raw) return false;
+
+  let snapshot;
+  try {
+    snapshot = JSON.parse(raw);
+  } catch (error) {
+    console.warn("Saved project is not readable.", error);
+    return false;
+  }
+
+  clearRoom();
+  disposePlan();
+  clearGenerated3D();
+  resetPlanRegionState();
+  resetScaleCalibrationState();
+  planUndoStack.length = 0;
+
+  activeRoom = snapshot.activeRoom ?? activeRoom;
+  activeWallFinish = snapshot.finishes?.wall ?? activeWallFinish;
+  activeFloorFinish = snapshot.finishes?.floor ?? activeFloorFinish;
+  activeLightTone = snapshot.finishes?.light ?? activeLightTone;
+  if (wallHeightInput && snapshot.generated?.wallHeight) wallHeightInput.value = snapshot.generated.wallHeight;
+
+  if (optCollapseWallsInput && snapshot.optimizer) optCollapseWallsInput.checked = Boolean(snapshot.optimizer.collapseWalls);
+  if (optExtendCornersInput && snapshot.optimizer) optExtendCornersInput.checked = Boolean(snapshot.optimizer.extendCorners);
+  if (optDoorWindowSymbolsInput && snapshot.optimizer) optDoorWindowSymbolsInput.checked = Boolean(snapshot.optimizer.doorWindowSymbols);
+  if (optShowRoomsInput && snapshot.optimizer) optShowRoomsInput.checked = Boolean(snapshot.optimizer.showRooms);
+  if (optLengthLabelsInput && snapshot.optimizer) optLengthLabelsInput.checked = Boolean(snapshot.optimizer.lengthLabels);
+  if (optMinWallLengthInput && snapshot.optimizer?.minWallLength) optMinWallLengthInput.value = snapshot.optimizer.minWallLength;
+
+  if (snapshot.plan?.dataUrl) {
+    planCanvas = await canvasFromProjectDataUrl(snapshot.plan.dataUrl);
+    originalPlanCanvas = snapshot.plan.originalDataUrl ? await canvasFromProjectDataUrl(snapshot.plan.originalDataUrl) : cloneCanvas(planCanvas);
+    planAspect = snapshot.plan.aspect ?? planCanvas.width / planCanvas.height;
+    planRotation = snapshot.plan.rotation ?? 0;
+    planRegion = snapshot.plan.region ?? null;
+    scaleCalibration = snapshot.plan.scaleCalibration ?? null;
+    if (planWidthInput && snapshot.plan.widthMeters) planWidthInput.value = snapshot.plan.widthMeters;
+    if (planOpacityRange && snapshot.plan.opacity) planOpacityRange.value = snapshot.plan.opacity;
+    updatePlanMesh();
+    renderPlanPhotoQuality(analyzePlanPhotoQuality(planCanvas));
+    setPlanStatus("已恢复保存图纸", `${planCanvas.width} x ${planCanvas.height} px`);
+  }
+
+  if (snapshot.recognition) {
+    detectedWallResult = structuredClone(snapshot.recognition);
+    detectedWallSegments = detectedWallResult.segments ?? [];
+    detectedDoorOpenings = detectedWallResult.doors ?? [];
+    detectedWindowOpenings = detectedWallResult.windows ?? [];
+    detectedRoomRegions = detectedWallResult.rooms ?? [];
+    selectedDetectedWallIndex = snapshot.selected?.detectedWallIndex ?? null;
+    selectedLinearFeature = snapshot.selected?.linearFeature ? { ...snapshot.selected.linearFeature } : null;
+    renderDetectedWalls(detectedWallResult);
+  } else {
+    renderLinearPlanEditor(null);
+    updateWallEditor();
+  }
+
+  sitePhotoCanvases = (await Promise.all((snapshot.sitePhotos ?? []).map((item) => canvasFromProjectDataUrl(item)))).filter(Boolean);
+  sitePhotoCanvas = sitePhotoCanvases[0] ?? null;
+  sitePhotoMatches = sitePhotoCanvases.length ? matchSitePhotosToModel(sitePhotoCanvases) : [];
+  setSitePhotoStatus(
+    sitePhotoCanvases.length ? `${sitePhotoCanvases.length} 张现场图片已恢复` : "尚未导入现场图片",
+    sitePhotoCanvases.length ? sitePhotoMatchSummary(sitePhotoMatches) : "可同时上传多张现场图",
+  );
+
+  if (snapshot.generated?.active) {
+    if (snapshot.generated.source === "site-photo" && sitePhotoCanvases.length) {
+      buildDisplayModelFromSitePhoto();
+    } else if (snapshot.generated.source === "plan-photo-refined" && sitePhotoCanvases.length && detectedWallResult) {
+      applySitePhotosToPlanModel();
+    } else if (detectedWallResult) {
+      build3DFromDetectedWalls({ preserveView: true });
+    }
+  }
+
+  (snapshot.models ?? []).forEach(restoreModelObject);
+  addOffset = modelObjects.length;
+  applyWallFinish(activeWallFinish);
+  applyFloorFinish(activeFloorFinish);
+  applyLightTone(activeLightTone);
+
+  if (snapshot.camera?.view) setView(snapshot.camera.view);
+  if (Array.isArray(snapshot.camera?.position)) camera.position.fromArray(snapshot.camera.position);
+  if (Array.isArray(snapshot.camera?.target)) controls.target.fromArray(snapshot.camera.target);
+  controls.update();
+
+  updateModelCount();
+  updateWallEditor();
+  renderLinearPlanEditor(detectedWallResult);
+  renderGeneratedOpeningHandles();
+  updatePlanOptimizerStatus();
+  setRecognitionStatus(`已恢复上次保存 · ${new Date(snapshot.savedAt).toLocaleString("zh-CN")}`);
+  return true;
+}
+
+function handleClipboardKey(event) {
+  if (isTypingTarget(event.target)) return false;
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return false;
+  const key = event.key.toLowerCase();
+  if (key === "c") {
+    const handled = copySelectedComponent();
+    if (handled) event.preventDefault();
+    return handled;
+  }
+  if (key === "v") {
+    const handled = pasteCopiedComponent();
+    if (handled) event.preventDefault();
+    return handled;
+  }
+  return false;
+}
+
+function handleSaveKey(event) {
+  const isSave = (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "s";
+  if (!isSave) return false;
+  event.preventDefault();
+  return saveCurrentProject();
+}
+
+function handleNativeCopy(event) {
+  if (isTypingTarget(event.target)) return;
+  if (copySelectedComponent()) event.preventDefault();
+}
+
+function handleNativePaste(event) {
+  if (isTypingTarget(event.target)) return;
+  if (pasteCopiedComponent()) event.preventDefault();
+}
+
+function runCopyCommand() {
+  canvas?.focus?.({ preventScroll: true });
+  return copySelectedComponent();
+}
+
+function runPasteCommand() {
+  canvas?.focus?.({ preventScroll: true });
+  return pasteCopiedComponent();
 }
 
 function commitLinearPlanEdit(message) {
@@ -6661,6 +7533,7 @@ function commitLinearPlanEdit(message) {
 
 function deleteLinearFeature(kind, index) {
   if (!detectedWallResult) return;
+  savePlanUndoSnapshot();
   if (kind === "wall") {
     const wall = detectedWallResult.segments[index];
     if (!wall) return;
@@ -6670,11 +7543,63 @@ function deleteLinearFeature(kind, index) {
     selectedDetectedWallIndex = null;
   } else if (kind === "door") {
     detectedWallResult.doors?.splice(index, 1);
+    selectedLinearFeature = null;
+    commitOpeningPlanEdit("Door opening deleted");
+    return;
   } else if (kind === "window") {
     detectedWallResult.windows?.splice(index, 1);
+    selectedLinearFeature = null;
+    commitOpeningPlanEdit("Window deleted");
+    return;
   }
   selectedLinearFeature = null;
   commitLinearPlanEdit("已更新线性平面图");
+}
+
+function commitOpeningPlanEdit(message) {
+  if (!detectedWallResult) return;
+  updateRoomsAfterManualWallEdit();
+  renderDetectedWalls(detectedWallResult);
+  setRecognitionStatus(wallSummaryText(message));
+  rebuildGeneratedModelAfterPlanEdit();
+}
+
+function resizeLinearOpening(kind, index, direction, stepMeters = 0.1) {
+  const collection = linearFeatureCollection(kind);
+  const opening = collection?.[index];
+  if (!opening || !["door", "window"].includes(kind)) return false;
+
+  savePlanUndoSnapshot();
+  const stepPixels = pixelLengthForWorldLength(stepMeters, detectedWallResult, opening.orientation);
+  const center = (opening.start + opening.end) / 2;
+  const spanLimit = wallAxisLimit(opening, detectedWallResult);
+  const minSpan = Math.max(4, pixelLengthForWorldLength(kind === "door" ? 0.45 : 0.3, detectedWallResult, opening.orientation));
+  const maxSpan = Math.max(minSpan, spanLimit * 0.8);
+  const nextLength = THREE.MathUtils.clamp(opening.end - opening.start + stepPixels * direction, minSpan, maxSpan);
+  opening.start = THREE.MathUtils.clamp(center - nextLength / 2, 0, spanLimit);
+  opening.end = THREE.MathUtils.clamp(center + nextLength / 2, 0, spanLimit);
+  if (opening.start <= 0) opening.end = Math.min(spanLimit, nextLength);
+  if (opening.end >= spanLimit) opening.start = Math.max(0, spanLimit - nextLength);
+  selectedLinearFeature = { kind, index };
+  commitOpeningPlanEdit(kind === "window" ? "已调整窗户尺寸" : "已调整门洞尺寸");
+  return true;
+}
+
+function moveLinearOpening(kind, index, alongDelta, axisDelta) {
+  const collection = linearFeatureCollection(kind);
+  const opening = collection?.[index];
+  if (!opening || !["door", "window"].includes(kind)) return false;
+
+  savePlanUndoSnapshot();
+  const spanLimit = wallAxisLimit(opening, detectedWallResult);
+  const axisLimit = opening.orientation === "horizontal" ? detectedWallResult.height : detectedWallResult.width;
+  const length = opening.end - opening.start;
+  opening.start = THREE.MathUtils.clamp(opening.start + alongDelta, 0, Math.max(0, spanLimit - length));
+  opening.end = opening.start + length;
+  opening.axisCenter = THREE.MathUtils.clamp(opening.axisCenter + axisDelta, 0, axisLimit);
+  selectedLinearFeature = { kind, index };
+  commitOpeningPlanEdit(kind === "window" ? "已移动窗户" : "已移动门洞");
+  return true;
 }
 
 function longestDetectedWallIndex() {
@@ -6720,23 +7645,65 @@ function makeManualOpeningForWall(wall, worldLength, source, windowType = "stand
   };
 }
 
-function addLinearWall() {
-  if (!detectedWallResult) {
-    setRecognitionStatus("请先识别图纸，再补墙");
-    return;
+function ensureDetectedWallResultForManualEdit() {
+  if (detectedWallResult) return true;
+  if (!planCanvas) {
+    setRecognitionStatus("请先导入图纸，再补墙");
+    return false;
   }
 
-  const length = Math.max(18, detectedWallResult.width * 0.22);
-  const center = detectedWallResult.width * 0.5;
+  savePlanUndoSnapshot();
+  const source = recognitionSourceForPlan();
+  const map = buildInkMap(source.canvas);
+  detectedWallResult = {
+    width: map.width,
+    height: map.height,
+    sourceRect: source.sourceRect ?? null,
+    sourceLabel: source.label,
+    segments: [],
+    doors: [],
+    windows: [],
+    rooms: [],
+    layoutLogic: null,
+    runs: [],
+    wallRuns: [],
+    quality: {
+      usedRuleBasedSegments: false,
+      manualOnly: true,
+    },
+    optimizer: planOptimizerSettings(),
+    inkMap: map,
+  };
+  detectedWallSegments = detectedWallResult.segments;
+  detectedDoorOpenings = detectedWallResult.doors;
+  detectedWindowOpenings = detectedWallResult.windows;
+  return true;
+}
+
+function addLinearWall(orientation = "horizontal") {
+  const hadResult = Boolean(detectedWallResult);
+  if (!ensureDetectedWallResultForManualEdit()) return;
+
+  if (hadResult) savePlanUndoSnapshot();
+  const horizontal = orientation !== "vertical";
+  const spanLimit = horizontal ? detectedWallResult.width : detectedWallResult.height;
+  const axisLimit = horizontal ? detectedWallResult.height : detectedWallResult.width;
+  const length = Math.max(18, spanLimit * 0.22);
+  const center = spanLimit * 0.5;
+  const offsetStep = Math.max(10, Math.min(axisLimit * 0.08, 42));
+  const offsetSlot = (manualWallInsertCount % 9) - 4;
+  const axisCenter = THREE.MathUtils.clamp(axisLimit * 0.5 + offsetSlot * offsetStep, 0, axisLimit);
   const segment = {
-    orientation: "horizontal",
-    start: THREE.MathUtils.clamp(center - length / 2, 0, detectedWallResult.width),
-    end: THREE.MathUtils.clamp(center + length / 2, 0, detectedWallResult.width),
-    axisCenter: detectedWallResult.height * 0.5,
+    orientation: horizontal ? "horizontal" : "vertical",
+    start: THREE.MathUtils.clamp(center - length / 2, 0, spanLimit),
+    end: THREE.MathUtils.clamp(center + length / 2, 0, spanLimit),
+    axisCenter,
     thicknessPx: 7,
     confidence: 1,
     source: "manual-wall",
+    manualLock: true,
   };
+  manualWallInsertCount += 1;
   segment.baseStart = segment.start;
   segment.baseEnd = segment.end;
   segment.startCorrectionMeters = 0;
@@ -6744,7 +7711,196 @@ function addLinearWall() {
   detectedWallResult.segments.push(segment);
   selectedDetectedWallIndex = detectedWallResult.segments.length - 1;
   selectedLinearFeature = { kind: "wall", index: selectedDetectedWallIndex };
-  commitLinearPlanEdit("已补充墙线");
+  commitLinearPlanEdit(horizontal ? "已补充横墙" : "已补充竖墙", { glue: false });
+}
+
+function updateWallLineDrawButton() {
+  drawLinearWallButton?.classList.toggle("active", isWallLineDrawMode);
+}
+
+function updateDoorOpeningPlaceButton() {
+  addLinearDoorButton?.classList.toggle("active", isDoorOpeningPlaceMode);
+}
+
+function setWallLineDrawMode(enabled) {
+  isWallLineDrawMode = Boolean(enabled);
+  wallLineDraftPixel = null;
+  updateWallLineDrawButton();
+  if (isWallLineDrawMode) {
+    setDoorOpeningPlaceMode(false);
+    if (currentView !== "top") setView("top");
+    setRecognitionStatus("Draw wall: click first point");
+  }
+}
+
+function toggleWallLineDrawMode() {
+  setWallLineDrawMode(!isWallLineDrawMode);
+}
+
+function setDoorOpeningPlaceMode(enabled) {
+  isDoorOpeningPlaceMode = Boolean(enabled);
+  updateDoorOpeningPlaceButton();
+  if (isDoorOpeningPlaceMode) {
+    setWallLineDrawMode(false);
+    if (currentView !== "top") setView("top");
+    setRecognitionStatus("门洞模式：点击墙体位置，生成 900x2200 门洞");
+  }
+}
+
+function toggleDoorOpeningPlaceMode() {
+  setDoorOpeningPlaceMode(!isDoorOpeningPlaceMode);
+}
+
+function drawnWallThicknessPixels(orientation) {
+  const thicknessMeters = Number(wallThicknessInput?.value);
+  const fallbackMeters = 0.12;
+  return THREE.MathUtils.clamp(
+    pixelThicknessForWorldLength(
+      Number.isFinite(thicknessMeters) && thicknessMeters > 0 ? thicknessMeters : fallbackMeters,
+      detectedWallResult,
+      orientation,
+    ),
+    2,
+    80,
+  );
+}
+
+function addWallFromDrawnPixels(startPixel, endPixel, hadResult) {
+  if (!startPixel || !endPixel || !detectedWallResult) return false;
+  const dx = endPixel.x - startPixel.x;
+  const dy = endPixel.y - startPixel.y;
+  const orientation = Math.abs(dx) >= Math.abs(dy) ? "horizontal" : "vertical";
+  const horizontal = orientation === "horizontal";
+  const rawStart = horizontal ? startPixel.x : startPixel.y;
+  const rawEnd = horizontal ? endPixel.x : endPixel.y;
+  const axisStart = horizontal ? startPixel.y : startPixel.x;
+  const axisEnd = horizontal ? endPixel.y : endPixel.x;
+  const spanLimit = horizontal ? detectedWallResult.width : detectedWallResult.height;
+  const axisLimit = horizontal ? detectedWallResult.height : detectedWallResult.width;
+  const start = THREE.MathUtils.clamp(Math.min(rawStart, rawEnd), 0, spanLimit);
+  const end = THREE.MathUtils.clamp(Math.max(rawStart, rawEnd), 0, spanLimit);
+  const minLength = Math.max(4, pixelLengthForWorldLength(0.2, detectedWallResult, orientation));
+  if (end - start < minLength) {
+    setRecognitionStatus("Draw wall: segment is too short");
+    return false;
+  }
+
+  if (hadResult) savePlanUndoSnapshot();
+  const segment = {
+    orientation,
+    start,
+    end,
+    axisCenter: THREE.MathUtils.clamp((axisStart + axisEnd) / 2, 0, axisLimit),
+    thicknessPx: drawnWallThicknessPixels(orientation),
+    confidence: 1,
+    source: "manual-drawn-wall",
+    manualLock: true,
+  };
+  segment.baseStart = segment.start;
+  segment.baseEnd = segment.end;
+  segment.startCorrectionMeters = 0;
+  segment.endCorrectionMeters = 0;
+
+  detectedWallResult.segments.push(segment);
+  selectedDetectedWallIndex = detectedWallResult.segments.length - 1;
+  selectedLinearFeature = { kind: "wall", index: selectedDetectedWallIndex };
+  commitManualWallEdit("Drawn wall added", { glue: false, preserveView: true });
+  return true;
+}
+
+function handleWallLineDrawClick(event) {
+  if (!isWallLineDrawMode || currentView !== "top") return false;
+  const hadResult = Boolean(detectedWallResult);
+  if (!ensureDetectedWallResultForManualEdit()) return true;
+
+  const point = groundPointFromEvent(event);
+  const pixel = point ? detectionPixelFromWorldPoint(point, detectedWallResult) : null;
+  if (!pixel) {
+    setRecognitionStatus("Draw wall: click on the plan");
+    return true;
+  }
+
+  if (!wallLineDraftPixel) {
+    wallLineDraftPixel = pixel;
+    setRecognitionStatus("Draw wall: click second point");
+    return true;
+  }
+
+  if (addWallFromDrawnPixels(wallLineDraftPixel, pixel, hadResult)) {
+    wallLineDraftPixel = null;
+    setRecognitionStatus(wallSummaryText("Drawn wall added"));
+  }
+  return true;
+}
+
+function findDoorTargetWallAtPoint(point) {
+  if (!point || !detectedWallResult?.segments?.length) return null;
+  let bestMatch = null;
+
+  detectedWallResult.segments.forEach((segment, index) => {
+    const distance = distanceToWallSegment(point, segment, detectedWallResult);
+    const threshold = Math.max(0.22, worldThicknessForFeature(segment, detectedWallResult, 0.08) * 2.8);
+    if (distance > threshold) return;
+    if (!bestMatch || distance < bestMatch.distance) {
+      bestMatch = { index, segment, distance };
+    }
+  });
+
+  return bestMatch;
+}
+
+function addDoorOpeningAtPoint(point) {
+  if (!detectedWallResult?.segments?.length || !point) {
+    setRecognitionStatus("请先识别或绘制墙体，再放置门洞");
+    return false;
+  }
+
+  const target = findDoorTargetWallAtPoint(point);
+  if (!target) {
+    setRecognitionStatus("门洞模式：请点击墙体上的门洞位置");
+    return false;
+  }
+
+  const wall = target.segment;
+  const center = wallAxisValueFromPoint(point, wall, detectedWallResult);
+  const widthPixels = pixelLengthForWorldLength(0.9, detectedWallResult, wall.orientation);
+  const halfWidth = widthPixels / 2;
+  const minDoorPixels = Math.max(2, pixelLengthForWorldLength(0.45, detectedWallResult, wall.orientation));
+  const start = THREE.MathUtils.clamp(center - halfWidth, wall.start, Math.max(wall.start, wall.end - minDoorPixels));
+  const end = THREE.MathUtils.clamp(center + halfWidth, Math.min(wall.end, start + minDoorPixels), wall.end);
+  if (end - start < minDoorPixels) {
+    setRecognitionStatus("这段墙太短，无法放置 900mm 门洞");
+    return false;
+  }
+
+  savePlanUndoSnapshot();
+  const opening = {
+    orientation: wall.orientation,
+    start,
+    end,
+    axisCenter: wall.axisCenter,
+    thicknessPx: Math.max(wall.thicknessPx ?? 5, 5),
+    heightMeters: 2.2,
+    confidence: 1,
+    source: "manual-door",
+  };
+  detectedWallResult.doors = dedupeOpenings([...(detectedWallResult.doors ?? []), opening]);
+  selectedLinearFeature = { kind: "door", index: detectedWallResult.doors.length - 1 };
+  selectedDetectedWallIndex = null;
+  commitOpeningPlanEdit("已放置 900x2200 门洞");
+  return true;
+}
+
+function handleDoorOpeningPlacementClick(event) {
+  if (!isDoorOpeningPlaceMode || currentView !== "top") return false;
+  if (!detectedWallResult?.segments?.length) {
+    setRecognitionStatus("请先识别或绘制墙体，再放置门洞");
+    return true;
+  }
+
+  const point = groundPointFromEvent(event);
+  addDoorOpeningAtPoint(point);
+  return true;
 }
 
 function addLinearOpening(kind) {
@@ -6761,6 +7917,7 @@ function addLinearOpening(kind) {
       : makeManualOpeningForWall(active.segment, 1.5, "manual-window", "floor");
   if (opening.end - opening.start < 2) return;
 
+  savePlanUndoSnapshot();
   if (kind === "door") {
     detectedWallResult.doors = dedupeOpenings([...(detectedWallResult.doors ?? []), opening]);
     selectedLinearFeature = { kind: "door", index: detectedWallResult.doors.length - 1 };
@@ -6781,12 +7938,37 @@ function syncDetectedWallMeshStyles() {
 function updateWallEditor() {
   const segment =
     selectedDetectedWallIndex === null ? null : detectedWallResult?.segments?.[selectedDetectedWallIndex] ?? null;
+  const selectedOpening =
+    selectedLinearFeature && ["door", "window"].includes(selectedLinearFeature.kind)
+      ? linearFeatureCollection(selectedLinearFeature.kind)?.[selectedLinearFeature.index] ?? null
+      : null;
 
-  wallEditor?.classList.toggle("is-disabled", !segment);
-  if (!segment) {
+  wallEditor?.classList.toggle("is-disabled", !segment && !selectedOpening);
+  if (deleteWallButton) {
+    const deleteTitle = selectedOpening
+      ? selectedLinearFeature.kind === "window"
+        ? "删除窗户"
+        : "删除门洞"
+      : "删除墙体";
+    deleteWallButton.title = deleteTitle;
+    deleteWallButton.setAttribute("aria-label", deleteTitle);
+  }
+  if (!segment && !selectedOpening) {
     if (wallSelection) wallSelection.textContent = detectedWallSegments.length > 0 ? "点击绿色墙体" : "识别后点击绿色墙体";
     if (wallLengthInput) wallLengthInput.value = "0";
     if (wallThicknessInput) wallThicknessInput.value = "0";
+    if (wallStartOffsetInput) wallStartOffsetInput.value = "0";
+    if (wallEndOffsetInput) wallEndOffsetInput.value = "0";
+    return;
+  }
+
+  if (selectedOpening) {
+    const kindName = selectedLinearFeature.kind === "window" ? "Window" : "Door opening";
+    if (wallSelection) wallSelection.textContent = `${kindName} #${selectedLinearFeature.index + 1}`;
+    if (wallLengthInput) wallLengthInput.value = worldLengthForSegment(selectedOpening, detectedWallResult).toFixed(1);
+    if (wallThicknessInput) {
+      wallThicknessInput.value = worldThicknessForFeature(selectedOpening, detectedWallResult, 0.01).toFixed(2);
+    }
     if (wallStartOffsetInput) wallStartOffsetInput.value = "0";
     if (wallEndOffsetInput) wallEndOffsetInput.value = "0";
     return;
@@ -6927,6 +8109,7 @@ function closestWallIndex(reference, segments) {
 
 function snapEditedWallToNearbyJunctions(wall, result, options = {}) {
   if (!wall || !result?.segments?.length) return 0;
+  if (wall.manualLock) return 0;
   const tolerance = options.tolerance ?? Math.max(8, Math.round(Math.max(result.width, result.height) * 0.015));
   const endpoints = options.endpoint ? [options.endpoint] : ["start", "end"];
   const perpendiculars = result.segments.filter((segment) => segment.orientation !== wall.orientation);
@@ -6977,6 +8160,7 @@ function snapEditedWallToNearbyJunctions(wall, result, options = {}) {
 
 function mergeEditedWallWithCollinearNeighbors(wall, result) {
   if (!wall || !result?.segments?.length) return 0;
+  if (wall.manualLock) return 0;
   const tolerance = Math.max(8, Math.round(Math.max(result.width, result.height) * 0.014), wall.thicknessPx ?? 5);
   let mergeCount = 0;
   let merged = true;
@@ -6987,6 +8171,7 @@ function mergeEditedWallWithCollinearNeighbors(wall, result) {
     if (wallIndex === -1) break;
 
     const neighborIndex = result.segments.findIndex((candidate, index) => {
+      if (candidate.manualLock) return false;
       if (index === wallIndex || candidate.orientation !== wall.orientation) return false;
       const axisGap = Math.abs(candidate.axisCenter - wall.axisCenter);
       if (axisGap > Math.max(tolerance, candidate.thicknessPx ?? 4, wall.thicknessPx ?? 4)) return false;
@@ -7040,8 +8225,8 @@ function applyWallGlueToDetectedResult(options = {}) {
     ...segment,
     baseStart: segment.start,
     baseEnd: segment.end,
-    startCorrectionMeters: 0,
-    endCorrectionMeters: 0,
+    startCorrectionMeters: segment.manualLock ? segment.startCorrectionMeters ?? 0 : 0,
+    endCorrectionMeters: segment.manualLock ? segment.endCorrectionMeters ?? 0 : 0,
   }));
 
   if (selectedWall) {
@@ -7084,6 +8269,7 @@ function applySelectedWallThickness(rawValue, message = "已调整墙厚", optio
     return;
   }
 
+  savePlanUndoSnapshot();
   const nextThicknessPx = THREE.MathUtils.clamp(
     pixelThicknessForWorldLength(THREE.MathUtils.clamp(thicknessMeters, 0.05, 1.2), detectedWallResult, segment.orientation),
     2,
@@ -7109,6 +8295,7 @@ function applySelectedWallEndpointOffsets(rawStart, rawEnd) {
     return;
   }
 
+  savePlanUndoSnapshot();
   const startCorrectionPixels = pixelLengthForWorldLength(
     Math.abs(startCorrectionMeters),
     detectedWallResult,
@@ -7141,12 +8328,13 @@ function applySelectedWallEndpointOffsets(rawStart, rawEnd) {
   applyWallGlueToDetectedResult({ rebuildOpenings: true });
   renderDetectedWalls(detectedWallResult);
   setRecognitionStatus(wallSummaryText("已吸附粘合墙体"));
-  if (generated3DActive) build3DFromDetectedWalls();
+  if (generated3DActive) build3DFromDetectedWalls({ preserveView: true });
 }
 
 function deleteSelectedWall() {
   if (selectedDetectedWallIndex === null || !detectedWallResult) return;
 
+  savePlanUndoSnapshot();
   const wall = detectedWallResult.segments[selectedDetectedWallIndex];
   detectedWallResult.doors = (detectedWallResult.doors ?? []).filter((opening) => !openingAlignedToWall(opening, wall));
   detectedWallResult.windows = (detectedWallResult.windows ?? []).filter((opening) => !openingAlignedToWall(opening, wall));
@@ -7156,7 +8344,71 @@ function deleteSelectedWall() {
   applyWallGlueToDetectedResult({ rebuildOpenings: true });
   renderDetectedWalls(detectedWallResult);
   setRecognitionStatus(wallSummaryText("已删除墙体"));
-  if (generated3DActive) build3DFromDetectedWalls();
+  if (generated3DActive) build3DFromDetectedWalls({ preserveView: true });
+}
+
+function deleteSelectedLinearFeature() {
+  if (!selectedLinearFeature) return false;
+  const { kind, index } = selectedLinearFeature;
+  if (kind === "wall") {
+    deleteSelectedWall();
+    return true;
+  }
+  if (!["door", "window"].includes(kind)) return false;
+  const collection = linearFeatureCollection(kind);
+  if (!collection?.[index]) return false;
+
+  deleteLinearFeature(kind, index);
+  return true;
+}
+
+function moveSelectedWallByKeyboard(event) {
+  if (isTypingTarget(event.target)) return false;
+  if (currentView !== "top" || selectedDetectedWallIndex === null || !detectedWallResult) return false;
+  if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return false;
+
+  const segment = detectedWallResult.segments[selectedDetectedWallIndex];
+  if (!segment) return false;
+  event.preventDefault();
+
+  const baseStepMeters = event.shiftKey ? 0.5 : event.altKey ? 0.02 : 0.1;
+  const xPixels = pixelLengthForWorldLength(baseStepMeters, detectedWallResult, "horizontal");
+  const yPixels = pixelLengthForWorldLength(baseStepMeters, detectedWallResult, "vertical");
+  const previous = { ...segment };
+  let alongDelta = 0;
+  let axisDelta = 0;
+
+  if (segment.orientation === "horizontal") {
+    if (event.key === "ArrowLeft") alongDelta = -xPixels;
+    if (event.key === "ArrowRight") alongDelta = xPixels;
+    if (event.key === "ArrowUp") axisDelta = -yPixels;
+    if (event.key === "ArrowDown") axisDelta = yPixels;
+  } else {
+    if (event.key === "ArrowUp") alongDelta = -yPixels;
+    if (event.key === "ArrowDown") alongDelta = yPixels;
+    if (event.key === "ArrowLeft") axisDelta = -xPixels;
+    if (event.key === "ArrowRight") axisDelta = xPixels;
+  }
+
+  const spanLimit = wallAxisLimit(segment, detectedWallResult);
+  const axisLimit = segment.orientation === "horizontal" ? detectedWallResult.height : detectedWallResult.width;
+  const length = segment.end - segment.start;
+  savePlanUndoSnapshot();
+  segment.start = THREE.MathUtils.clamp(segment.start + alongDelta, 0, Math.max(0, spanLimit - length));
+  segment.end = segment.start + length;
+  segment.axisCenter = THREE.MathUtils.clamp(segment.axisCenter + axisDelta, 0, axisLimit);
+  segment.baseStart = segment.start;
+  segment.baseEnd = segment.end;
+  segment.startCorrectionMeters = 0;
+  segment.endCorrectionMeters = 0;
+  transformOpeningsWithWall(previous, segment, segment.start - previous.start, segment.axisCenter - previous.axisCenter);
+  updateRoomsAfterManualWallEdit();
+  renderDetectedWalls(detectedWallResult);
+  setRecognitionStatus(wallSummaryText(`方向键移动墙体 ${baseStepMeters}m`));
+  if (generated3DActive && generated3DSource === "detected-walls") {
+    build3DFromDetectedWalls({ preserveView: true });
+  }
+  return true;
 }
 
 function distanceToWallSegment(point, segment, result) {
@@ -7189,6 +8441,28 @@ function findWallAtPoint(point) {
   return bestMatch;
 }
 
+function findOpeningAtPoint(point) {
+  if (!detectedWallResult || !point) return null;
+
+  let bestMatch = null;
+  [
+    ["door", detectedWallResult.doors ?? []],
+    ["window", detectedWallResult.windows ?? []],
+  ].forEach(([kind, collection]) => {
+    collection.forEach((opening, index) => {
+      const distance = distanceToWallSegment(point, opening, detectedWallResult);
+      const threshold = Math.max(0.18, worldThicknessForFeature(opening, detectedWallResult, 0.08) * 1.75);
+      if (distance > threshold) return;
+
+      if (!bestMatch || distance < bestMatch.distance) {
+        bestMatch = { kind, index, distance };
+      }
+    });
+  });
+
+  return bestMatch;
+}
+
 function wallEndpointDistances(point, segment, result) {
   const { from, to } = worldEndpointsForSegment(segment, result);
   return {
@@ -7216,6 +8490,11 @@ function wallAxisValueFromPoint(point, segment, result) {
 
 function minimumDraggableWallPixels(segment, result) {
   return Math.max(2, pixelLengthForWorldLength(0.3, result, segment.orientation));
+}
+
+function minimumDraggableOpeningPixels(kind, opening, result) {
+  const minMeters = kind === "door" ? 0.45 : 0.3;
+  return Math.max(2, pixelLengthForWorldLength(minMeters, result, opening.orientation));
 }
 
 function detectionPixelFromWorldPoint(point, result = detectedWallResult) {
@@ -7308,6 +8587,33 @@ function moveWallSegmentByPixels(segment, result, deltaX, deltaY) {
   };
 }
 
+function moveLinearOpeningByPixels(opening, result, deltaX, deltaY) {
+  const previous = { ...opening };
+  if (opening.orientation === "horizontal") {
+    const span = opening.end - opening.start;
+    const nextStart = THREE.MathUtils.clamp(opening.start + deltaX, 0, Math.max(0, result.width - span));
+    opening.start = nextStart;
+    opening.end = nextStart + span;
+    opening.axisCenter = THREE.MathUtils.clamp(opening.axisCenter + deltaY, 0, result.height);
+    return {
+      alongDelta: opening.start - previous.start,
+      axisDelta: opening.axisCenter - previous.axisCenter,
+      previous,
+    };
+  }
+
+  const span = opening.end - opening.start;
+  const nextStart = THREE.MathUtils.clamp(opening.start + deltaY, 0, Math.max(0, result.height - span));
+  opening.start = nextStart;
+  opening.end = nextStart + span;
+  opening.axisCenter = THREE.MathUtils.clamp(opening.axisCenter + deltaX, 0, result.width);
+  return {
+    alongDelta: opening.start - previous.start,
+    axisDelta: opening.axisCenter - previous.axisCenter,
+    previous,
+  };
+}
+
 function resizeWallSideToPixel(segment, dragStart, pixel, result, side) {
   if (!segment || !dragStart || !pixel) return false;
   const horizontal = segment.orientation === "horizontal";
@@ -7347,7 +8653,7 @@ function safeReleasePointerCapture(pointerId) {
   }
 }
 
-function beginDetectedWallDrag(event, index, point) {
+function beginDetectedWallDrag(event, index, point, forcedHandle = "move") {
   const segment = detectedWallResult?.segments?.[index];
   if (!segment || !point || (event.button != null && event.button !== 0)) return false;
 
@@ -7355,10 +8661,11 @@ function beginDetectedWallDrag(event, index, point) {
   isDraggingDetectedWall = true;
   detectedWallDragPointerId = event.pointerId;
   detectedWallDragIndex = index;
-  detectedWallDragEndpoint = wallDragHandleForPoint(point, segment, detectedWallResult);
+  detectedWallDragEndpoint = forcedHandle ?? "move";
   detectedWallDragLastPixel = detectionPixelFromWorldPoint(point, detectedWallResult);
   detectedWallDragStartSegment = { ...segment };
   detectedWallDragMoved = false;
+  detectedWallDragUndoSaved = false;
   controls.enabled = false;
   safeSetPointerCapture(event.pointerId);
   updateSelection(
@@ -7367,6 +8674,12 @@ function beginDetectedWallDrag(event, index, point) {
       : `拖拽调整墙体 ${detectedWallDragEndpoint === "start" ? "起点" : "终点"}`,
   );
   return true;
+}
+
+function saveDetectedWallDragUndoOnce() {
+  if (detectedWallDragUndoSaved) return;
+  savePlanUndoSnapshot();
+  detectedWallDragUndoSaved = true;
 }
 
 function updateDetectedWallDrag(event) {
@@ -7381,6 +8694,7 @@ function updateDetectedWallDrag(event) {
     const deltaX = currentPixel.x - detectedWallDragLastPixel.x;
     const deltaY = currentPixel.y - detectedWallDragLastPixel.y;
     if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01) return;
+    saveDetectedWallDragUndoOnce();
     const move = moveWallSegmentByPixels(segment, detectedWallResult, deltaX, deltaY);
     snapEditedWallToNearbyJunctions(segment, detectedWallResult);
     mergedCount = mergeEditedWallWithCollinearNeighbors(segment, detectedWallResult);
@@ -7402,6 +8716,7 @@ function updateDetectedWallDrag(event) {
     const currentPixel = detectionPixelFromWorldPoint(point, detectedWallResult);
     if (!currentPixel) return;
     const previous = { ...segment };
+    saveDetectedWallDragUndoOnce();
     if (!resizeWallSideToPixel(segment, detectedWallDragStartSegment, currentPixel, detectedWallResult, detectedWallDragEndpoint)) return;
     detectedWallDragMoved = true;
     transformOpeningsWithWall(previous, segment, 0, segment.axisCenter - previous.axisCenter);
@@ -7415,6 +8730,7 @@ function updateDetectedWallDrag(event) {
   const minimumLength = minimumDraggableWallPixels(segment, detectedWallResult);
   const axisValue = wallAxisValueFromPoint(point, segment, detectedWallResult);
   const previous = { ...segment };
+  saveDetectedWallDragUndoOnce();
 
   if (detectedWallDragEndpoint === "start") {
     segment.start = THREE.MathUtils.clamp(axisValue, 0, Math.max(0, segment.end - minimumLength));
@@ -7447,10 +8763,19 @@ function finishDetectedWallDrag(event) {
   detectedWallDragLastPixel = null;
   detectedWallDragStartSegment = null;
   detectedWallDragMoved = false;
+  detectedWallDragUndoSaved = false;
   controls.enabled = true;
   safeReleasePointerCapture(event.pointerId);
 
   if (moved && detectedWallResult) {
+    const selectedWall = selectedDetectedWallIndex === null ? null : detectedWallResult.segments[selectedDetectedWallIndex];
+    if (selectedWall?.manualLock) {
+      updateRoomsAfterManualWallEdit();
+      renderDetectedWalls(detectedWallResult);
+      setRecognitionStatus(wallSummaryText("已移动手动墙体"));
+      if (shouldRebuild) build3DFromDetectedWalls({ preserveView: currentView === "top" });
+      return true;
+    }
     applyWallGlueToDetectedResult({ rebuildOpenings: true });
     renderDetectedWalls(detectedWallResult);
     setRecognitionStatus(wallSummaryText("已吸附粘合墙体"));
@@ -7459,6 +8784,113 @@ function finishDetectedWallDrag(event) {
   }
 
   if (shouldRebuild) build3DFromDetectedWalls({ preserveView: currentView === "top" });
+  return true;
+}
+
+function beginLinearOpeningDrag(event, kind, index, point, forcedHandle = "move") {
+  const collection = linearFeatureCollection(kind);
+  const opening = collection?.[index];
+  if (!opening || !point || (event.button != null && event.button !== 0)) return false;
+
+  selectLinearFeature(kind, index);
+  isDraggingLinearOpening = true;
+  linearOpeningDragPointerId = event.pointerId;
+  linearOpeningDragKind = kind;
+  linearOpeningDragIndex = index;
+  linearOpeningDragHandle = forcedHandle ?? "move";
+  linearOpeningDragLastPixel = detectionPixelFromWorldPoint(point, detectedWallResult);
+  linearOpeningDragStart = { ...opening };
+  linearOpeningDragMoved = false;
+  linearOpeningDragUndoSaved = false;
+  controls.enabled = false;
+  safeSetPointerCapture(event.pointerId);
+  renderDetectedWalls(detectedWallResult);
+  updateSelection(kind === "window" ? "Dragging window" : "Dragging door opening");
+  return true;
+}
+
+function saveLinearOpeningDragUndoOnce() {
+  if (linearOpeningDragUndoSaved) return;
+  savePlanUndoSnapshot();
+  linearOpeningDragUndoSaved = true;
+}
+
+function updateLinearOpeningDrag(event) {
+  const collection = linearFeatureCollection(linearOpeningDragKind);
+  const opening = collection?.[linearOpeningDragIndex];
+  const point = groundPointFromEvent(event);
+  if (!opening || !point || !detectedWallResult) return;
+
+  if (linearOpeningDragHandle === "move") {
+    const currentPixel = detectionPixelFromWorldPoint(point, detectedWallResult);
+    if (!currentPixel || !linearOpeningDragLastPixel) return;
+    const deltaX = currentPixel.x - linearOpeningDragLastPixel.x;
+    const deltaY = currentPixel.y - linearOpeningDragLastPixel.y;
+    if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01) return;
+
+    saveLinearOpeningDragUndoOnce();
+    moveLinearOpeningByPixels(opening, detectedWallResult, deltaX, deltaY);
+    linearOpeningDragLastPixel = currentPixel;
+    linearOpeningDragMoved = true;
+    updateRoomsAfterManualWallEdit();
+    renderDetectedWalls(detectedWallResult);
+    setRecognitionStatus(wallSummaryText(linearOpeningDragKind === "window" ? "Dragging window" : "Dragging door opening"));
+    return;
+  }
+
+  if (linearOpeningDragHandle === "side-min" || linearOpeningDragHandle === "side-max") {
+    const currentPixel = detectionPixelFromWorldPoint(point, detectedWallResult);
+    if (!currentPixel) return;
+    saveLinearOpeningDragUndoOnce();
+    if (!resizeWallSideToPixel(opening, linearOpeningDragStart, currentPixel, detectedWallResult, linearOpeningDragHandle)) {
+      return;
+    }
+    linearOpeningDragMoved = true;
+    updateRoomsAfterManualWallEdit();
+    renderDetectedWalls(detectedWallResult);
+    setRecognitionStatus(
+      wallSummaryText(linearOpeningDragKind === "window" ? "Resizing window depth" : "Resizing door opening depth"),
+    );
+    return;
+  }
+
+  const limit = wallAxisLimit(opening, detectedWallResult);
+  const minimumLength = minimumDraggableOpeningPixels(linearOpeningDragKind, opening, detectedWallResult);
+  const axisValue = wallAxisValueFromPoint(point, opening, detectedWallResult);
+  saveLinearOpeningDragUndoOnce();
+
+  if (linearOpeningDragHandle === "start") {
+    opening.start = THREE.MathUtils.clamp(axisValue, 0, Math.max(0, opening.end - minimumLength));
+  } else {
+    opening.end = THREE.MathUtils.clamp(axisValue, Math.min(limit, opening.start + minimumLength), limit);
+  }
+
+  linearOpeningDragMoved = true;
+  updateRoomsAfterManualWallEdit();
+  renderDetectedWalls(detectedWallResult);
+  setRecognitionStatus(wallSummaryText(linearOpeningDragKind === "window" ? "Resizing window" : "Resizing door opening"));
+}
+
+function finishLinearOpeningDrag(event) {
+  if (!isDraggingLinearOpening || event.pointerId !== linearOpeningDragPointerId) return false;
+
+  const moved = linearOpeningDragMoved;
+  const kind = linearOpeningDragKind;
+  isDraggingLinearOpening = false;
+  linearOpeningDragPointerId = null;
+  linearOpeningDragKind = null;
+  linearOpeningDragIndex = null;
+  linearOpeningDragHandle = null;
+  linearOpeningDragLastPixel = null;
+  linearOpeningDragStart = null;
+  linearOpeningDragMoved = false;
+  linearOpeningDragUndoSaved = false;
+  controls.enabled = true;
+  safeReleasePointerCapture(event.pointerId);
+
+  if (moved) {
+    commitOpeningPlanEdit(kind === "window" ? "Window adjusted" : "Door opening adjusted");
+  }
   return true;
 }
 
@@ -7645,6 +9077,7 @@ function applyEditableTransform(mutator) {
   syncTransformInputs();
   updateEditor();
   selectedHelper?.update();
+  updateSelectedModelResizeHandles();
   updateDecisionBoard();
 }
 
@@ -7654,7 +9087,8 @@ function build3DFromDetectedWalls(options = {}) {
     return;
   }
 
-  clearGenerated3D();
+  const preserveCurrentView = options.preserveView ?? true;
+  clearGenerated3D({ resetPresentation: false });
 
   const wallHeight = Math.max(2.2, Number(wallHeightInput?.value || 2.8));
   const optimizer = planOptimizerSettings();
@@ -7677,10 +9111,18 @@ function build3DFromDetectedWalls(options = {}) {
     });
   }
 
-  detectedWallResult.segments.forEach((segment) => {
+  detectedWallResult.segments.forEach((segment, index) => {
     const wallThickness = worldThicknessForFeature(segment, detectedWallResult, 0.1);
     const openings = openingsForWallSegment(segment, detectedWallResult);
-    addSolidWallSpansAroundOpenings(generatedModelGroup, segment, openings, detectedWallResult, wallHeight, wallThickness);
+    addSolidWallSpansAroundOpenings(
+      generatedModelGroup,
+      segment,
+      openings,
+      detectedWallResult,
+      wallHeight,
+      wallThickness,
+      index,
+    );
 
     openings.forEach((opening) => {
       if (opening.kind !== "window") return;
@@ -7688,22 +9130,28 @@ function build3DFromDetectedWalls(options = {}) {
     });
   });
 
-  detectedWallResult.doors.forEach((opening) => {
+  detectedWallResult.doors.forEach((opening, index) => {
     const wallThickness = worldThicknessForFeature(opening, detectedWallResult, 0.1);
     const lintel = makeDoorLintelFromOpening(opening, detectedWallResult, wallHeight, wallThickness);
     if (!lintel) return;
     lintel.userData.collider = "door-lintel";
+    lintel.userData.featureKind = "generated-opening";
+    lintel.userData.linearKind = "door";
+    lintel.userData.linearIndex = index;
+    lintel.userData.selectName = "3D door opening";
     generatedDoorMeshes.push(lintel);
     generatedModelGroup.add(lintel);
 
     const doorAssembly = makeDoorAssemblyFromOpening(opening, detectedWallResult, wallHeight, wallThickness);
+    tagGeneratedOpeningGroup(doorAssembly, "door", index);
     generatedDoorMeshes.push(doorAssembly);
     generatedModelGroup.add(doorAssembly);
   });
 
-  (detectedWallResult.windows ?? []).forEach((opening) => {
+  (detectedWallResult.windows ?? []).forEach((opening, index) => {
     const wallThickness = worldThicknessForFeature(opening, detectedWallResult, 0.1);
     const windowAssembly = makeWindowAssemblyFromOpening(opening, detectedWallResult, wallHeight, wallThickness);
+    tagGeneratedOpeningGroup(windowAssembly, "window", index);
     generatedWindowMeshes.push(windowAssembly);
     generatedModelGroup.add(windowAssembly);
   });
@@ -7721,6 +9169,7 @@ function build3DFromDetectedWalls(options = {}) {
   scene.add(generatedModelGroup);
   generated3DActive = true;
   generated3DSource = "detected-walls";
+  renderGeneratedOpeningHandles();
   const collisionResult = settleFurnitureAgainstGeneratedWalls();
   if (detectedWallGroup) detectedWallGroup.visible = false;
   shellMeshes.floor.forEach((mesh) => {
@@ -7740,7 +9189,7 @@ function build3DFromDetectedWalls(options = {}) {
       collisionResult.blocked > 0 ? `${semanticNote}，${collisionResult.blocked} 件需手动调整` : semanticNote,
     ),
   );
-  setView(options.preserveView ? currentView : "orbit");
+  setView(preserveCurrentView ? currentView : "orbit");
 }
 
 function clearDetectedWallOverlay() {
@@ -7752,6 +9201,8 @@ function clearDetectedWallOverlay() {
 }
 
 function clearDetectedWalls() {
+  setWallLineDrawMode(false);
+  setDoorOpeningPlaceMode(false);
   clearGenerated3D();
   clearDetectedWallOverlay();
   detectedWallSegments = [];
@@ -7761,6 +9212,7 @@ function clearDetectedWalls() {
   detectedWallMeshes = [];
   selectedDetectedWallIndex = null;
   detectedWallResult = null;
+  manualWallInsertCount = 0;
   updateWallEditor();
   selectedLinearFeature = null;
   renderLinearPlanEditor(null);
@@ -7798,33 +9250,42 @@ function renderDetectedWalls(result) {
     detectedWallGroup.add(mesh);
   });
 
-  result.doors.forEach((opening) => {
+  result.doors.forEach((opening, index) => {
+    const selected = selectedLinearFeature?.kind === "door" && selectedLinearFeature.index === index;
     const mesh = makeWallMeshFromSegment(
       opening,
       result,
       0.045,
       Math.max(0.08, worldThicknessForFeature(opening, result, 0.08) * 1.18),
-      colors.coral,
-      0.095,
+      selected ? colors.gold : colors.coral,
+      selected ? 0.145 : 0.095,
     );
+    mesh.userData.featureKind = "door";
+    mesh.userData.linearKind = "door";
+    mesh.userData.linearIndex = index;
     detectedWallGroup.add(mesh);
   });
 
-  result.windows?.forEach((opening) => {
+  result.windows?.forEach((opening, index) => {
+    const selected = selectedLinearFeature?.kind === "window" && selectedLinearFeature.index === index;
     const mesh = makeWallMeshFromSegment(
       opening,
       result,
-      0.055,
+      selected ? 0.075 : 0.055,
       Math.max(0.08, worldThicknessForFeature(opening, result, 0.08) * 1.18),
-      colors.glass,
-      0.125,
+      selected ? colors.gold : colors.glass,
+      selected ? 0.16 : 0.125,
     );
     mesh.material.transparent = true;
-    mesh.material.opacity = 0.72;
+    mesh.material.opacity = selected ? 0.92 : 0.72;
+    mesh.userData.featureKind = "window";
+    mesh.userData.linearKind = "window";
+    mesh.userData.linearIndex = index;
     detectedWallGroup.add(mesh);
   });
 
   addSelectedWallHandles(detectedWallGroup, result);
+  addSelectedOpeningHandles(detectedWallGroup, result);
 
   if (optimizer.lengthLabels) {
     addWallLengthAnnotations(detectedWallGroup, result, {
@@ -7859,6 +9320,7 @@ function detectWallsFromPlan() {
 
   setRecognitionStatus("识别中...");
   const source = recognitionSourceForPlan();
+  savePlanUndoSnapshot();
   const result = estimateWallSegments(source.canvas, { sourceRect: source.sourceRect });
   result.sourceRect = source.sourceRect;
   result.sourceLabel = source.label;
@@ -7882,26 +9344,34 @@ function updateSelectedTransform(type, rawValue) {
 }
 
 function setView(view, updateButtons = true) {
+  const keepCurrentCamera = view === currentView;
   currentView = view;
   walkKeys.clear();
   const mode = view === "top" ? "2d" : "3d";
   designStage?.classList.toggle("is-2d-mode", mode === "2d");
   designStage?.classList.toggle("is-3d-mode", mode === "3d");
   if (view === "top") {
-    camera.position.set(0, 7.8, 0.02);
-    controls.target.set(0, 0, 0);
+    clearSelectedModelResizeHandles();
+    if (!keepCurrentCamera) {
+      camera.position.set(0, 7.8, 0.02);
+      controls.target.set(0, 0, 0);
+    }
     controls.enableRotate = false;
   } else if (view === "walk") {
-    camera.position.set(0.35, 1.35, 3.25);
-    controls.target.set(0.15, 1.0, -0.95);
+    if (!keepCurrentCamera) {
+      camera.position.set(0.35, 1.35, 3.25);
+      controls.target.set(0.15, 1.0, -0.95);
+    }
     controls.enableRotate = true;
   } else {
-    if (generated3DActive) {
-      camera.position.set(5.4, 6.1, 5.8);
-      controls.target.set(0, 0.55, 0);
-    } else {
-      camera.position.set(4.8, 3.6, 5.2);
-      controls.target.set(0, 0.72, 0);
+    if (!keepCurrentCamera) {
+      if (generated3DActive) {
+        camera.position.set(5.4, 6.1, 5.8);
+        controls.target.set(0, 0.55, 0);
+      } else {
+        camera.position.set(4.8, 3.6, 5.2);
+        controls.target.set(0, 0.72, 0);
+      }
     }
     controls.enableRotate = true;
   }
@@ -7909,6 +9379,7 @@ function setView(view, updateButtons = true) {
   if (generated3DActive && detectedWallGroup) detectedWallGroup.visible = view === "top";
   if (generatedModelGroup) generatedModelGroup.visible = view !== "top" || !detectedWallResult;
   controls.update();
+  if (view !== "top") renderSelectedModelResizeHandles();
 
   if (!updateButtons) return;
   viewButtons.forEach((button) => {
@@ -7943,6 +9414,341 @@ function groundPointFromEvent(event) {
   return raycaster.ray.intersectPlane(dragPlane, point) ? point : null;
 }
 
+function topViewEditHandleHit() {
+  if (!detectedWallGroup?.visible) return null;
+
+  const hits = raycaster.intersectObjects(detectedWallGroup.children, true);
+  for (const hit of hits) {
+    let object = hit.object;
+    while (object && object !== detectedWallGroup) {
+      const data = object.userData ?? {};
+      if (data.linearHandle && ["door", "window"].includes(data.linearKind)) {
+        return {
+          kind: data.linearKind,
+          index: data.linearIndex,
+          handle: data.linearHandle,
+        };
+      }
+      if (data.wallHandle && selectedDetectedWallIndex !== null) {
+        return {
+          kind: "wall",
+          index: selectedDetectedWallIndex,
+          handle: data.wallHandle,
+        };
+      }
+      object = object.parent;
+    }
+  }
+
+  return null;
+}
+
+function generatedOpeningPointerHit() {
+  if (!generatedModelGroup?.visible || generated3DSource !== "detected-walls") return null;
+  const hits = raycaster.intersectObjects(generatedModelGroup.children, true);
+
+  for (const hit of hits) {
+    const data = hit.object.userData ?? {};
+    if (data.featureKind === "generated-opening-handle") {
+      return {
+        type: "handle",
+        kind: data.linearKind,
+        index: data.linearIndex,
+        handle: data.linearHandle,
+      };
+    }
+  }
+
+  for (const hit of hits) {
+    let object = hit.object;
+    while (object && object !== generatedModelGroup) {
+      const data = object.userData ?? {};
+      if (data.featureKind === "generated-opening" && ["door", "window"].includes(data.linearKind)) {
+        return {
+          type: "opening",
+          kind: data.linearKind,
+          index: data.linearIndex,
+        };
+      }
+      object = object.parent;
+    }
+  }
+
+  for (const hit of hits) {
+    let object = hit.object;
+    while (object && object !== generatedModelGroup) {
+      const data = object.userData ?? {};
+      if (data.featureKind === "generated-wall" && data.linearKind === "wall") {
+        return {
+          type: "wall",
+          kind: "wall",
+          index: data.linearIndex,
+        };
+      }
+      object = object.parent;
+    }
+  }
+
+  return null;
+}
+
+function modelResizeHandleHit() {
+  if (!selectedModelResizeHandleGroup?.visible || currentView === "top") return null;
+  const hits = raycaster.intersectObjects(selectedModelResizeHandleGroup.children, true);
+  return hits.find((hit) => hit.object.userData?.featureKind === "model-resize-handle") ?? null;
+}
+
+function beginModelResizeHandleDrag(event, hit) {
+  if (!hit || !selectedGroup?.userData?.editable || (event.button != null && event.button !== 0)) return false;
+  const point = groundPointFromEvent(event);
+  const bounds = selectedModelBounds();
+  if (!point || !bounds) return false;
+
+  const center = bounds.getCenter(new THREE.Vector3());
+  modelResizeStartDistance = Math.max(0.08, Math.hypot(point.x - center.x, point.z - center.z));
+  modelResizeStartScale = selectedGroup.scale.x;
+  isDraggingModelResizeHandle = true;
+  modelResizePointerId = event.pointerId;
+  controls.enabled = false;
+  safeSetPointerCapture(event.pointerId);
+  updateSelection("Adjusting model size");
+  return true;
+}
+
+function updateModelResizeHandleDrag(event) {
+  if (!selectedGroup?.userData?.editable) return;
+  const point = groundPointFromEvent(event);
+  const bounds = selectedModelBounds();
+  if (!point || !bounds) return;
+
+  const center = bounds.getCenter(new THREE.Vector3());
+  const distance = Math.max(0.08, Math.hypot(point.x - center.x, point.z - center.z));
+  const ratio = THREE.MathUtils.clamp(distance / Math.max(0.08, modelResizeStartDistance), 0.15, 5);
+  const previousPosition = selectedGroup.position.clone();
+  const nextScale = THREE.MathUtils.clamp(modelResizeStartScale * ratio, 0.2, 3);
+  selectedGroup.scale.setScalar(nextScale);
+  if (!constrainFurniturePosition(selectedGroup, previousPosition)) {
+    selectedGroup.scale.setScalar(modelResizeStartScale);
+  }
+  syncTransformInputs();
+  updateEditor();
+  selectedHelper?.update();
+  updateSelectedModelResizeHandles();
+}
+
+function finishModelResizeHandleDrag(event) {
+  if (!isDraggingModelResizeHandle || event.pointerId !== modelResizePointerId) return false;
+  isDraggingModelResizeHandle = false;
+  modelResizePointerId = null;
+  controls.enabled = true;
+  safeReleasePointerCapture(event.pointerId);
+  updateSelection(selectedGroup?.userData?.selectName ?? "Model selected");
+  return true;
+}
+
+function selectGeneratedOpening(kind, index) {
+  if (!linearFeatureCollection(kind)?.[index]) return false;
+  selectedObject = null;
+  selectedGroup = null;
+  if (selectedHelper) {
+    scene.remove(selectedHelper);
+    selectedHelper = null;
+  }
+  clearSelectedModelResizeHandles();
+  selectLinearFeature(kind, index);
+  if (kind === "wall") selectedDetectedWallIndex = index;
+  return true;
+}
+
+function beginGeneratedOpeningHandleDrag(event, hit) {
+  if (!hit || (event.button != null && event.button !== 0)) return false;
+  if (!selectGeneratedOpening(hit.kind, hit.index)) return false;
+
+  isDraggingGeneratedOpeningHandle = true;
+  generatedOpeningDragPointerId = event.pointerId;
+  generatedOpeningDragKind = hit.kind;
+  generatedOpeningDragIndex = hit.index;
+  generatedOpeningDragHandle = hit.handle;
+  generatedOpeningDragUndoSaved = false;
+  controls.enabled = false;
+  safeSetPointerCapture(event.pointerId);
+  updateSelection(
+    hit.kind === "wall" ? "Adjusting 3D wall" : hit.kind === "window" ? "Adjusting 3D window" : "Adjusting 3D door opening",
+  );
+  return true;
+}
+
+function beginGeneratedOpeningMoveDrag(event, hit) {
+  if (!hit || !["door", "window"].includes(hit.kind) || (event.button != null && event.button !== 0)) return false;
+  if (!selectGeneratedOpening(hit.kind, hit.index)) return false;
+  const point = groundPointFromEvent(event);
+  const pixel = point ? detectionPixelFromWorldPoint(point, detectedWallResult) : null;
+  if (!pixel) return true;
+
+  isDraggingGeneratedOpeningMove = true;
+  generatedOpeningMovePointerId = event.pointerId;
+  generatedOpeningMoveKind = hit.kind;
+  generatedOpeningMoveIndex = hit.index;
+  generatedOpeningMoveLastPixel = pixel;
+  generatedOpeningMoveUndoSaved = false;
+  controls.enabled = false;
+  safeSetPointerCapture(event.pointerId);
+  updateSelection(hit.kind === "window" ? "Moving 3D window" : "Moving 3D door opening");
+  return true;
+}
+
+function saveGeneratedOpeningDragUndoOnce() {
+  if (generatedOpeningDragUndoSaved) return;
+  savePlanUndoSnapshot();
+  generatedOpeningDragUndoSaved = true;
+}
+
+function saveGeneratedOpeningMoveUndoOnce() {
+  if (generatedOpeningMoveUndoSaved) return;
+  savePlanUndoSnapshot();
+  generatedOpeningMoveUndoSaved = true;
+}
+
+function updateGeneratedOpeningMoveDrag(event) {
+  const collection = linearFeatureCollection(generatedOpeningMoveKind);
+  const opening = collection?.[generatedOpeningMoveIndex];
+  if (!opening || !detectedWallResult) return;
+
+  const point = groundPointFromEvent(event);
+  const pixel = point ? detectionPixelFromWorldPoint(point, detectedWallResult) : null;
+  if (!pixel || !generatedOpeningMoveLastPixel) return;
+
+  const deltaX = pixel.x - generatedOpeningMoveLastPixel.x;
+  const deltaY = pixel.y - generatedOpeningMoveLastPixel.y;
+  const verticalDelta = -(event.movementY || 0) * 0.01;
+  if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01 && Math.abs(verticalDelta) < 0.0001) return;
+
+  saveGeneratedOpeningMoveUndoOnce();
+  moveLinearOpeningByPixels(opening, detectedWallResult, deltaX, deltaY);
+  if (generatedOpeningMoveKind === "window" && Math.abs(verticalDelta) > 0.0001) {
+    const wallHeight = Math.max(2.2, Number(wallHeightInput?.value || 2.8));
+    const profile = windowVerticalProfile(opening.windowType ?? "standard", wallHeight, opening);
+    opening.sillHeightMeters = THREE.MathUtils.clamp(profile.sillHeight + verticalDelta, 0, wallHeight - profile.windowHeight - 0.08);
+    opening.heightMeters = profile.windowHeight;
+  }
+
+  generatedOpeningMoveLastPixel = pixel;
+  selectedLinearFeature = { kind: generatedOpeningMoveKind, index: generatedOpeningMoveIndex };
+  updateRoomsAfterManualWallEdit();
+  renderDetectedWalls(detectedWallResult);
+  if (generated3DActive && generated3DSource === "detected-walls") {
+    build3DFromDetectedWalls({ preserveView: true });
+  }
+}
+
+function finishGeneratedOpeningMoveDrag(event) {
+  if (!isDraggingGeneratedOpeningMove || event.pointerId !== generatedOpeningMovePointerId) return false;
+
+  const changed = generatedOpeningMoveUndoSaved;
+  const kind = generatedOpeningMoveKind;
+  isDraggingGeneratedOpeningMove = false;
+  generatedOpeningMovePointerId = null;
+  generatedOpeningMoveKind = null;
+  generatedOpeningMoveIndex = null;
+  generatedOpeningMoveLastPixel = null;
+  generatedOpeningMoveUndoSaved = false;
+  controls.enabled = true;
+  safeReleasePointerCapture(event.pointerId);
+
+  if (changed) {
+    commitOpeningPlanEdit(kind === "window" ? "3D window moved" : "3D door opening moved");
+  }
+  return true;
+}
+
+function updateGeneratedOpeningHandleDrag(event) {
+  const collection = linearFeatureCollection(generatedOpeningDragKind);
+  const opening = collection?.[generatedOpeningDragIndex];
+  if (!opening || !detectedWallResult) return;
+
+  const handle = generatedOpeningDragHandle ?? "";
+  const point = groundPointFromEvent(event);
+  const limit = wallAxisLimit(opening, detectedWallResult);
+  const minimumLength = minimumDraggableOpeningPixels(generatedOpeningDragKind, opening, detectedWallResult);
+  let changed = false;
+
+  if (point && handle.includes("start")) {
+    const axisValue = wallAxisValueFromPoint(point, opening, detectedWallResult);
+    saveGeneratedOpeningDragUndoOnce();
+    opening.start = THREE.MathUtils.clamp(axisValue, 0, Math.max(0, opening.end - minimumLength));
+    changed = true;
+  } else if (point && handle.includes("end")) {
+    const axisValue = wallAxisValueFromPoint(point, opening, detectedWallResult);
+    saveGeneratedOpeningDragUndoOnce();
+    opening.end = THREE.MathUtils.clamp(axisValue, Math.min(limit, opening.start + minimumLength), limit);
+    changed = true;
+  }
+
+  const wallHeight = Math.max(2.2, Number(wallHeightInput?.value || 2.8));
+  const verticalDelta = -(event.movementY || 0) * 0.01;
+  if (Math.abs(verticalDelta) > 0.0001) {
+    if (generatedOpeningDragKind === "wall" && handle.includes("top")) {
+      saveGeneratedOpeningDragUndoOnce();
+      opening.heightMeters = THREE.MathUtils.clamp((opening.heightMeters ?? wallHeight) + verticalDelta, 0.6, 5);
+      changed = true;
+    }
+    if (generatedOpeningDragKind === "door" && handle.includes("top")) {
+      saveGeneratedOpeningDragUndoOnce();
+      opening.heightMeters = THREE.MathUtils.clamp((opening.heightMeters ?? 2.15) + verticalDelta, 1.55, wallHeight - 0.08);
+      changed = true;
+    }
+    if (generatedOpeningDragKind === "window") {
+      const profile = windowVerticalProfile(opening.windowType ?? "standard", wallHeight, opening);
+      const bottom = profile.sillHeight;
+      const top = bottom + profile.windowHeight;
+      if (handle.includes("top")) {
+        saveGeneratedOpeningDragUndoOnce();
+        const nextTop = THREE.MathUtils.clamp(top + verticalDelta, bottom + 0.24, wallHeight - 0.08);
+        opening.sillHeightMeters = bottom;
+        opening.heightMeters = nextTop - bottom;
+        changed = true;
+      } else if (handle.includes("bottom")) {
+        saveGeneratedOpeningDragUndoOnce();
+        const nextBottom = THREE.MathUtils.clamp(bottom + verticalDelta, 0, top - 0.24);
+        opening.sillHeightMeters = nextBottom;
+        opening.heightMeters = top - nextBottom;
+        changed = true;
+      }
+    }
+  }
+
+  if (!changed) return;
+  selectedLinearFeature = { kind: generatedOpeningDragKind, index: generatedOpeningDragIndex };
+  if (generatedOpeningDragKind === "wall") selectedDetectedWallIndex = generatedOpeningDragIndex;
+  updateRoomsAfterManualWallEdit();
+  renderDetectedWalls(detectedWallResult);
+  if (generated3DActive && generated3DSource === "detected-walls") {
+    build3DFromDetectedWalls({ preserveView: true });
+  }
+}
+
+function finishGeneratedOpeningHandleDrag(event) {
+  if (!isDraggingGeneratedOpeningHandle || event.pointerId !== generatedOpeningDragPointerId) return false;
+
+  const changed = generatedOpeningDragUndoSaved;
+  const kind = generatedOpeningDragKind;
+  isDraggingGeneratedOpeningHandle = false;
+  generatedOpeningDragPointerId = null;
+  generatedOpeningDragKind = null;
+  generatedOpeningDragIndex = null;
+  generatedOpeningDragHandle = null;
+  generatedOpeningDragUndoSaved = false;
+  controls.enabled = true;
+  safeReleasePointerCapture(event.pointerId);
+
+  if (changed) {
+    commitOpeningPlanEdit(
+      kind === "wall" ? "3D wall adjusted" : kind === "window" ? "3D window adjusted" : "3D door opening adjusted",
+    );
+  }
+  return true;
+}
+
 function syncTransformInputs() {
   if (!selectedGroup?.userData?.editable) return;
   if (positionXRange) positionXRange.value = selectedGroup.position.x.toFixed(1);
@@ -7950,6 +9756,7 @@ function syncTransformInputs() {
 }
 
 function onPointerDown(event) {
+  canvas?.focus?.({ preventScroll: true });
   updatePointerFromEvent(event);
 
   if (isScaleCalibrationMode) {
@@ -7962,10 +9769,53 @@ function onPointerDown(event) {
     return;
   }
 
+  if (handleDoorOpeningPlacementClick(event)) {
+    return;
+  }
+
+  if (handleWallLineDrawClick(event)) {
+    return;
+  }
+
   if (currentView === "top" && detectedWallGroup?.visible) {
     const point = groundPointFromEvent(event);
+    const handleHit = topViewEditHandleHit();
+    if (point && handleHit?.kind === "wall" && beginDetectedWallDrag(event, handleHit.index, point, handleHit.handle)) {
+      return;
+    }
+    if (
+      point &&
+      ["door", "window"].includes(handleHit?.kind) &&
+      beginLinearOpeningDrag(event, handleHit.kind, handleHit.index, point, handleHit.handle)
+    ) {
+      return;
+    }
+    const openingHit = point ? findOpeningAtPoint(point) : null;
+    if (openingHit && beginLinearOpeningDrag(event, openingHit.kind, openingHit.index, point, "move")) {
+      return;
+    }
     const wallHit = point ? findWallAtPoint(point) : null;
-    if (wallHit && beginDetectedWallDrag(event, wallHit.index, point)) {
+    if (wallHit && beginDetectedWallDrag(event, wallHit.index, point, "move")) {
+      return;
+    }
+  }
+
+  if (currentView !== "top" && generated3DActive && generated3DSource === "detected-walls") {
+    const generatedOpeningHit = generatedOpeningPointerHit();
+    if (generatedOpeningHit?.type === "handle" && beginGeneratedOpeningHandleDrag(event, generatedOpeningHit)) {
+      return;
+    }
+    if (generatedOpeningHit?.type === "opening" && beginGeneratedOpeningMoveDrag(event, generatedOpeningHit)) {
+      return;
+    }
+    if (generatedOpeningHit?.type === "wall" && selectGeneratedOpening("wall", generatedOpeningHit.index)) {
+      return;
+    }
+  }
+
+  if (currentView !== "top") {
+    const resizeHandleHit = modelResizeHandleHit();
+    if (resizeHandleHit && beginModelResizeHandleDrag(event, resizeHandleHit)) {
       return;
     }
   }
@@ -7974,20 +9824,23 @@ function onPointerDown(event) {
   const editableHit = hits.find((hit) => hit.object.userData.modelRoot?.userData?.editable);
   if (editableHit) {
     selectMesh(editableHit.object);
+    if (currentView === "top" && selectedGroup?.userData?.editable) {
+      const point = groundPointFromEvent(event);
+      if (point) {
+        isDraggingModel = true;
+        dragPointerId = event.pointerId;
+        dragOffset.copy(point).sub(selectedGroup.position);
+        controls.enabled = false;
+        safeSetPointerCapture(event.pointerId);
+      }
+    }
+    return;
   } else if (currentView !== "top" && hits[0]) {
     selectMesh(hits[0].object);
+    return;
   }
 
-  if (currentView === "top" && selectedGroup?.userData?.editable) {
-    const point = groundPointFromEvent(event);
-    if (point) {
-      isDraggingModel = true;
-      dragPointerId = event.pointerId;
-      dragOffset.copy(point).sub(selectedGroup.position);
-      controls.enabled = false;
-      safeSetPointerCapture(event.pointerId);
-    }
-  }
+  clearCurrentSelection();
 }
 
 function isTypingTarget(target) {
@@ -8021,14 +9874,71 @@ function handleWalkKey(event, pressed) {
   }
 }
 
+function isDeleteShortcut(event) {
+  return event.key === "Delete" || event.key === "Del" || event.key === "Backspace" || event.code === "Delete";
+}
+
 function handleWallEditKey(event) {
   if (isTypingTarget(event.target)) return false;
+  if (isWallLineDrawMode && event.key === "Escape") {
+    event.preventDefault();
+    setWallLineDrawMode(false);
+    setRecognitionStatus("Draw wall canceled");
+    return true;
+  }
+  if (isDoorOpeningPlaceMode && event.key === "Escape") {
+    event.preventDefault();
+    setDoorOpeningPlaceMode(false);
+    setRecognitionStatus("门洞模式已取消");
+    return true;
+  }
+  if (detectedWallResult && selectedLinearFeature && isDeleteShortcut(event)) {
+    event.preventDefault();
+    return deleteSelectedLinearFeature();
+  }
+
+  if (detectedWallResult && selectedLinearFeature && ["door", "window"].includes(selectedLinearFeature.kind)) {
+    const { kind, index } = selectedLinearFeature;
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      const collection = linearFeatureCollection(kind);
+      const opening = collection?.[index];
+      if (!opening) return false;
+      event.preventDefault();
+      const stepMeters = event.shiftKey ? 0.5 : event.altKey ? 0.02 : 0.1;
+      if (event.ctrlKey || event.metaKey) {
+        const resizeKeys =
+          opening.orientation === "horizontal" ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
+        if (resizeKeys.includes(event.key)) {
+          const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+          return resizeLinearOpening(kind, index, direction, stepMeters);
+        }
+        return true;
+      }
+
+      const xPixels = pixelLengthForWorldLength(stepMeters, detectedWallResult, "horizontal");
+      const yPixels = pixelLengthForWorldLength(stepMeters, detectedWallResult, "vertical");
+      let alongDelta = 0;
+      let axisDelta = 0;
+      if (opening.orientation === "horizontal") {
+        if (event.key === "ArrowLeft") alongDelta = -xPixels;
+        if (event.key === "ArrowRight") alongDelta = xPixels;
+        if (event.key === "ArrowUp") axisDelta = -yPixels;
+        if (event.key === "ArrowDown") axisDelta = yPixels;
+      } else {
+        if (event.key === "ArrowUp") alongDelta = -yPixels;
+        if (event.key === "ArrowDown") alongDelta = yPixels;
+        if (event.key === "ArrowLeft") axisDelta = -xPixels;
+        if (event.key === "ArrowRight") axisDelta = xPixels;
+      }
+      return moveLinearOpening(kind, index, alongDelta, axisDelta);
+    }
+  }
   if (currentView !== "top" || selectedDetectedWallIndex === null || !detectedWallResult) return false;
-  if (!["Delete", "Backspace"].includes(event.key)) return false;
+  if (moveSelectedWallByKeyboard(event)) return true;
+  if (!isDeleteShortcut(event)) return false;
 
   event.preventDefault();
-  deleteSelectedWall();
-  return true;
+  return deleteSelectedLinearFeature();
 }
 
 function updateWalkMovement(deltaSeconds) {
@@ -8074,6 +9984,26 @@ function onPointerMove(event) {
     return;
   }
 
+  if (isDraggingModelResizeHandle && event.pointerId === modelResizePointerId) {
+    updateModelResizeHandleDrag(event);
+    return;
+  }
+
+  if (isDraggingGeneratedOpeningHandle && event.pointerId === generatedOpeningDragPointerId) {
+    updateGeneratedOpeningHandleDrag(event);
+    return;
+  }
+
+  if (isDraggingGeneratedOpeningMove && event.pointerId === generatedOpeningMovePointerId) {
+    updateGeneratedOpeningMoveDrag(event);
+    return;
+  }
+
+  if (isDraggingLinearOpening && event.pointerId === linearOpeningDragPointerId) {
+    updateLinearOpeningDrag(event);
+    return;
+  }
+
   if (isDraggingDetectedWall && event.pointerId === detectedWallDragPointerId) {
     updateDetectedWallDrag(event);
     return;
@@ -8088,12 +10018,22 @@ function onPointerMove(event) {
   selectedGroup.position.z = point.z - dragOffset.z;
   constrainFurniturePosition(selectedGroup, previousPosition);
   syncTransformInputs();
+  selectedHelper?.update();
+  updateSelectedModelResizeHandles();
 }
 
 function onPointerUp(event) {
   if (finishScaleCalibrationDraw(event)) return;
 
   if (finishPlanRegionDraw(event)) return;
+
+  if (finishModelResizeHandleDrag(event)) return;
+
+  if (finishGeneratedOpeningHandleDrag(event)) return;
+
+  if (finishGeneratedOpeningMoveDrag(event)) return;
+
+  if (finishLinearOpeningDrag(event)) return;
 
   if (finishDetectedWallDrag(event)) return;
 
@@ -8200,7 +10140,7 @@ function animate(time) {
   requestAnimationFrame(animate);
 }
 
-function init() {
+async function init() {
   if (!canvas) return;
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -8251,6 +10191,12 @@ function init() {
 
   resizeRenderer();
   loadRoom(activeRoom);
+  try {
+    await restoreSavedProject();
+  } catch (error) {
+    console.warn("Saved project restore failed.", error);
+    setRecognitionStatus("保存草稿恢复失败，可重新保存当前设计");
+  }
 
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
@@ -8259,9 +10205,14 @@ function init() {
   canvas.addEventListener("wheel", onCanvasWheel, { passive: false });
   window.addEventListener("resize", resizeRenderer);
   window.addEventListener("keydown", (event) => {
+    if (handleSaveKey(event)) return;
+    if (handleClipboardKey(event)) return;
+    if (handleUndoKey(event)) return;
     if (handleWallEditKey(event)) return;
     handleWalkKey(event, true);
   });
+  window.addEventListener("copy", handleNativeCopy);
+  window.addEventListener("paste", handleNativePaste);
   window.addEventListener("keyup", (event) => handleWalkKey(event, false));
   window.addEventListener("blur", () => walkKeys.clear());
   document.addEventListener("fullscreenchange", () => {
@@ -8365,6 +10316,18 @@ function init() {
     removeModel(selectedGroup);
   });
 
+  copyComponentButton?.addEventListener("click", () => {
+    runCopyCommand();
+  });
+
+  pasteComponentButton?.addEventListener("click", () => {
+    runPasteCommand();
+  });
+
+  saveProjectButton?.addEventListener("click", () => {
+    saveCurrentProject();
+  });
+
   clearOriginalModelButton?.addEventListener("click", () => {
     clearOriginalModel();
   });
@@ -8418,6 +10381,11 @@ function init() {
     if (planFileInput) planFileInput.value = "";
   });
 
+  deleteOriginalPlanButton?.addEventListener("click", () => {
+    clearPlan();
+    if (planFileInput) planFileInput.value = "";
+  });
+
   analyzePlanPhotoButton?.addEventListener("click", () => {
     analyzeCurrentPlanPhoto();
   });
@@ -8435,6 +10403,7 @@ function init() {
   });
 
   clearWallsButton?.addEventListener("click", () => {
+    if (detectedWallResult) savePlanUndoSnapshot();
     clearDetectedWalls();
     setRecognitionStatus(planCanvas ? "可重新识别" : "等待识别");
   });
@@ -8459,13 +10428,12 @@ function init() {
   });
 
   build3DModelButton?.addEventListener("click", () => {
-    build3DFromDetectedWalls();
+    build3DFromDetectedWalls({ preserveView: currentView === "top" });
   });
 
   clear3DModelButton?.addEventListener("click", () => {
     clearGenerated3D();
     setRecognitionStatus(detectedWallSegments.length > 0 ? wallSummaryText() : planCanvas ? "可识别墙线" : "等待识别");
-    if (planCanvas) setView("top");
   });
 
   sitePhotoInput?.addEventListener("change", (event) => {
@@ -8504,7 +10472,7 @@ function init() {
     } else if (generated3DSource === "plan-photo-refined") {
       applySitePhotosToPlanModel();
     } else {
-      build3DFromDetectedWalls();
+      build3DFromDetectedWalls({ preserveView: currentView === "top" });
     }
   });
 
@@ -8533,15 +10501,23 @@ function init() {
   });
 
   deleteWallButton?.addEventListener("click", () => {
-    deleteSelectedWall();
+    deleteSelectedLinearFeature();
   });
 
   addLinearWallButton?.addEventListener("click", () => {
-    addLinearWall();
+    addLinearWall("horizontal");
+  });
+
+  addVerticalWallButton?.addEventListener("click", () => {
+    addLinearWall("vertical");
+  });
+
+  drawLinearWallButton?.addEventListener("click", () => {
+    toggleWallLineDrawMode();
   });
 
   addLinearDoorButton?.addEventListener("click", () => {
-    addLinearOpening("door");
+    toggleDoorOpeningPlaceMode();
   });
 
   addLinearWindowButton?.addEventListener("click", () => {
@@ -8549,6 +10525,16 @@ function init() {
   });
 
   linearPlanList?.addEventListener("click", (event) => {
+    const resizeButton = event.target.closest("[data-linear-resize]");
+    if (resizeButton) {
+      event.stopPropagation();
+      const kind = resizeButton.dataset.linearKind;
+      const index = Number(resizeButton.dataset.linearIndex);
+      const direction = Number(resizeButton.dataset.resizeDirection) || 1;
+      resizeLinearOpening(kind, index, direction, 0.1);
+      return;
+    }
+
     const deleteButton = event.target.closest("[data-linear-delete]");
     if (deleteButton) {
       event.stopPropagation();
@@ -8567,6 +10553,7 @@ function init() {
     if (!typeSelect || !detectedWallResult?.windows) return;
     const index = Number(typeSelect.dataset.index);
     if (!detectedWallResult.windows[index]) return;
+    savePlanUndoSnapshot();
     detectedWallResult.windows[index].windowType = typeSelect.value;
     selectedLinearFeature = { kind: "window", index };
     commitLinearPlanEdit("已切换窗型");
@@ -8606,11 +10593,7 @@ function init() {
   requestAnimationFrame(animate);
 }
 
-try {
-  init();
-} catch (error) {
+init().catch((error) => {
   console.error(error);
   showModelBootIssue("3D 模型启动失败", "请检查浏览器是否支持 WebGL，并打开 F12 查看具体报错。");
-}
-
-
+});

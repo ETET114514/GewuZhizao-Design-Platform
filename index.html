@@ -199,6 +199,10 @@
               <button class="icon-button compact" id="clearPlan" type="button" aria-label="清除图纸" title="清除图纸">
                 <i data-lucide="x"></i>
               </button>
+              <button class="secondary-button compact-action" id="deleteOriginalPlan" type="button">
+                <i data-lucide="image-minus"></i>
+                <span>删除原图</span>
+              </button>
             </div>
 
             <div class="site-photo-import">
@@ -300,6 +304,11 @@
                 <input id="wallLengthInput" type="number" min="0.2" max="60" step="0.1" value="0" readonly />
                 <b>m</b>
               </label>
+              <label class="plan-field wall-thickness-field">
+                <span>厚度</span>
+                <input id="wallThicknessInput" type="number" min="0.05" max="1.2" step="0.01" value="0" />
+                <b>m</b>
+              </label>
               <div class="wall-side-controls">
                 <label class="plan-field wall-offset-field">
                   <span>起点修正</span>
@@ -312,10 +321,36 @@
                   <b>m</b>
                 </label>
               </div>
+              <div class="manual-wall-actions">
+                <button class="secondary-button compact-action" id="addLinearWall" type="button">
+                  <i data-lucide="minus"></i>
+                  <span>补横墙</span>
+                </button>
+                <button class="secondary-button compact-action" id="addVerticalWall" type="button">
+                  <i data-lucide="grip-vertical"></i>
+                  <span>补竖墙</span>
+                </button>
+                <button class="secondary-button compact-action" id="drawLinearWall" type="button">
+                  <i data-lucide="pencil-line"></i>
+                  <span>划线墙</span>
+                </button>
+                <button class="secondary-button compact-action" id="addLinearDoor" type="button">
+                  <i data-lucide="door-open"></i>
+                  <span>门洞</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="linear-plan-editor" id="linearPlanEditor" aria-label="墙体列表">
+              <div class="linear-plan-heading">
+                <span>墙体列表</span>
+                <strong id="linearPlanSummary">导入或识别图纸后可编辑墙体</strong>
+              </div>
+              <div class="linear-plan-list" id="linearPlanList"></div>
             </div>
 
             <div class="design-stage">
-              <canvas id="modelCanvas" aria-label="Web DFC 三维模型"></canvas>
+              <canvas id="modelCanvas" aria-label="Web DFC 三维模型" tabindex="0"></canvas>
               <div class="model-boot-status" id="modelBootStatus" role="status">
                 <strong>3D 模型加载中</strong>
                 <span>正在准备 Web 模型环境</span>
@@ -335,6 +370,18 @@
                 </button>
               </div>
               <div class="stage-size-tools" aria-label="模型画面尺寸">
+                <button class="model-tool" id="copyComponent" type="button" title="复制选中构件">
+                  <i data-lucide="copy"></i>
+                  <span>复制</span>
+                </button>
+                <button class="model-tool" id="pasteComponent" type="button" title="粘贴构件">
+                  <i data-lucide="clipboard-paste"></i>
+                  <span>粘贴</span>
+                </button>
+                <button class="model-tool" id="saveProject" type="button" title="保存当前设计">
+                  <i data-lucide="save"></i>
+                  <span>保存</span>
+                </button>
                 <button class="model-tool" id="resetStageSize" type="button" title="原始尺寸">
                   <i data-lucide="minimize-2"></i>
                   <span>原始</span>

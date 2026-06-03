@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>建筑平面生成能力</title>
+    <link rel="stylesheet" href="./styles.css?v=20260603-auto-close1" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>建筑平面生成能力</h1>
+          <p>上传建筑平面图，生成墙体线框、交点、门洞、墙垛和闭合房间。</p>
+        </div>
+        <div class="actions">
+          <button id="uploadButton" type="button">上传平面图</button>
+          <button id="demoButton" type="button">加载样例</button>
+          <button id="exportJsonButton" type="button" disabled>导出 JSON</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="panel">
+          <div class="panel-title">
+            <h2>参数</h2>
+            <span id="statusPill">待上传</span>
+          </div>
+
+          <label class="native-upload">
+            备用上传
+            <input id="nativeFileInput" type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" />
+          </label>
+          <input id="fileInput" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" />
+
+          <label class="control">
+            <span>墙体阈值</span>
+            <input id="thresholdRange" type="range" min="70" max="220" value="145" />
+            <output id="thresholdValue">145</output>
+          </label>
+          <label class="select-control">
+            <span>识别方式</span>
+            <select id="recognitionModeSelect">
+              <option value="browser">浏览器规则</option>
+              <option value="ai-cv">AI/CV 分割</option>
+            </select>
+          </label>
+          <label class="control">
+            <span>最短墙线</span>
+            <input id="minLengthRange" type="range" min="18" max="160" value="72" />
+            <output id="minLengthValue">72 px</output>
+          </label>
+          <label class="control">
+            <span>合并间距</span>
+            <input id="mergeGapRange" type="range" min="2" max="40" value="10" />
+            <output id="mergeGapValue">10 px</output>
+          </label>
+          <label class="control">
+            <span>最大墙厚</span>
+            <input id="maxThicknessRange" type="range" min="8" max="64" value="34" />
+            <output id="maxThicknessValue">34 px</output>
+          </label>
+          <label class="switch-control">
+            <span>去噪过滤</span>
+            <input id="denoiseToggle" type="checkbox" checked />
+          </label>
+          <label class="control">
+            <span>噪点面积</span>
+            <input id="minNoiseAreaRange" type="range" min="4" max="300" value="96" />
+            <output id="minNoiseAreaValue">96 px</output>
+          </label>
+          <label class="control">
+            <span>最小墙厚</span>
+            <input id="minWallThicknessRange" type="range" min="2" max="24" value="4" />
+            <output id="minWallThicknessValue">4 px</output>
+          </label>
+          <label class="control">
+            <span>门洞最小</span>
+            <input id="openingMinWidthRange" type="range" min="8" max="120" value="22" />
+            <output id="openingMinWidthValue">22 px</output>
+          </label>
+          <label class="control">
+            <span>门洞最大</span>
+            <input id="openingMaxWidthRange" type="range" min="32" max="180" value="96" />
+            <output id="openingMaxWidthValue">96 px</output>
+          </label>
+
+          <div class="stats-grid">
+            <div><span>图像</span><strong id="imageStat">-</strong></div>
+            <div><span>墙线</span><strong id="lineStat">0</strong></div>
+            <div><span>水平</span><strong id="horizontalStat">0</strong></div>
+            <div><span>垂直</span><strong id="verticalStat">0</strong></div>
+            <div><span>去噪像素</span><strong id="noiseStat">0</strong></div>
+            <div><span>交点</span><strong id="intersectionStat">0</strong></div>
+            <div><span>断点</span><strong id="breakStat">0</strong></div>
+            <div><span>门洞</span><strong id="openingStat">0</strong></div>
+            <div><span>墙垛</span><strong id="pierStat">0</strong></div>
+            <div><span>闭合房间</span><strong id="roomStat">0</strong></div>
+            <div><span>模式</span><strong id="modeStat">-</strong></div>
+          </div>
+
+          <button id="processButton" type="button" disabled>重新生成</button>
+        </aside>
+
+        <section class="stage">
+          <div class="stage-header">
+            <div class="tabs">
+              <button class="tab active" id="overlayTab" type="button">叠加</button>
+              <button class="tab" id="vectorTab" type="button">线框</button>
+            </div>
+            <div class="legend">
+              <span><i class="wall-swatch"></i>墙体</span>
+              <span><i class="center-swatch"></i>中心线</span>
+              <span><i class="node-swatch"></i>交点</span>
+              <span><i class="break-swatch"></i>断点</span>
+              <span><i class="opening-swatch"></i>门洞</span>
+              <span><i class="pier-swatch"></i>墙垛</span>
+              <span><i class="room-swatch"></i>房间</span>
+            </div>
+          </div>
+          <div id="canvasWrap" class="canvas-wrap">
+            <canvas id="previewCanvas" width="1200" height="820"></canvas>
+            <div id="emptyState" class="empty-state">
+              <strong>建筑平面图</strong>
+              <span>PNG / JPG / WebP / SVG，或拖到这里</span>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="./app.js?v=20260603-auto-close1"></script>
+  </body>
+</html>

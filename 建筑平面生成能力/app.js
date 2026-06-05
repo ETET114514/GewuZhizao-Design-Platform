@@ -1,12 +1,33 @@
 const IMAGE_ACCEPT = ".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml";
 const MIN_CANVAS_ZOOM = 0.35;
 const MAX_CANVAS_ZOOM = 5;
+const THREE_MODULE_URL = "https://unpkg.com/three@0.164.1/build/three.module.js";
+const GLTF_LOADER_MODULE_URL = "https://esm.sh/three@0.164.1/examples/jsm/loaders/GLTFLoader.js";
+const WALL_HEIGHT_METERS = 2.8;
+const OUTER_WALL_MIN_MM = 100;
+const OUTER_WALL_MAX_MM = 240;
+const SNAP_POINT_DISTANCE_MM = 50;
+const MANUAL_WALL_MIN_LENGTH_MM = 20;
+const RAILING_DEFAULT_HEIGHT_MM = 1100;
+const RAILING_DEFAULT_THICKNESS_MM = 50;
+const PRODUCT_ROTATE_STEP_DEGREES = 90;
+const OPENING_VARIANTS = {
+  door: { kind: "door", label: "门", sill: 0, height: 2100 },
+  window: { kind: "window", label: "窗", sill: 900, height: 1200 },
+  "high-window": { kind: "window", label: "高窗", sill: 1700, height: 600 },
+  "floor-window": { kind: "window", label: "落地窗", sill: 0, height: 2400 },
+  "bay-window": { kind: "window", label: "飘窗", sill: 550, height: 1400, projection: 450 },
+  opening: { kind: "opening", label: "开口", sill: 0, height: 2100 },
+};
 
 const elements = {
   fileInput: document.querySelector("#fileInput"),
   nativeFileInput: document.querySelector("#nativeFileInput"),
+  projectFileInput: document.querySelector("#projectFileInput"),
   uploadButton: document.querySelector("#uploadButton"),
   demoButton: document.querySelector("#demoButton"),
+  saveProjectButton: document.querySelector("#saveProjectButton"),
+  openProjectButton: document.querySelector("#openProjectButton"),
   exportJsonButton: document.querySelector("#exportJsonButton"),
   processButton: document.querySelector("#processButton"),
   thresholdRange: document.querySelector("#thresholdRange"),
@@ -18,6 +39,9 @@ const elements = {
   mergeGapValue: document.querySelector("#mergeGapValue"),
   maxThicknessRange: document.querySelector("#maxThicknessRange"),
   maxThicknessValue: document.querySelector("#maxThicknessValue"),
+  scaleValue: document.querySelector("#scaleValue"),
+  calibrationLengthInput: document.querySelector("#calibrationLengthInput"),
+  calibrateScaleButton: document.querySelector("#calibrateScaleButton"),
   denoiseToggle: document.querySelector("#denoiseToggle"),
   minNoiseAreaRange: document.querySelector("#minNoiseAreaRange"),
   minNoiseAreaValue: document.querySelector("#minNoiseAreaValue"),
@@ -38,12 +62,52 @@ const elements = {
   pierStat: document.querySelector("#pierStat"),
   roomStat: document.querySelector("#roomStat"),
   modeStat: document.querySelector("#modeStat"),
+  selectedComponentCard: document.querySelector("#selectedComponentCard"),
+  selectedComponentTitle: document.querySelector("#selectedComponentTitle"),
+  selectedComponentType: document.querySelector("#selectedComponentType"),
+  selectedOpeningVariantSelect: document.querySelector("#selectedOpeningVariantSelect"),
+  selectedComponentOrientation: document.querySelector("#selectedComponentOrientation"),
+  selectedComponentLengthLabel: document.querySelector("#selectedComponentLengthLabel"),
+  selectedComponentThicknessLabel: document.querySelector("#selectedComponentThicknessLabel"),
+  selectedComponentHeightLabel: document.querySelector("#selectedComponentHeightLabel"),
+  selectedComponentLengthInput: document.querySelector("#selectedComponentLengthInput"),
+  selectedComponentThicknessInput: document.querySelector("#selectedComponentThicknessInput"),
+  selectedComponentHeightInput: document.querySelector("#selectedComponentHeightInput"),
+  selectedComponentCoords: document.querySelector("#selectedComponentCoords"),
+  selectedDeleteComponentButton: document.querySelector("#selectedDeleteComponentButton"),
   statusPill: document.querySelector("#statusPill"),
   previewCanvas: document.querySelector("#previewCanvas"),
   canvasWrap: document.querySelector("#canvasWrap"),
   emptyState: document.querySelector("#emptyState"),
   overlayTab: document.querySelector("#overlayTab"),
   vectorTab: document.querySelector("#vectorTab"),
+  drawWallButton: document.querySelector("#drawWallButton"),
+  drawDoorButton: document.querySelector("#drawDoorButton"),
+  drawWindowButton: document.querySelector("#drawWindowButton"),
+  drawRailingButton: document.querySelector("#drawRailingButton"),
+  importFurnitureButton: document.querySelector("#importFurnitureButton"),
+  importSanitaryButton: document.querySelector("#importSanitaryButton"),
+  importHardwareButton: document.querySelector("#importHardwareButton"),
+  productModelInput: document.querySelector("#productModelInput"),
+  calibrateToolButton: document.querySelector("#calibrateToolButton"),
+  measureToolButton: document.querySelector("#measureToolButton"),
+  threeViewport: document.querySelector("#threeViewport"),
+  threeStat: document.querySelector("#threeStat"),
+  threeRoamButton: document.querySelector("#threeRoamButton"),
+  threeResetButton: document.querySelector("#threeResetButton"),
+  threeComponentCard: document.querySelector("#threeComponentCard"),
+  threeComponentTitle: document.querySelector("#threeComponentTitle"),
+  threeComponentType: document.querySelector("#threeComponentType"),
+  threeOpeningVariantSelect: document.querySelector("#threeOpeningVariantSelect"),
+  threeComponentOrientation: document.querySelector("#threeComponentOrientation"),
+  threeComponentLengthLabel: document.querySelector("#threeComponentLengthLabel"),
+  threeComponentThicknessLabel: document.querySelector("#threeComponentThicknessLabel"),
+  threeComponentHeightLabel: document.querySelector("#threeComponentHeightLabel"),
+  threeComponentLengthInput: document.querySelector("#threeComponentLengthInput"),
+  threeComponentThicknessInput: document.querySelector("#threeComponentThicknessInput"),
+  threeComponentHeightInput: document.querySelector("#threeComponentHeightInput"),
+  threeComponentCoords: document.querySelector("#threeComponentCoords"),
+  threeDeleteComponentButton: document.querySelector("#threeDeleteComponentButton"),
 };
 
 const state = {
@@ -52,14 +116,71 @@ const state = {
   lines: [],
   topology: createEmptyTopology(),
   selectedLineIndex: null,
+  selectedOpeningIndex: null,
+  selectedOpeningId: null,
+  selectedRailingId: null,
+  selectedProductId: null,
+  selectedCardManualPosition: null,
+  selectedCardDrag: null,
   draggedEndpoint: null,
+  draggedLine: null,
+  draggedOpening: null,
+  draggedRailing: null,
+  draggedProduct: null,
   hoveredEndpoint: null,
   removedPixels: 0,
   recognitionMode: "-",
   view: "overlay",
+  tool: "select",
+  drawingLine: null,
+  openingDraft: null,
+  railingDraft: null,
+  calibrationLine: null,
+  measurementLine: null,
+  measurements: [],
+  manualOpenings: [],
+  manualRailings: [],
+  productModels: [],
+  pendingProductCategory: "furniture",
+  hiddenOpeningKeys: [],
+  manualMillimetersPerPixel: null,
+  undoStack: [],
   sourceName: "floor-plan",
+  projectFileHandle: null,
   zoom: 1,
+  three: {
+    module: null,
+    renderer: null,
+    scene: null,
+    camera: null,
+    wallsGroup: null,
+    productsGroup: null,
+    gltfLoaderClass: null,
+    readyPromise: null,
+    floor: null,
+    yaw: -0.72,
+    pitch: 0.72,
+    radius: 10,
+    center: null,
+    mode: "orbit",
+    roamPosition: null,
+    roamYaw: 0,
+    roamPitch: 0,
+    roamSpeed: 0.35,
+    roamBounds: null,
+    raycaster: null,
+    pointer: null,
+    dragging: false,
+    dragDistance: 0,
+    lastX: 0,
+    lastY: 0,
+    cardX: 16,
+    cardY: 16,
+  },
 };
+
+window.__floorPlanState = state;
+window.__floorPlanElements = elements;
 
 const ctx = elements.previewCanvas.getContext("2d");
 
@@ -82,16 +203,76 @@ function getSettings() {
   };
 }
 
+function getMillimetersPerPixel(settings) {
+  if (state.manualMillimetersPerPixel) return state.manualMillimetersPerPixel;
+  return OUTER_WALL_MAX_MM / Math.max(1, settings.maxThickness);
+}
+
+function pxToMillimeters(value, settings) {
+  return value * getMillimetersPerPixel(settings);
+}
+
+function millimetersToPixels(value, settings) {
+  return value / Math.max(0.0001, getMillimetersPerPixel(settings));
+}
+
+function pxAreaToSquareMillimeters(value, settings) {
+  const millimetersPerPixel = getMillimetersPerPixel(settings);
+  return value * millimetersPerPixel * millimetersPerPixel;
+}
+
+function formatMillimeters(value) {
+  if (value >= 1000) return `${(value / 1000).toFixed(2)} m`;
+  return `${Math.round(value)} mm`;
+}
+
+function formatSquareMillimeters(value) {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(2)} m²`;
+  return `${Math.round(value)} mm²`;
+}
+
+function formatPhysicalLength(pixels, settings) {
+  return formatMillimeters(pxToMillimeters(pixels, settings));
+}
+
+function physicalWallThicknessMillimeters(pixels, settings) {
+  return clamp(pxToMillimeters(pixels, settings), OUTER_WALL_MIN_MM, OUTER_WALL_MAX_MM);
+}
+
+function visualWallThicknessPixels(line, settings) {
+  return millimetersToPixels(physicalWallThicknessMillimeters(line.thickness, settings), settings);
+}
+
+function snapPointDistancePixels(settings) {
+  return Math.max(1, millimetersToPixels(SNAP_POINT_DISTANCE_MM, settings));
+}
+
+function manualWallMinLengthPixels(settings) {
+  return Math.max(2, millimetersToPixels(MANUAL_WALL_MIN_LENGTH_MM, settings));
+}
+
+function lineHeightMillimeters(line) {
+  return Math.max(100, Number(line && line.heightMillimeters) || WALL_HEIGHT_METERS * 1000);
+}
+
+function lineHeightMeters(line) {
+  return lineHeightMillimeters(line) / 1000;
+}
+
 function syncControlLabels() {
   const settings = getSettings();
+  const millimetersPerPixel = getMillimetersPerPixel(settings);
   elements.thresholdValue.value = String(settings.threshold);
-  elements.minLengthValue.value = `${settings.minLength} px`;
-  elements.mergeGapValue.value = `${settings.mergeGap} px`;
-  elements.maxThicknessValue.value = `${settings.maxThickness} px`;
-  elements.minNoiseAreaValue.value = `${settings.minNoiseArea} px`;
-  elements.minWallThicknessValue.value = `${settings.minWallThickness} px`;
-  elements.openingMinWidthValue.value = `${settings.openingMinWidth} px`;
-  elements.openingMaxWidthValue.value = `${settings.openingMaxWidth} px`;
+  elements.minLengthValue.value = formatPhysicalLength(settings.minLength, settings);
+  elements.mergeGapValue.value = formatPhysicalLength(settings.mergeGap, settings);
+  elements.maxThicknessValue.value = formatMillimeters(physicalWallThicknessMillimeters(settings.maxThickness, settings));
+  const scaleMode = state.manualMillimetersPerPixel ? "已标定" : "比例估算";
+  elements.scaleValue.textContent = `${scaleMode}：1 px ≈ ${millimetersPerPixel.toFixed(1)} mm，外墙 ${OUTER_WALL_MIN_MM}-${OUTER_WALL_MAX_MM} mm`;
+  elements.minNoiseAreaValue.value = formatSquareMillimeters(pxAreaToSquareMillimeters(settings.minNoiseArea, settings));
+  elements.minWallThicknessValue.value = formatMillimeters(physicalWallThicknessMillimeters(settings.minWallThickness, settings));
+  elements.openingMinWidthValue.value = formatPhysicalLength(settings.openingMinWidth, settings);
+  elements.openingMaxWidthValue.value = formatPhysicalLength(settings.openingMaxWidth, settings);
+  updateSelectedComponentInfo();
 }
 
 function setStatus(text) {
@@ -110,10 +291,143 @@ function applyCanvasZoom(zoom) {
   state.zoom = clamp(zoom, MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
   elements.previewCanvas.style.width = `${Math.round(elements.previewCanvas.width * state.zoom)}px`;
   elements.previewCanvas.style.height = `${Math.round(elements.previewCanvas.height * state.zoom)}px`;
+  updateSelectedComponentInfo();
 }
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function cloneLine(line) {
+  return { ...line };
+}
+
+function cloneMeasurement(measurement) {
+  return { ...measurement, start: { ...measurement.start }, end: { ...measurement.end } };
+}
+
+function cloneOpening(opening) {
+  return { ...opening };
+}
+
+function cloneRailing(railing) {
+  return { ...railing };
+}
+
+function cloneProductMeta(product) {
+  const { object, ...meta } = product;
+  return { ...meta };
+}
+
+function pushUndoSnapshot(label) {
+  state.undoStack.push({
+    label,
+    lines: state.lines.map(cloneLine),
+    measurements: state.measurements.map(cloneMeasurement),
+    manualOpenings: state.manualOpenings.map(cloneOpening),
+    manualRailings: state.manualRailings.map(cloneRailing),
+    productModels: state.productModels.map(cloneProductMeta),
+    hiddenOpeningKeys: [...state.hiddenOpeningKeys],
+    selectedLineIndex: state.selectedLineIndex,
+    selectedOpeningIndex: state.selectedOpeningIndex,
+    selectedOpeningId: state.selectedOpeningId,
+    selectedRailingId: state.selectedRailingId,
+    selectedProductId: state.selectedProductId,
+    recognitionMode: state.recognitionMode,
+    manualMillimetersPerPixel: state.manualMillimetersPerPixel,
+  });
+  if (state.undoStack.length > 40) state.undoStack.shift();
+}
+
+function undoLastEdit() {
+  const snapshot = state.undoStack.pop();
+  if (!snapshot) {
+    setStatus("没有可撤回");
+    return;
+  }
+  state.lines = snapshot.lines.map(cloneLine);
+  state.measurements = (snapshot.measurements || []).map(cloneMeasurement);
+  state.manualOpenings = (snapshot.manualOpenings || []).map(cloneOpening);
+  state.manualRailings = (snapshot.manualRailings || []).map(cloneRailing);
+  clearProductModels();
+  state.productModels = (snapshot.productModels || []).map((product) => ({ ...product, object: null }));
+  state.hiddenOpeningKeys = [...(snapshot.hiddenOpeningKeys || [])];
+  state.selectedLineIndex = snapshot.selectedLineIndex;
+  state.selectedOpeningIndex = snapshot.selectedOpeningIndex ?? null;
+  state.selectedOpeningId = snapshot.selectedOpeningId || null;
+  state.selectedRailingId = snapshot.selectedRailingId || null;
+  state.selectedProductId = snapshot.selectedProductId || null;
+  if (state.selectedProductId && !state.productModels.some((product) => product.id === state.selectedProductId)) state.selectedProductId = null;
+  state.manualMillimetersPerPixel = snapshot.manualMillimetersPerPixel;
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
+  state.draggedProduct = null;
+  state.hoveredEndpoint = null;
+  state.drawingLine = null;
+  state.openingDraft = null;
+  state.railingDraft = null;
+  state.calibrationLine = null;
+  state.measurementLine = null;
+  state.recognitionMode = snapshot.recognitionMode;
+  state.topology = analyzeTopology(state.lines, getSettings());
+  syncControlLabels();
+  updateStats();
+  renderPreview();
+  updateThreeModel(false);
+  elements.exportJsonButton.disabled = !hasExportableContent();
+  setStatus("已撤回");
+}
+
+function ensureDrawingCanvas() {
+  if (state.analysisCanvas) return true;
+  const canvas = document.createElement("canvas");
+  canvas.width = 900;
+  canvas.height = 620;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  state.analysisCanvas = canvas;
+  state.maskImage = null;
+  state.lines = [];
+  state.topology = createEmptyTopology();
+  state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
+  state.selectedProductId = null;
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
+  state.draggedProduct = null;
+  state.hoveredEndpoint = null;
+  state.drawingLine = null;
+  state.openingDraft = null;
+  state.railingDraft = null;
+  state.calibrationLine = null;
+  state.measurementLine = null;
+  state.measurements = [];
+  state.manualOpenings = [];
+  state.manualRailings = [];
+  clearProductModels();
+  state.hiddenOpeningKeys = [];
+  state.manualMillimetersPerPixel = null;
+  state.undoStack = [];
+  state.removedPixels = 0;
+  state.recognitionMode = "manual";
+  state.sourceName = "manual-floor-plan";
+  state.projectFileHandle = null;
+  fitCanvasToImage(state.analysisCanvas);
+  elements.emptyState.hidden = true;
+  elements.imageStat.textContent = `${state.analysisCanvas.width} x ${state.analysisCanvas.height}`;
+  elements.processButton.disabled = false;
+  elements.saveProjectButton.disabled = false;
+  updateStats();
+  renderPreview();
+  updateThreeModel(true);
+  return true;
 }
 
 async function loadImageFromFile(file) {
@@ -125,13 +439,36 @@ async function loadImageFromFile(file) {
     state.lines = [];
     state.topology = createEmptyTopology();
     state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = null;
+    state.selectedProductId = null;
     state.draggedEndpoint = null;
+    state.draggedLine = null;
+    state.draggedOpening = null;
+    state.draggedRailing = null;
+    state.draggedProduct = null;
     state.hoveredEndpoint = null;
+    state.drawingLine = null;
+    state.openingDraft = null;
+    state.railingDraft = null;
+    state.calibrationLine = null;
+    state.measurementLine = null;
+    state.measurements = [];
+    state.manualOpenings = [];
+    state.manualRailings = [];
+    clearProductModels();
+    state.hiddenOpeningKeys = [];
+    state.manualMillimetersPerPixel = null;
+    state.undoStack = [];
     state.sourceName = file.name.replace(/\.[^.]+$/, "") || "floor-plan";
+    state.projectFileHandle = null;
     fitCanvasToImage(state.analysisCanvas);
     elements.emptyState.hidden = true;
     elements.imageStat.textContent = `${state.analysisCanvas.width} x ${state.analysisCanvas.height}`;
+    elements.saveProjectButton.disabled = false;
     renderSourceImageOnly();
+    updateThreeModel(true);
     runRecognition();
   } catch (error) {
     setStatus(error.message || "读取失败");
@@ -182,8 +519,24 @@ function runRecognition() {
   syncControlLabels();
   setStatus("生成中");
   state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
   state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
   state.hoveredEndpoint = null;
+  state.drawingLine = null;
+  state.openingDraft = null;
+  state.railingDraft = null;
+  state.calibrationLine = null;
+  state.measurementLine = null;
+  state.measurements = [];
+  state.manualOpenings = [];
+  state.manualRailings = [];
+  state.hiddenOpeningKeys = [];
+  state.undoStack = [];
   const settings = getSettings();
   if (settings.recognitionMode === "ai-cv") {
     runBackendRecognition(settings).catch(() => runBrowserRecognition(settings, "browser-fallback"));
@@ -226,19 +579,38 @@ function runBrowserRecognition(settings, mode) {
 }
 
 function finishRecognition(lines, settings, mode) {
+  const supportMinLength = recognitionSupportMinLength(settings);
   state.lines = lines
-    .filter((line) => line.length >= settings.minLength)
+    .filter((line) => line.length >= supportMinLength)
     .sort((a, b) => b.length - a.length)
     .map((line, index) => ({ ...line, id: line.id || `wall-${index + 1}` }));
   state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
   state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
   state.hoveredEndpoint = null;
+  state.drawingLine = null;
+  state.openingDraft = null;
+  state.railingDraft = null;
+  state.calibrationLine = null;
+  state.measurementLine = null;
+  state.measurements = [];
+  state.manualOpenings = [];
+  state.manualRailings = [];
+  state.hiddenOpeningKeys = [];
+  state.undoStack = [];
   state.topology = analyzeTopology(state.lines, settings);
   state.recognitionMode = mode;
   updateStats();
   renderPreview();
+  updateThreeModel(true);
   elements.exportJsonButton.disabled = !state.lines.length;
   elements.processButton.disabled = !state.analysisCanvas;
+  elements.saveProjectButton.disabled = !state.analysisCanvas;
   setStatus("已生成");
 }
 
@@ -306,9 +678,14 @@ function detectAndMergeWalls(mask, settings) {
   return [...mergeCollinear(horizontal, "horizontal", settings.mergeGap), ...mergeCollinear(vertical, "vertical", settings.mergeGap)];
 }
 
+function recognitionSupportMinLength(settings) {
+  return Math.max(settings.minWallThickness * 8, settings.minLength * 0.55, 24);
+}
+
 function detectHorizontalWalls(source, settings) {
   const groups = [];
   const { width, height, mask } = source;
+  const minRunLength = recognitionSupportMinLength(settings);
   for (let y = 0; y < height; y += 1) {
     let x = 0;
     while (x < width) {
@@ -316,7 +693,7 @@ function detectHorizontalWalls(source, settings) {
       const start = x;
       while (x < width && mask[y * width + x]) x += 1;
       const end = x - 1;
-      if (end - start + 1 >= settings.minLength) addRun(groups, { start, end, axis: y }, "horizontal", settings);
+      if (end - start + 1 >= minRunLength) addRun(groups, { start, end, axis: y }, "horizontal", settings);
     }
   }
   return finalizeGroups(groups, "horizontal", settings);
@@ -325,6 +702,7 @@ function detectHorizontalWalls(source, settings) {
 function detectVerticalWalls(source, settings) {
   const groups = [];
   const { width, height, mask } = source;
+  const minRunLength = recognitionSupportMinLength(settings);
   for (let x = 0; x < width; x += 1) {
     let y = 0;
     while (y < height) {
@@ -332,7 +710,7 @@ function detectVerticalWalls(source, settings) {
       const start = y;
       while (y < height && mask[y * width + x]) y += 1;
       const end = y - 1;
-      if (end - start + 1 >= settings.minLength) addRun(groups, { start, end, axis: x }, "vertical", settings);
+      if (end - start + 1 >= minRunLength) addRun(groups, { start, end, axis: x }, "vertical", settings);
     }
   }
   return finalizeGroups(groups, "vertical", settings);
@@ -417,8 +795,10 @@ function analyzeTopology(lines, settings) {
   const horizontal = closedLines.filter((line) => line.orientation === "horizontal");
   const vertical = closedLines.filter((line) => line.orientation === "vertical");
   const intersections = findIntersections(horizontal, vertical, tolerance);
-  const openings = findOpenings(horizontal, vertical, settings, tolerance);
-  const endPiers = findEndPiers(lines, intersections, openings, settings, tolerance);
+  const openingCandidates = findOpenings(horizontal, vertical, settings, tolerance);
+  const endPiers = findEndPiers(lines, intersections, openingCandidates, settings, tolerance);
+  const openings = applyOpeningOverrides(scoreOpenings(openingCandidates, closedLines, intersections, endPiers, settings, tolerance));
+  const constructibleOpenings = openings.filter(isConstructibleOpening);
   const pierIds = new Set(endPiers.filter((pier) => pier.excludeFromRooms).map((pier) => pier.wall));
   const roomLines = closedLines.filter((line) => !pierIds.has(line.id));
   const rooms = findClosedRooms(
@@ -427,11 +807,17 @@ function analyzeTopology(lines, settings) {
     settings,
     tolerance,
   );
-  const breaks = findBreaks(roomLines, intersections, openings, tolerance);
+  const breaks = findBreaks(roomLines, intersections, constructibleOpenings, tolerance);
   return { intersections, breaks, openings, endPiers, rooms };
 }
 
-function autoCloseLineIntersections(lines, settings, tolerance) {
+function getClosedWallLines(settings = getSettings()) {
+  if (!state.lines.length) return [];
+  const tolerance = Math.max(8, settings.mergeGap + settings.minWallThickness);
+  return autoCloseLineIntersections(state.lines, settings, tolerance);
+}
+
+function autoCloseLineIntersections(lines, settings, tolerance, options = {}) {
   const snapTolerance = closureTolerance(settings, tolerance);
   const closed = lines.map((line) => ({ ...line }));
   const horizontal = closed.filter((line) => line.orientation === "horizontal");
@@ -447,12 +833,51 @@ function autoCloseLineIntersections(lines, settings, tolerance) {
     }
   }
 
+  snapNearbyLineEndpoints(closed, snapTolerance, options);
   for (const line of closed) normalizeEditedLine(line);
   return closed;
 }
 
 function closureTolerance(settings, tolerance) {
-  return Math.max(tolerance * 1.8, settings.mergeGap * 2 + settings.minWallThickness);
+  return snapPointDistancePixels(settings);
+}
+
+function snapNearbyLineEndpoints(lines, tolerance, options = {}) {
+  for (let leftIndex = 0; leftIndex < lines.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < lines.length; rightIndex += 1) {
+      const leftLine = lines[leftIndex];
+      const rightLine = lines[rightIndex];
+      if (options.skipEndpointSnapLineId && (leftLine.id === options.skipEndpointSnapLineId || rightLine.id === options.skipEndpointSnapLineId)) continue;
+      for (const leftEnd of ["start", "end"]) {
+        for (const rightEnd of ["start", "end"]) {
+          const leftPoint = lineEndpoint(leftLine, leftEnd);
+          const rightPoint = lineEndpoint(rightLine, rightEnd);
+          if (distance(leftPoint, rightPoint) > tolerance) continue;
+          const snapPoint = { x: Math.round((leftPoint.x + rightPoint.x) / 2), y: Math.round((leftPoint.y + rightPoint.y) / 2) };
+          setLineEndpoint(leftLine, leftEnd, snapPoint);
+          setLineEndpoint(rightLine, rightEnd, snapPoint);
+        }
+      }
+    }
+  }
+}
+
+function lineEndpoint(line, end) {
+  return end === "start" ? { x: line.x1, y: line.y1 } : { x: line.x2, y: line.y2 };
+}
+
+function setLineEndpoint(line, end, point) {
+  if (line.orientation === "horizontal") {
+    line.y1 = point.y;
+    line.y2 = point.y;
+    if (end === "start") line.x1 = point.x;
+    else line.x2 = point.x;
+    return;
+  }
+  line.x1 = point.x;
+  line.x2 = point.x;
+  if (end === "start") line.y1 = point.y;
+  else line.y2 = point.y;
 }
 
 function perpendicularMiss(value, start, end) {
@@ -488,38 +913,301 @@ function findIntersections(horizontal, vertical, tolerance) {
 }
 
 function findOpenings(horizontal, vertical, settings, tolerance) {
-  return [
+  return dedupeOpenings([
     ...findGaps(horizontal, "horizontal", settings, tolerance),
     ...findGaps(vertical, "vertical", settings, tolerance),
-  ].map((opening, index) => ({ ...opening, id: `opening-${index + 1}` }));
+  ], tolerance).map((opening, index) => ({ ...opening, id: `opening-${index + 1}` }));
 }
 
 function findGaps(lines, orientation, settings, tolerance) {
   const openings = [];
   const groups = groupByAxis(lines, orientation, tolerance);
+  const maxWidth = openingCandidateMaxWidth(settings);
   for (const group of groups) {
     const sorted = group.lines.sort((a, b) => getLineStart(a, orientation) - getLineStart(b, orientation));
     for (let index = 0; index < sorted.length - 1; index += 1) {
       const left = sorted[index];
       const right = sorted[index + 1];
       const gap = getLineStart(right, orientation) - getLineEnd(left, orientation);
-      if (gap < settings.openingMinWidth || gap > settings.openingMaxWidth) continue;
+      if (gap < settings.openingMinWidth || gap > maxWidth) continue;
       const axis = getLineAxis(left, orientation);
+      const axisDelta = Math.abs(getLineAxis(left, orientation) - getLineAxis(right, orientation));
+      const base = {
+        leftWall: left.id,
+        rightWall: right.id,
+        leftThickness: left.thickness,
+        rightThickness: right.thickness,
+        axisDelta,
+      };
       openings.push(
         orientation === "horizontal"
-          ? { orientation, x1: getLineEnd(left, orientation), y1: axis, x2: getLineStart(right, orientation), y2: axis, width: gap }
-          : { orientation, x1: axis, y1: getLineEnd(left, orientation), x2: axis, y2: getLineStart(right, orientation), width: gap },
+          ? { ...base, orientation, x1: getLineEnd(left, orientation), y1: axis, x2: getLineStart(right, orientation), y2: axis, width: gap }
+          : { ...base, orientation, x1: axis, y1: getLineEnd(left, orientation), x2: axis, y2: getLineStart(right, orientation), width: gap },
       );
     }
   }
   return openings;
 }
 
+function openingCandidateMaxWidth(settings) {
+  return settings.openingMaxWidth + settings.maxThickness;
+}
+
+function dedupeOpenings(openings, tolerance) {
+  const unique = [];
+  for (const opening of openings) {
+    const duplicate = unique.some((candidate) => {
+      if (candidate.orientation !== opening.orientation) return false;
+      const axisDelta = opening.orientation === "horizontal" ? Math.abs(candidate.y1 - opening.y1) : Math.abs(candidate.x1 - opening.x1);
+      if (axisDelta > tolerance) return false;
+      const startDelta = opening.orientation === "horizontal" ? Math.abs(candidate.x1 - opening.x1) : Math.abs(candidate.y1 - opening.y1);
+      const endDelta = opening.orientation === "horizontal" ? Math.abs(candidate.x2 - opening.x2) : Math.abs(candidate.y2 - opening.y2);
+      return startDelta <= tolerance && endDelta <= tolerance;
+    });
+    if (!duplicate) unique.push(opening);
+  }
+  return unique;
+}
+
+function scoreOpenings(openings, lines, intersections, endPiers, settings, tolerance) {
+  return openings.map((opening) => {
+    const widthMm = round(pxToMillimeters(opening.width, settings));
+    const thicknessMatch = opening.leftThickness && opening.rightThickness
+      ? clamp(1 - Math.abs(opening.leftThickness - opening.rightThickness) / Math.max(opening.leftThickness, opening.rightThickness, 1), 0, 1)
+      : 0.5;
+    const axisAlignment = clamp(1 - (opening.axisDelta || 0) / Math.max(1, tolerance), 0, 1);
+    const jambEvidence = openingJambEvidence(opening, lines, settings, tolerance);
+    const doorArcEvidence = openingDoorArcEvidence(opening, settings);
+    const nearEndPier = openingNearEndPier(opening, endPiers, tolerance);
+    const widthDoorScore = doorWidthScore(widthMm);
+    const doorDefinition = scoreDoorDefinition({
+      widthMm,
+      widthDoorScore,
+      thicknessMatch,
+      axisAlignment,
+      jambEvidence,
+      doorArcEvidence,
+      nearEndPier,
+    });
+    const confidence = clamp(
+      0.22 * widthDoorScore +
+        0.2 * thicknessMatch +
+        0.18 * axisAlignment +
+        0.2 * jambEvidence +
+        0.16 * doorArcEvidence +
+        0.04 * Number(nearEndPier),
+      0,
+      0.98,
+    );
+    const kind = classifyOpening({
+      widthMm,
+      confidence,
+      widthDoorScore,
+      jambEvidence,
+      doorArcEvidence,
+      nearEndPier,
+      axisAlignment,
+      thicknessMatch,
+      doorDefinitionScore: doorDefinition.score,
+      doorGeometryMatch: doorDefinition.geometryMatch,
+      doorEvidenceMatch: doorDefinition.evidenceMatch,
+    });
+    return {
+      ...opening,
+      kind,
+      variant: defaultOpeningVariant(kind),
+      sillHeightMillimeters: OPENING_VARIANTS[defaultOpeningVariant(kind)].sill,
+      openingHeightMillimeters: OPENING_VARIANTS[defaultOpeningVariant(kind)].height,
+      confidence: round(confidence),
+      widthMm,
+      wallThicknessMatch: round(thicknessMatch),
+      axisAlignment: round(axisAlignment),
+      jambEvidence: round(jambEvidence),
+      doorArcEvidence: round(doorArcEvidence),
+      nearEndPier,
+      doorDefinitionScore: round(doorDefinition.score),
+      doorGeometryMatch: doorDefinition.geometryMatch,
+      doorEvidenceMatch: doorDefinition.evidenceMatch,
+    };
+  });
+}
+
+function doorWidthScore(widthMm) {
+  if (widthMm >= 600 && widthMm <= 1200) return 1;
+  if (widthMm >= 500 && widthMm <= 1400) return 0.68;
+  if (widthMm >= 350 && widthMm <= 1800) return 0.34;
+  return 0.12;
+}
+
+function scoreDoorDefinition(evidence) {
+  const geometryMatch = evidence.widthDoorScore >= 0.68 && evidence.axisAlignment >= 0.72 && evidence.thicknessMatch >= 0.72;
+  const evidenceMatch = evidence.doorArcEvidence >= 0.34 || evidence.jambEvidence >= 0.45 || (evidence.nearEndPier && (evidence.doorArcEvidence >= 0.22 || evidence.jambEvidence >= 0.25));
+  const score = clamp(
+    0.28 * evidence.widthDoorScore +
+      0.22 * evidence.axisAlignment +
+      0.2 * evidence.thicknessMatch +
+      0.16 * evidence.doorArcEvidence +
+      0.1 * evidence.jambEvidence +
+      0.04 * Number(evidence.nearEndPier),
+    0,
+    0.98,
+  );
+  return { score, geometryMatch, evidenceMatch };
+}
+
+function classifyOpening(evidence) {
+  const hasDoorEvidence = evidence.doorEvidenceMatch;
+  const hasOpeningEvidence = hasDoorEvidence || evidence.nearEndPier || evidence.doorArcEvidence >= 0.22 || evidence.jambEvidence >= 0.25;
+  if (!hasOpeningEvidence) return "uncertain";
+  if (evidence.widthMm >= 900 && evidence.doorArcEvidence < 0.22 && evidence.jambEvidence < 0.45 && evidence.confidence < 0.64) return "window";
+  if (evidence.doorGeometryMatch && evidence.doorDefinitionScore >= 0.68 && evidence.confidence >= 0.66 && hasDoorEvidence) return "door";
+  if (evidence.confidence >= 0.52) return "opening";
+  return "uncertain";
+}
+
+function openingJambEvidence(opening, lines, settings, tolerance) {
+  const perpendicular = opening.orientation === "horizontal" ? "vertical" : "horizontal";
+  const endpoints = [
+    { x: opening.x1, y: opening.y1 },
+    { x: opening.x2, y: opening.y2 },
+  ];
+  let matched = 0;
+  for (const endpoint of endpoints) {
+    const hasJamb = lines.some((line) => {
+      if (line.orientation !== perpendicular) return false;
+      if (line.id === opening.leftWall || line.id === opening.rightWall) return false;
+      if (line.length < manualWallMinLengthPixels(settings) || line.length > settings.openingMaxWidth * 1.4) return false;
+      return distanceToSegment(endpoint, line) <= tolerance * 1.1 || endpointDistanceToLine(line, endpoint) <= tolerance;
+    });
+    if (hasJamb) matched += 1;
+  }
+  return matched / endpoints.length;
+}
+
+function endpointDistanceToLine(line, point) {
+  return Math.min(distance(point, { x: line.x1, y: line.y1 }), distance(point, { x: line.x2, y: line.y2 }));
+}
+
+function openingNearEndPier(opening, endPiers, tolerance) {
+  return endPiers.some((pier) => {
+    const endpoints = [
+      { x: opening.x1, y: opening.y1 },
+      { x: opening.x2, y: opening.y2 },
+    ];
+    return endpoints.some((point) => distanceToSegment(point, pier) <= tolerance * 1.3 || endpointDistanceToLine(pier, point) <= tolerance * 1.3);
+  });
+}
+
+function openingDoorArcEvidence(opening, settings) {
+  if (!state.analysisCanvas) return 0;
+  const context = state.analysisCanvas.getContext("2d");
+  const width = state.analysisCanvas.width;
+  const height = state.analysisCanvas.height;
+  const scanRadius = Math.max(8, opening.width * 0.8);
+  const wallBand = Math.max(3, visualOpeningWallBand(opening, settings));
+  let darkPixels = 0;
+  let samples = 0;
+  const minX = clamp(Math.floor(Math.min(opening.x1, opening.x2) - scanRadius), 0, width - 1);
+  const maxX = clamp(Math.ceil(Math.max(opening.x1, opening.x2) + scanRadius), 0, width - 1);
+  const minY = clamp(Math.floor(Math.min(opening.y1, opening.y2) - scanRadius), 0, height - 1);
+  const maxY = clamp(Math.ceil(Math.max(opening.y1, opening.y2) + scanRadius), 0, height - 1);
+  const image = context.getImageData(minX, minY, Math.max(1, maxX - minX + 1), Math.max(1, maxY - minY + 1));
+  for (let y = 0; y < image.height; y += 2) {
+    for (let x = 0; x < image.width; x += 2) {
+      const px = minX + x;
+      const py = minY + y;
+      if (opening.orientation === "horizontal" && Math.abs(py - opening.y1) <= wallBand) continue;
+      if (opening.orientation === "vertical" && Math.abs(px - opening.x1) <= wallBand) continue;
+      const nearStart = Math.hypot(px - opening.x1, py - opening.y1) <= scanRadius;
+      const nearEnd = Math.hypot(px - opening.x2, py - opening.y2) <= scanRadius;
+      if (!nearStart && !nearEnd) continue;
+      const index = (y * image.width + x) * 4;
+      const lightness = image.data[index] * 0.299 + image.data[index + 1] * 0.587 + image.data[index + 2] * 0.114;
+      samples += 1;
+      if (image.data[index + 3] > 20 && lightness < settings.threshold) darkPixels += 1;
+    }
+  }
+  if (!samples) return 0;
+  return clamp((darkPixels / samples) * 8, 0, 1);
+}
+
+function visualOpeningWallBand(opening, settings) {
+  const left = Number(opening.leftThickness) || settings.maxThickness;
+  const right = Number(opening.rightThickness) || settings.maxThickness;
+  return visualWallThicknessPixels({ thickness: (left + right) / 2 }, settings) * 0.62;
+}
+
+function applyOpeningOverrides(openings) {
+  const hidden = new Set(state.hiddenOpeningKeys);
+  const visible = openings.filter((opening) => !hidden.has(openingKey(opening)));
+  return [...visible, ...state.manualOpenings.map(cloneOpening)];
+}
+
+function openingKey(opening) {
+  const x1 = Math.round(opening.x1);
+  const y1 = Math.round(opening.y1);
+  const x2 = Math.round(opening.x2);
+  const y2 = Math.round(opening.y2);
+  return [opening.leftWall || "-", opening.rightWall || "-", opening.kind || "opening", opening.orientation, x1, y1, x2, y2].join(":");
+}
+
+function selectedOpening() {
+  if (state.selectedOpeningId) {
+    return state.topology.openings.find((opening) => opening.id === state.selectedOpeningId) || state.manualOpenings.find((opening) => opening.id === state.selectedOpeningId) || null;
+  }
+  if (state.selectedOpeningIndex === null) return null;
+  return state.topology.openings[state.selectedOpeningIndex] || null;
+}
+
+function isConstructibleOpening(opening) {
+  return opening && opening.kind !== "uncertain";
+}
+
+function constructibleOpenings(openings = state.topology.openings || []) {
+  return openings.filter(isConstructibleOpening);
+}
+
+function defaultOpeningVariant(kind) {
+  if (kind === "door") return "door";
+  if (kind === "window") return "window";
+  if (kind === "opening") return "opening";
+  return "opening";
+}
+
+function openingVariant(opening) {
+  const variant = opening && opening.variant;
+  if (variant && OPENING_VARIANTS[variant]) return variant;
+  return defaultOpeningVariant(opening && opening.kind);
+}
+
+function openingVariantDefinition(opening) {
+  return OPENING_VARIANTS[openingVariant(opening)] || OPENING_VARIANTS.opening;
+}
+
+function syncOpeningKindFromVariant(opening) {
+  const definition = openingVariantDefinition(opening);
+  opening.kind = definition.kind;
+  return opening;
+}
+
+function openingProfileMillimeters(opening) {
+  const definition = openingVariantDefinition(opening);
+  const sill = Number(opening && opening.sillHeightMillimeters);
+  const height = Number(opening && opening.openingHeightMillimeters);
+  const projection = Number(opening && opening.projectionMillimeters);
+  return {
+    sill: Math.max(0, Number.isFinite(sill) ? sill : definition.sill),
+    height: Math.max(100, Number.isFinite(height) ? height : definition.height),
+    projection: Math.max(0, Number.isFinite(projection) ? projection : definition.projection || 0),
+  };
+}
+
 function findEndPiers(lines, intersections, openings, settings, tolerance) {
   const maxLength = Math.max(settings.minLength * 0.9, settings.minWallThickness * 8);
+  const minLength = manualWallMinLengthPixels(settings);
   const piers = [];
   for (const line of lines) {
-    if (line.length > maxLength || line.length < settings.minWallThickness * 1.5) continue;
+    if (line.length > maxLength || line.length < minLength) continue;
     const start = findPierConnection(line, "start", lines, intersections, openings, settings, tolerance);
     const end = findPierConnection(line, "end", lines, intersections, openings, settings, tolerance);
     if (Number(Boolean(start)) + Number(Boolean(end)) !== 1) continue;
@@ -666,10 +1354,576 @@ function updateStats() {
   elements.noiseStat.textContent = String(state.removedPixels);
   elements.intersectionStat.textContent = String(state.topology.intersections.length);
   elements.breakStat.textContent = String(state.topology.breaks.length);
-  elements.openingStat.textContent = String(state.topology.openings.length);
+  elements.openingStat.textContent = String(constructibleOpenings().length);
   elements.pierStat.textContent = String(state.topology.endPiers.length);
   elements.roomStat.textContent = String(state.topology.rooms.length);
   elements.modeStat.textContent = state.recognitionMode;
+  updateSelectedComponentInfo();
+}
+
+function updateSelectedComponentInfo() {
+  const line = selectedLine();
+  const opening = selectedOpening();
+  const railing = selectedRailing();
+  const product = selectedProduct();
+  if (!line) {
+    if (opening) {
+      updateSelectedOpeningInfo(opening);
+    } else if (railing) {
+      updateSelectedRailingInfo(railing);
+    } else if (product) {
+      updateSelectedProductInfo(product);
+    } else {
+      clearComponentCard("selected");
+      clearComponentCard("three");
+    }
+    return;
+  }
+
+  elements.selectedComponentCard.hidden = false;
+  const settings = getSettings();
+  const isPier = (state.topology.endPiers || []).some((pier) => pier.wall === line.id);
+  const startX = formatMillimeters(pxToMillimeters(line.x1, settings));
+  const startY = formatMillimeters(pxToMillimeters(line.y1, settings));
+  const endX = formatMillimeters(pxToMillimeters(line.x2, settings));
+  const endY = formatMillimeters(pxToMillimeters(line.y2, settings));
+  const values = {
+    title: line.id || `墙体 ${state.selectedLineIndex + 1}`,
+    type: isPier ? "端头墙垛" : "墙体",
+    orientation: line.orientation === "horizontal" ? "水平" : "垂直",
+    length: Math.round(pxToMillimeters(line.length, settings)),
+    thickness: Math.round(physicalWallThicknessMillimeters(line.thickness, settings)),
+    height: Math.round(lineHeightMillimeters(line)),
+    coords: `${startX},${startY} → ${endX},${endY}`,
+  };
+  fillComponentCard("selected", values);
+  if (!elements.threeComponentCard.hidden) fillComponentCard("three", values);
+  positionSelectedComponentCard(line);
+  positionThreeComponentCard();
+}
+
+function updateSelectedProductInfo(product) {
+  elements.selectedComponentCard.hidden = false;
+  const settings = getSettings();
+  const values = {
+    title: product.name || product.id || "产品模型",
+    type: productCategoryLabel(product.category),
+    orientation: `旋转 ${Math.round(product.rotationDegrees || 0)}°`,
+    lengthLabel: "宽度",
+    thicknessLabel: "深度",
+    heightLabel: "高度",
+    length: Math.round(product.widthMillimeters || productDefaultSizeMeters(product.category) * 1000),
+    thickness: Math.round(product.depthMillimeters || productDefaultSizeMeters(product.category) * 700),
+    height: Math.round(product.heightMillimeters || productDefaultSizeMeters(product.category) * 1000),
+    coords: `${formatMillimeters(pxToMillimeters(product.planX, settings))},${formatMillimeters(pxToMillimeters(product.planY, settings))}`,
+  };
+  fillComponentCard("selected", values);
+  if (!elements.threeComponentCard.hidden) fillComponentCard("three", values);
+  positionSelectedProductCard(product);
+  positionThreeComponentCard();
+}
+
+function updateSelectedRailingInfo(railing) {
+  elements.selectedComponentCard.hidden = false;
+  const settings = getSettings();
+  const values = {
+    title: railing.id || "栏杆",
+    type: "栏杆",
+    orientation: railing.orientation === "horizontal" ? "水平" : "垂直",
+    length: Math.round(pxToMillimeters(railing.length, settings)),
+    thickness: Math.round(railing.thicknessMillimeters || RAILING_DEFAULT_THICKNESS_MM),
+    height: Math.round(railing.heightMillimeters || RAILING_DEFAULT_HEIGHT_MM),
+    coords: `${formatMillimeters(pxToMillimeters(railing.x1, settings))},${formatMillimeters(pxToMillimeters(railing.y1, settings))} -> ${formatMillimeters(pxToMillimeters(railing.x2, settings))},${formatMillimeters(pxToMillimeters(railing.y2, settings))}`,
+  };
+  fillComponentCard("selected", values);
+  if (!elements.threeComponentCard.hidden) fillComponentCard("three", values);
+  positionSelectedRailingCard(railing);
+  positionThreeComponentCard();
+}
+
+function updateSelectedOpeningInfo(opening) {
+  if (!isConstructibleOpening(opening)) {
+    clearComponentCard("selected");
+    clearComponentCard("three");
+    return;
+  }
+  elements.selectedComponentCard.hidden = false;
+  const settings = getSettings();
+  const variant = openingVariant(opening);
+  const kindLabel = openingKindLabel(opening);
+  const profile = openingProfileMillimeters(opening);
+  const values = {
+    title: opening.id || kindLabel,
+    type: kindLabel,
+    variant,
+    orientation: opening.orientation === "horizontal" ? "水平" : "垂直",
+    lengthLabel: "宽度",
+    thicknessLabel: "底边",
+    heightLabel: "洞口高",
+    length: Math.round(opening.widthMm || pxToMillimeters(opening.width || distance({ x: opening.x1, y: opening.y1 }, { x: opening.x2, y: opening.y2 }), settings)),
+    thickness: Math.round(profile.sill),
+    height: Math.round(profile.height),
+    coords: `${formatMillimeters(pxToMillimeters(opening.x1, settings))},${formatMillimeters(pxToMillimeters(opening.y1, settings))} -> ${formatMillimeters(pxToMillimeters(opening.x2, settings))},${formatMillimeters(pxToMillimeters(opening.y2, settings))}`,
+  };
+  fillComponentCard("selected", values);
+  if (!elements.threeComponentCard.hidden) fillComponentCard("three", values);
+  positionSelectedOpeningCard(opening);
+  positionThreeComponentCard();
+}
+
+function openingKindLabel(openingOrKind) {
+  const opening = typeof openingOrKind === "string" ? { kind: openingOrKind } : openingOrKind;
+  if (opening && opening.variant && OPENING_VARIANTS[opening.variant]) return OPENING_VARIANTS[opening.variant].label;
+  if (opening.kind === "door") return "门";
+  if (opening.kind === "window") return "窗";
+  if (opening.kind === "opening") return "开口";
+  return "疑似构件";
+}
+
+function componentElements(prefix) {
+  if (prefix === "three") {
+    return {
+      card: elements.threeComponentCard,
+      title: elements.threeComponentTitle,
+      type: elements.threeComponentType,
+      variantSelect: elements.threeOpeningVariantSelect,
+      orientation: elements.threeComponentOrientation,
+      lengthLabel: elements.threeComponentLengthLabel,
+      thicknessLabel: elements.threeComponentThicknessLabel,
+      heightLabel: elements.threeComponentHeightLabel,
+      lengthInput: elements.threeComponentLengthInput,
+      thicknessInput: elements.threeComponentThicknessInput,
+      heightInput: elements.threeComponentHeightInput,
+      coords: elements.threeComponentCoords,
+    };
+  }
+  return {
+    card: elements.selectedComponentCard,
+    title: elements.selectedComponentTitle,
+    type: elements.selectedComponentType,
+    variantSelect: elements.selectedOpeningVariantSelect,
+    orientation: elements.selectedComponentOrientation,
+    lengthLabel: elements.selectedComponentLengthLabel,
+    thicknessLabel: elements.selectedComponentThicknessLabel,
+    heightLabel: elements.selectedComponentHeightLabel,
+    lengthInput: elements.selectedComponentLengthInput,
+    thicknessInput: elements.selectedComponentThicknessInput,
+    heightInput: elements.selectedComponentHeightInput,
+    coords: elements.selectedComponentCoords,
+  };
+}
+
+function clearComponentCard(prefix) {
+  const card = componentElements(prefix);
+  if (prefix === "selected") {
+    state.selectedCardDrag = null;
+    card.card.classList.remove("is-dragging");
+  }
+  card.card.hidden = true;
+  card.title.textContent = "未选择";
+  card.type.textContent = "-";
+  card.type.hidden = false;
+  card.variantSelect.hidden = true;
+  card.variantSelect.disabled = true;
+  card.orientation.textContent = "-";
+  card.lengthLabel.textContent = "长度";
+  card.thicknessLabel.textContent = "厚度";
+  card.heightLabel.textContent = "高度";
+  card.lengthInput.value = "";
+  card.thicknessInput.value = "";
+  card.heightInput.value = "";
+  card.lengthInput.disabled = true;
+  card.thicknessInput.disabled = true;
+  card.heightInput.disabled = true;
+  card.coords.textContent = "-";
+}
+
+function fillComponentCard(prefix, values) {
+  const card = componentElements(prefix);
+  card.card.hidden = false;
+  card.title.textContent = values.title;
+  card.type.textContent = values.type;
+  card.type.hidden = Boolean(values.variant);
+  card.variantSelect.hidden = !values.variant;
+  card.variantSelect.disabled = !values.variant;
+  if (values.variant && document.activeElement !== card.variantSelect) card.variantSelect.value = values.variant;
+  card.orientation.textContent = values.orientation;
+  card.lengthLabel.textContent = values.lengthLabel || "长度";
+  card.thicknessLabel.textContent = values.thicknessLabel || "厚度";
+  card.heightLabel.textContent = values.heightLabel || "高度";
+  card.lengthInput.disabled = false;
+  card.thicknessInput.disabled = false;
+  card.heightInput.disabled = false;
+  if (document.activeElement !== card.lengthInput) card.lengthInput.value = String(values.length);
+  if (document.activeElement !== card.thicknessInput) card.thicknessInput.value = String(values.thickness);
+  if (document.activeElement !== card.heightInput) card.heightInput.value = String(values.height);
+  card.coords.textContent = values.coords;
+}
+
+function commitSelectedComponentParameter(parameter, prefix = "selected") {
+  const line = selectedLine();
+  const opening = selectedOpening();
+  const railing = selectedRailing();
+  const product = selectedProduct();
+  if (!line && opening) {
+    commitSelectedOpeningParameter(parameter, prefix);
+    return;
+  }
+  if (!line && railing) {
+    commitSelectedRailingParameter(parameter, prefix);
+    return;
+  }
+  if (!line && product) {
+    commitSelectedProductParameter(parameter, prefix);
+    return;
+  }
+  if (!line) return;
+  const settings = getSettings();
+  const card = componentElements(prefix);
+  const inputByParameter = { length: card.lengthInput, thickness: card.thicknessInput, height: card.heightInput };
+  const input = inputByParameter[parameter];
+  if (!input) return;
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    updateSelectedComponentInfo();
+    return;
+  }
+
+  pushUndoSnapshot(`edit-${parameter}`);
+  if (parameter === "length") {
+    const pixelLength = Math.max(6, millimetersToPixels(value, settings));
+    if (line.orientation === "horizontal") {
+      const direction = line.x2 >= line.x1 ? 1 : -1;
+      line.x2 = line.x1 + pixelLength * direction;
+    } else {
+      const direction = line.y2 >= line.y1 ? 1 : -1;
+      line.y2 = line.y1 + pixelLength * direction;
+    }
+    normalizeEditedLine(line);
+  } else if (parameter === "thickness") {
+    line.thickness = Math.max(1, millimetersToPixels(value, settings));
+  } else if (parameter === "height") {
+    line.heightMillimeters = Math.max(100, value);
+  }
+
+  refreshAfterEdit();
+  elements.exportJsonButton.disabled = !state.lines.length;
+  setStatus("参数已更新");
+}
+
+function commitSelectedOpeningParameter(parameter, prefix = "selected") {
+  const selected = selectedOpening();
+  if (!selected || !isConstructibleOpening(selected)) return;
+  const card = componentElements(prefix);
+  const inputByParameter = { length: card.lengthInput, thickness: card.thicknessInput, height: card.heightInput };
+  const input = inputByParameter[parameter];
+  if (!input) return;
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value < 0 || (parameter !== "thickness" && value <= 0)) {
+    updateSelectedComponentInfo();
+    return;
+  }
+
+  pushUndoSnapshot(`edit-opening-${parameter}`);
+  const opening = materializeSelectedOpeningForEdit();
+  if (!opening) return;
+  const settings = getSettings();
+  if (parameter === "length") {
+    const pixelLength = Math.max(2, millimetersToPixels(value, settings));
+    const center = { x: (opening.x1 + opening.x2) / 2, y: (opening.y1 + opening.y2) / 2 };
+    if (opening.orientation === "horizontal") {
+      opening.x1 = center.x - pixelLength / 2;
+      opening.x2 = center.x + pixelLength / 2;
+      opening.y2 = opening.y1;
+    } else {
+      opening.y1 = center.y - pixelLength / 2;
+      opening.y2 = center.y + pixelLength / 2;
+      opening.x2 = opening.x1;
+    }
+  } else if (parameter === "thickness") {
+    opening.sillHeightMillimeters = Math.max(0, value);
+  } else if (parameter === "height") {
+    opening.openingHeightMillimeters = Math.max(100, value);
+  }
+  normalizeOpeningComponent(opening);
+  refreshAfterEdit();
+  elements.exportJsonButton.disabled = !state.lines.length;
+  setStatus("构件参数已更新");
+}
+
+function commitSelectedOpeningVariant(prefix = "selected") {
+  const selected = selectedOpening();
+  if (!selected || !isConstructibleOpening(selected)) return;
+  const card = componentElements(prefix);
+  const variant = card.variantSelect.value;
+  if (!OPENING_VARIANTS[variant]) {
+    updateSelectedComponentInfo();
+    return;
+  }
+  pushUndoSnapshot("edit-opening-type");
+  const opening = materializeSelectedOpeningForEdit();
+  if (!opening) return;
+  const definition = OPENING_VARIANTS[variant];
+  opening.variant = variant;
+  opening.kind = definition.kind;
+  opening.sillHeightMillimeters = definition.sill;
+  opening.openingHeightMillimeters = definition.height;
+  opening.projectionMillimeters = definition.projection || 0;
+  normalizeOpeningComponent(opening);
+  refreshAfterEdit();
+  elements.exportJsonButton.disabled = !state.lines.length;
+  setStatus("构件类型已更新");
+}
+
+function commitSelectedRailingParameter(parameter, prefix = "selected") {
+  const railing = selectedRailing();
+  if (!railing) return;
+  const card = componentElements(prefix);
+  const inputByParameter = { length: card.lengthInput, thickness: card.thicknessInput, height: card.heightInput };
+  const input = inputByParameter[parameter];
+  if (!input) return;
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    updateSelectedComponentInfo();
+    return;
+  }
+
+  pushUndoSnapshot(`edit-railing-${parameter}`);
+  if (parameter === "length") {
+    const pixelLength = Math.max(2, millimetersToPixels(value, getSettings()));
+    if (railing.orientation === "horizontal") {
+      railing.x2 = railing.x1 + pixelLength;
+    } else {
+      railing.y2 = railing.y1 + pixelLength;
+    }
+  } else if (parameter === "thickness") {
+    railing.thicknessMillimeters = Math.max(10, value);
+  } else if (parameter === "height") {
+    railing.heightMillimeters = Math.max(100, value);
+  }
+  normalizeRailing(railing);
+  if (parameter === "length") snapRailingToNearbyGeometry(railing);
+  refreshAfterEdit();
+  elements.exportJsonButton.disabled = !state.lines.length && !state.manualRailings.length;
+  setStatus("栏杆参数已更新");
+}
+
+function commitSelectedProductParameter(parameter, prefix = "selected") {
+  const product = selectedProduct();
+  if (!product) return;
+  const card = componentElements(prefix);
+  const inputByParameter = { length: card.lengthInput, thickness: card.thicknessInput, height: card.heightInput };
+  const input = inputByParameter[parameter];
+  if (!input) return;
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    updateSelectedComponentInfo();
+    return;
+  }
+
+  pushUndoSnapshot(`edit-product-${parameter}`);
+  if (parameter === "length") product.widthMillimeters = Math.max(50, value);
+  else if (parameter === "thickness") product.depthMillimeters = Math.max(50, value);
+  else if (parameter === "height") product.heightMillimeters = Math.max(50, value);
+  syncProductObjectScale(product);
+  renderPreview();
+  updateSelectedComponentInfo();
+  updateThreeModel(false);
+  elements.exportJsonButton.disabled = !hasExportableContent();
+  setStatus("产品参数已更新");
+}
+
+function positionSelectedComponentCard(line) {
+  if (!state.analysisCanvas || !line || elements.selectedComponentCard.hidden) return;
+  const canvasX = ((line.x1 + line.x2) / 2) * (elements.previewCanvas.width / state.analysisCanvas.width);
+  const canvasY = ((line.y1 + line.y2) / 2) * (elements.previewCanvas.height / state.analysisCanvas.height);
+  const displayX = canvasX * state.zoom;
+  const displayY = canvasY * state.zoom;
+  const cardWidth = elements.selectedComponentCard.offsetWidth || 260;
+  const canvasDisplayWidth = elements.previewCanvas.width * state.zoom;
+  const clampedX = displayX + cardWidth + 28 > canvasDisplayWidth ? Math.max(8, displayX - cardWidth - 28) : displayX;
+  elements.selectedComponentCard.style.left = `${Math.round(clampedX)}px`;
+  elements.selectedComponentCard.style.top = `${Math.round(displayY)}px`;
+  elements.selectedComponentCard.style.transform = displayX + cardWidth + 28 > canvasDisplayWidth ? "translate(0, -50%)" : "translate(16px, -50%)";
+}
+
+function positionSelectedOpeningCard(opening) {
+  if (!state.analysisCanvas || !opening || elements.selectedComponentCard.hidden) return;
+  const canvasX = ((opening.x1 + opening.x2) / 2) * (elements.previewCanvas.width / state.analysisCanvas.width);
+  const canvasY = ((opening.y1 + opening.y2) / 2) * (elements.previewCanvas.height / state.analysisCanvas.height);
+  const displayX = canvasX * state.zoom;
+  const displayY = canvasY * state.zoom;
+  const cardWidth = elements.selectedComponentCard.offsetWidth || 260;
+  const canvasDisplayWidth = elements.previewCanvas.width * state.zoom;
+  const clampedX = displayX + cardWidth + 28 > canvasDisplayWidth ? Math.max(8, displayX - cardWidth - 28) : displayX;
+  elements.selectedComponentCard.style.left = `${Math.round(clampedX)}px`;
+  elements.selectedComponentCard.style.top = `${Math.round(displayY)}px`;
+  elements.selectedComponentCard.style.transform = displayX + cardWidth + 28 > canvasDisplayWidth ? "translate(0, -50%)" : "translate(16px, -50%)";
+}
+
+function positionSelectedRailingCard(railing) {
+  if (!state.analysisCanvas || !railing || elements.selectedComponentCard.hidden) return;
+  const canvasX = ((railing.x1 + railing.x2) / 2) * (elements.previewCanvas.width / state.analysisCanvas.width);
+  const canvasY = ((railing.y1 + railing.y2) / 2) * (elements.previewCanvas.height / state.analysisCanvas.height);
+  const displayX = canvasX * state.zoom;
+  const displayY = canvasY * state.zoom;
+  const cardWidth = elements.selectedComponentCard.offsetWidth || 260;
+  const cardHeight = elements.selectedComponentCard.offsetHeight || 190;
+  const canvasDisplayWidth = elements.previewCanvas.width * state.zoom;
+  const canvasDisplayHeight = elements.previewCanvas.height * state.zoom;
+  let x;
+  let y;
+  if (railing.orientation === "horizontal") {
+    x = clamp(displayX - cardWidth / 2, 8, Math.max(8, canvasDisplayWidth - cardWidth - 8));
+    y = displayY - cardHeight - 22 >= 8 ? displayY - cardHeight - 22 : displayY + 22;
+  } else {
+    const placeRight = displayX + cardWidth + 24 <= canvasDisplayWidth;
+    x = placeRight ? displayX + 22 : displayX - cardWidth - 22;
+    y = displayY - cardHeight / 2;
+  }
+  elements.selectedComponentCard.style.left = `${Math.round(clamp(x, 8, Math.max(8, canvasDisplayWidth - cardWidth - 8)))}px`;
+  elements.selectedComponentCard.style.top = `${Math.round(clamp(y, 8, Math.max(8, canvasDisplayHeight - cardHeight - 8)))}px`;
+  elements.selectedComponentCard.style.transform = "none";
+}
+
+function positionSelectedProductCard(product) {
+  if (!state.analysisCanvas || !product || elements.selectedComponentCard.hidden) return;
+  const manualKey = selectedComponentCardKey();
+  if (applySelectedCardManualPosition(manualKey)) return;
+  const canvasX = product.planX * (elements.previewCanvas.width / state.analysisCanvas.width);
+  const canvasY = product.planY * (elements.previewCanvas.height / state.analysisCanvas.height);
+  const displayX = canvasX * state.zoom;
+  const displayY = canvasY * state.zoom;
+  const cardWidth = elements.selectedComponentCard.offsetWidth || 260;
+  const cardHeight = elements.selectedComponentCard.offsetHeight || 190;
+  const canvasDisplayWidth = elements.previewCanvas.width * state.zoom;
+  const canvasDisplayHeight = elements.previewCanvas.height * state.zoom;
+  const bounds = selectedProductDisplayBounds(product);
+  const gap = 22;
+  let x = bounds.maxX + gap;
+  let y = bounds.minY + Math.max(0, (bounds.height - cardHeight) / 2);
+  if (x + cardWidth + 8 > canvasDisplayWidth) x = bounds.minX - cardWidth - gap;
+  if (x < 8) {
+    x = bounds.minX + Math.max(0, (bounds.width - cardWidth) / 2);
+    y = bounds.maxY + gap;
+    if (y + cardHeight + 8 > canvasDisplayHeight) y = bounds.minY - cardHeight - gap;
+  }
+  elements.selectedComponentCard.style.left = `${Math.round(clamp(x, 8, Math.max(8, canvasDisplayWidth - cardWidth - 8)))}px`;
+  elements.selectedComponentCard.style.top = `${Math.round(clamp(y, 8, Math.max(8, canvasDisplayHeight - cardHeight - 8)))}px`;
+  elements.selectedComponentCard.style.transform = "none";
+}
+
+function selectedProductDisplayBounds(product) {
+  const { width, depth } = productFootprintPixels(product, getSettings());
+  const angle = ((Number(product.rotationDegrees) || 0) * Math.PI) / 180;
+  const corners = [
+    { x: -width / 2, y: -depth / 2 },
+    { x: width / 2, y: -depth / 2 },
+    { x: width / 2, y: depth / 2 },
+    { x: -width / 2, y: depth / 2 },
+  ].map((corner) => {
+    const planX = product.planX + corner.x * Math.cos(angle) - corner.y * Math.sin(angle);
+    const planY = product.planY + corner.x * Math.sin(angle) + corner.y * Math.cos(angle);
+    return {
+      x: planX * (elements.previewCanvas.width / state.analysisCanvas.width) * state.zoom,
+      y: planY * (elements.previewCanvas.height / state.analysisCanvas.height) * state.zoom,
+    };
+  });
+  const xs = corners.map((corner) => corner.x);
+  const ys = corners.map((corner) => corner.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function selectedComponentCardKey() {
+  const product = selectedProduct();
+  if (product) return `product:${product.id}`;
+  const line = selectedLine();
+  if (line) return `line:${line.id || state.selectedLineIndex}`;
+  const railing = selectedRailing();
+  if (railing) return `railing:${railing.id}`;
+  const opening = selectedOpening();
+  if (opening) return `opening:${opening.id || state.selectedOpeningIndex}`;
+  return null;
+}
+
+function applySelectedCardManualPosition(key) {
+  if (!key || !state.selectedCardManualPosition || state.selectedCardManualPosition.key !== key) return false;
+  const cardWidth = elements.selectedComponentCard.offsetWidth || 260;
+  const cardHeight = elements.selectedComponentCard.offsetHeight || 190;
+  const canvasDisplayWidth = elements.previewCanvas.width * state.zoom;
+  const canvasDisplayHeight = elements.previewCanvas.height * state.zoom;
+  const x = clamp(state.selectedCardManualPosition.x, 8, Math.max(8, canvasDisplayWidth - cardWidth - 8));
+  const y = clamp(state.selectedCardManualPosition.y, 8, Math.max(8, canvasDisplayHeight - cardHeight - 8));
+  elements.selectedComponentCard.style.left = `${Math.round(x)}px`;
+  elements.selectedComponentCard.style.top = `${Math.round(y)}px`;
+  elements.selectedComponentCard.style.transform = "none";
+  return true;
+}
+
+function positionThreeComponentCard() {
+  if (elements.threeComponentCard.hidden) return;
+  const viewport = elements.threeViewport.getBoundingClientRect();
+  const cardWidth = elements.threeComponentCard.offsetWidth || 260;
+  const cardHeight = elements.threeComponentCard.offsetHeight || 190;
+  const x = clamp(state.three.cardX + 14, 10, Math.max(10, viewport.width - cardWidth - 10));
+  const y = clamp(state.three.cardY + 14, 10, Math.max(10, viewport.height - cardHeight - 10));
+  elements.threeComponentCard.style.left = `${Math.round(x)}px`;
+  elements.threeComponentCard.style.top = `${Math.round(y)}px`;
+  elements.threeComponentCard.style.transform = "none";
+}
+
+function isComponentCardControl(target) {
+  return Boolean(target && target.closest("input, select, button"));
+}
+
+function beginSelectedCardDrag(event) {
+  if (event.button !== 0 || elements.selectedComponentCard.hidden || isComponentCardControl(event.target)) return;
+  const key = selectedComponentCardKey();
+  if (!key) return;
+  const left = parseFloat(elements.selectedComponentCard.style.left) || 0;
+  const top = parseFloat(elements.selectedComponentCard.style.top) || 0;
+  state.selectedCardDrag = {
+    key,
+    startX: event.clientX,
+    startY: event.clientY,
+    left,
+    top,
+  };
+  elements.selectedComponentCard.setPointerCapture(event.pointerId);
+  elements.selectedComponentCard.classList.add("is-dragging");
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function moveSelectedCard(event) {
+  if (!state.selectedCardDrag) return;
+  const cardWidth = elements.selectedComponentCard.offsetWidth || 260;
+  const cardHeight = elements.selectedComponentCard.offsetHeight || 190;
+  const canvasDisplayWidth = elements.previewCanvas.width * state.zoom;
+  const canvasDisplayHeight = elements.previewCanvas.height * state.zoom;
+  const x = clamp(state.selectedCardDrag.left + event.clientX - state.selectedCardDrag.startX, 8, Math.max(8, canvasDisplayWidth - cardWidth - 8));
+  const y = clamp(state.selectedCardDrag.top + event.clientY - state.selectedCardDrag.startY, 8, Math.max(8, canvasDisplayHeight - cardHeight - 8));
+  state.selectedCardManualPosition = { key: state.selectedCardDrag.key, x, y };
+  elements.selectedComponentCard.style.left = `${Math.round(x)}px`;
+  elements.selectedComponentCard.style.top = `${Math.round(y)}px`;
+  elements.selectedComponentCard.style.transform = "none";
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function endSelectedCardDrag(event) {
+  if (!state.selectedCardDrag) return;
+  state.selectedCardDrag = null;
+  elements.selectedComponentCard.classList.remove("is-dragging");
+  if (elements.selectedComponentCard.hasPointerCapture(event.pointerId)) {
+    elements.selectedComponentCard.releasePointerCapture(event.pointerId);
+  }
+  event.preventDefault();
+  event.stopPropagation();
 }
 
 function renderSourceImageOnly() {
@@ -693,28 +1947,43 @@ function renderPreview() {
     ctx.globalAlpha = 1;
   }
   ctx.fillStyle = "rgba(215,71,50,0.22)";
-  for (const line of state.lines) {
-    const bounds = boundsFromLine(line);
+  const settings = getSettings();
+  const displayWalls = buildContinuousWallModels(getClosedWallLines(settings), constructibleOpenings(), settings).map((model) => model.line);
+  for (const line of displayWalls) {
+    const bounds = boundsFromLine(line, settings);
     ctx.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
   }
   ctx.strokeStyle = "#276fbf";
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
-  for (const line of state.lines) {
+  for (const line of displayWalls) {
     ctx.beginPath();
     ctx.moveTo(line.x1, line.y1);
     ctx.lineTo(line.x2, line.y2);
     ctx.stroke();
   }
+  drawOpeningCuts(ctx);
+  drawOpeningContinuity(ctx);
   drawSelectedLine(ctx);
   drawTopology(ctx);
+  drawRailings(ctx);
+  drawProductModels(ctx);
+  drawSelectedOpening(ctx);
+  drawSelectedRailing(ctx);
+  drawWallDraft(ctx);
+  drawOpeningDraft(ctx);
+  drawRailingDraft(ctx);
+  drawCalibrationDraft(ctx);
+  drawMeasurements(ctx);
+  drawMeasurementDraft(ctx);
   drawEndpointHandles(ctx);
   ctx.restore();
 }
 
-function boundsFromLine(line) {
-  if (line.orientation === "horizontal") return { x: line.x1, y: line.y1 - line.thickness / 2, width: line.x2 - line.x1, height: line.thickness };
-  return { x: line.x1 - line.thickness / 2, y: line.y1, width: line.thickness, height: line.y2 - line.y1 };
+function boundsFromLine(line, settings = getSettings()) {
+  const thickness = visualWallThicknessPixels(line, settings);
+  if (line.orientation === "horizontal") return { x: line.x1, y: line.y1 - thickness / 2, width: line.x2 - line.x1, height: thickness };
+  return { x: line.x1 - thickness / 2, y: line.y1, width: thickness, height: line.y2 - line.y1 };
 }
 
 function drawTopology(context) {
@@ -726,7 +1995,7 @@ function drawTopology(context) {
     context.fillRect(room.x, room.y, room.width, room.height);
     context.strokeRect(room.x, room.y, room.width, room.height);
   }
-  drawSegments(context, openings, "#e8bf25", 5);
+  drawOpenings(context, openings);
   drawSegments(context, endPiers, "#8b5cf6", 6);
   for (const point of intersections) drawPoint(context, point.x, point.y, "#12a6a6", 5);
   for (const point of breaks) drawPoint(context, point.x, point.y, "#f28c28", 5);
@@ -744,6 +2013,327 @@ function drawSelectedLine(context) {
   context.moveTo(line.x1, line.y1);
   context.lineTo(line.x2, line.y2);
   context.stroke();
+  context.restore();
+}
+
+function drawOpeningContinuity(context) {
+  const openings = constructibleOpenings();
+  if (!openings.length) return;
+  const settings = getSettings();
+  context.save();
+  for (const opening of openings) {
+    const bridge = openingBridgeLine(opening, settings);
+    if (!bridge) continue;
+    const bounds = boundsFromLine(bridge, settings);
+    context.fillStyle = "rgba(215,71,50,0.22)";
+    context.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+    context.strokeStyle = "#276fbf";
+    context.lineWidth = 3;
+    context.lineCap = "round";
+    context.beginPath();
+    context.moveTo(bridge.x1, bridge.y1);
+    context.lineTo(bridge.x2, bridge.y2);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawOpeningCuts(context) {
+  const openings = constructibleOpenings();
+  if (!openings.length) return;
+  const settings = getSettings();
+  context.save();
+  context.fillStyle = state.view === "overlay" ? "rgba(255,255,255,0.82)" : "#fff";
+  for (const opening of openings) {
+    const bridge = openingBridgeLine(opening, settings);
+    if (!bridge) continue;
+    const bounds = boundsFromLine(bridge, settings);
+    const pad = Math.max(2, visualOpeningWallBand(opening, settings) * 0.16);
+    context.fillRect(bounds.x - pad, bounds.y - pad, bounds.width + pad * 2, bounds.height + pad * 2);
+  }
+  context.restore();
+}
+
+function openingBridgeLine(opening, settings) {
+  const thickness = Math.max(settings.minWallThickness, Math.round(((Number(opening.leftThickness) || settings.maxThickness) + (Number(opening.rightThickness) || settings.maxThickness)) / 2));
+  const line = opening.orientation === "horizontal"
+    ? makeLine("horizontal", opening.x1, opening.y1, opening.x2, opening.y2, thickness)
+    : makeLine("vertical", opening.x1, opening.y1, opening.x2, opening.y2, thickness);
+  line.id = `bridge-${opening.id || "opening"}`;
+  return line;
+}
+
+function drawSelectedOpening(context) {
+  const opening = selectedOpening();
+  if (!opening) return;
+  context.save();
+  context.strokeStyle = "#ffb14a";
+  context.lineWidth = 10;
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(opening.x1, opening.y1);
+  context.lineTo(opening.x2, opening.y2);
+  context.stroke();
+  context.strokeStyle = "#fff";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(opening.x1, opening.y1);
+  context.lineTo(opening.x2, opening.y2);
+  context.stroke();
+  context.restore();
+}
+
+function drawRailings(context) {
+  if (!state.manualRailings.length) return;
+  context.save();
+  context.lineCap = "round";
+  for (const railing of state.manualRailings) {
+    context.strokeStyle = railing.id === state.selectedRailingId ? "#ffb14a" : "#455a64";
+    context.lineWidth = Math.max(4, millimetersToPixels(railing.thicknessMillimeters || RAILING_DEFAULT_THICKNESS_MM, getSettings()));
+    context.beginPath();
+    context.moveTo(railing.x1, railing.y1);
+    context.lineTo(railing.x2, railing.y2);
+    context.stroke();
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 1.5;
+    context.beginPath();
+    context.moveTo(railing.x1, railing.y1);
+    context.lineTo(railing.x2, railing.y2);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawSelectedRailing(context) {
+  const railing = selectedRailing();
+  if (!railing) return;
+  context.save();
+  drawEditableEndpoint(context, railing.x1, railing.y1, true);
+  drawEditableEndpoint(context, railing.x2, railing.y2, true);
+  context.restore();
+}
+
+function drawProductModels(context) {
+  if (!state.productModels.length) return;
+  const settings = getSettings();
+  context.save();
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  for (const product of state.productModels) {
+    const { width, depth } = productFootprintPixels(product, settings);
+    const selected = product.id === state.selectedProductId;
+    context.save();
+    context.translate(product.planX, product.planY);
+    context.rotate(((Number(product.rotationDegrees) || 0) * Math.PI) / 180);
+    context.fillStyle = selected ? "rgba(255,177,74,0.34)" : `${productColor(product.category)}55`;
+    context.strokeStyle = selected ? "#ff9f1a" : productColor(product.category);
+    context.lineWidth = selected ? 3 : 2;
+    context.beginPath();
+    context.rect(-width / 2, -depth / 2, width, depth);
+    context.fill();
+    context.stroke();
+    context.fillStyle = selected ? "#1f2328" : "#ffffff";
+    context.strokeStyle = selected ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.28)";
+    context.lineWidth = 3;
+    const label = productCategoryLabel(product.category);
+    context.font = `${Math.max(11, Math.min(18, depth * 0.28))}px Microsoft YaHei, sans-serif`;
+    context.strokeText(label, 0, 0);
+    context.fillText(label, 0, 0);
+    if (selected) {
+      drawEditableEndpoint(context, -width / 2, -depth / 2, true);
+      drawEditableEndpoint(context, width / 2, depth / 2, true);
+      drawProductRotationHandle(context, width, depth);
+    }
+    context.restore();
+  }
+  context.restore();
+}
+
+function drawProductRotationHandle(context, width, depth) {
+  const x = width / 2 + 26;
+  const y = -depth / 2 - 26;
+  context.save();
+  context.strokeStyle = "rgba(31,35,40,0.42)";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(width / 2, -depth / 2);
+  context.lineTo(x, y);
+  context.stroke();
+
+  context.fillStyle = "#ffffff";
+  context.strokeStyle = "#ff9f1a";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.arc(x, y, 13, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+
+  context.strokeStyle = "#1f2328";
+  context.lineWidth = 2.2;
+  context.lineCap = "round";
+  context.beginPath();
+  context.arc(x, y, 6.5, -Math.PI * 0.15, Math.PI * 1.25);
+  context.stroke();
+  context.fillStyle = "#1f2328";
+  context.beginPath();
+  context.moveTo(x + 7.5, y - 1.5);
+  context.lineTo(x + 13, y - 2.5);
+  context.lineTo(x + 9.5, y + 2.5);
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+
+function drawWallDraft(context) {
+  if (!state.drawingLine) return;
+  const line = lineFromDrawingDraft(state.drawingLine.start, state.drawingLine.end, getSettings());
+  if (!line) return;
+  const bounds = boundsFromLine(line, getSettings());
+
+  context.save();
+  context.fillStyle = "rgba(47,128,111,0.18)";
+  context.strokeStyle = "#2f806f";
+  context.lineWidth = 3;
+  context.setLineDash([8, 6]);
+  context.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  context.beginPath();
+  context.moveTo(line.x1, line.y1);
+  context.lineTo(line.x2, line.y2);
+  context.stroke();
+  drawEditableEndpoint(context, line.x1, line.y1, true);
+  drawEditableEndpoint(context, line.x2, line.y2, true);
+  context.restore();
+}
+
+function drawOpeningDraft(context) {
+  if (!state.openingDraft) return;
+  const opening = openingFromDraft(state.openingDraft.start, state.openingDraft.end, state.openingDraft.variant);
+  if (!opening) return;
+
+  context.save();
+  context.strokeStyle = openingColor(opening);
+  context.fillStyle = openingColor(opening);
+  context.lineWidth = opening.kind === "door" ? 6 : 5;
+  context.lineCap = "round";
+  context.setLineDash([7, 5]);
+  context.beginPath();
+  context.moveTo(opening.x1, opening.y1);
+  context.lineTo(opening.x2, opening.y2);
+  context.stroke();
+  context.setLineDash([]);
+  drawEditableEndpoint(context, opening.x1, opening.y1, true);
+  drawEditableEndpoint(context, opening.x2, opening.y2, true);
+  const midX = (opening.x1 + opening.x2) / 2;
+  const midY = (opening.y1 + opening.y2) / 2;
+  context.font = "16px Microsoft YaHei, sans-serif";
+  context.fillText(openingKindLabel(opening), midX + 8, midY - 8);
+  context.restore();
+}
+
+function drawRailingDraft(context) {
+  if (!state.railingDraft) return;
+  const railing = railingFromDraft(state.railingDraft.start, state.railingDraft.end);
+  if (!railing) return;
+  context.save();
+  context.strokeStyle = "#455a64";
+  context.fillStyle = "#455a64";
+  context.lineWidth = Math.max(4, millimetersToPixels(railing.thicknessMillimeters, getSettings()));
+  context.lineCap = "round";
+  context.setLineDash([7, 5]);
+  context.beginPath();
+  context.moveTo(railing.x1, railing.y1);
+  context.lineTo(railing.x2, railing.y2);
+  context.stroke();
+  context.setLineDash([]);
+  drawEditableEndpoint(context, railing.x1, railing.y1, true);
+  drawEditableEndpoint(context, railing.x2, railing.y2, true);
+  context.font = "16px Microsoft YaHei, sans-serif";
+  context.fillText("栏杆", (railing.x1 + railing.x2) / 2 + 8, (railing.y1 + railing.y2) / 2 - 8);
+  context.restore();
+}
+
+function drawCalibrationDraft(context) {
+  if (!state.calibrationLine) return;
+  const { start, end } = state.calibrationLine;
+  const length = distance(start, end);
+  const actualLength = getCalibrationLengthMillimeters();
+
+  context.save();
+  context.strokeStyle = "#12a6a6";
+  context.fillStyle = "#12a6a6";
+  context.lineWidth = 3;
+  context.setLineDash([6, 6]);
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.lineTo(end.x, end.y);
+  context.stroke();
+  context.setLineDash([]);
+  drawEditableEndpoint(context, start.x, start.y, true);
+  drawEditableEndpoint(context, end.x, end.y, true);
+  context.font = "18px Microsoft YaHei, sans-serif";
+  context.fillText(`${formatMillimeters(actualLength)} / ${Math.round(length)} px`, (start.x + end.x) / 2 + 8, (start.y + end.y) / 2 - 8);
+  context.restore();
+}
+
+function drawMeasurements(context) {
+  for (const measurement of state.measurements) drawMeasurementLine(context, measurement, false);
+}
+
+function drawMeasurementDraft(context) {
+  if (!state.measurementLine) return;
+  drawMeasurementLine(context, state.measurementLine, true);
+}
+
+function drawMeasurementLine(context, measurement, isDraft) {
+  const { start, end } = measurement;
+  const settings = getSettings();
+  const length = distance(start, end);
+  const label = formatPhysicalLength(length, settings);
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+
+  context.save();
+  context.strokeStyle = isDraft ? "#276fbf" : "#1f7a6b";
+  context.fillStyle = isDraft ? "#276fbf" : "#1f7a6b";
+  context.lineWidth = isDraft ? 3 : 2.5;
+  if (isDraft) context.setLineDash([7, 5]);
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.lineTo(end.x, end.y);
+  context.stroke();
+  context.setLineDash([]);
+  drawDimensionTick(context, start, end);
+  drawDimensionTick(context, end, start);
+  drawEditableEndpoint(context, start.x, start.y, isDraft);
+  drawEditableEndpoint(context, end.x, end.y, isDraft);
+  drawMeasurementLabel(context, label, midX, midY);
+  context.restore();
+}
+
+function drawDimensionTick(context, point, other) {
+  const angle = Math.atan2(other.y - point.y, other.x - point.x) + Math.PI / 2;
+  const length = 9;
+  context.beginPath();
+  context.moveTo(point.x - Math.cos(angle) * length, point.y - Math.sin(angle) * length);
+  context.lineTo(point.x + Math.cos(angle) * length, point.y + Math.sin(angle) * length);
+  context.stroke();
+}
+
+function drawMeasurementLabel(context, label, x, y) {
+  context.font = "18px Microsoft YaHei, sans-serif";
+  const metrics = context.measureText(label);
+  const width = metrics.width + 14;
+  const height = 26;
+  context.save();
+  context.fillStyle = "rgba(255,255,255,0.92)";
+  context.strokeStyle = "rgba(31,122,107,0.55)";
+  context.lineWidth = 1;
+  context.beginPath();
+  context.roundRect(x + 8, y - height - 8, width, height, 6);
+  context.fill();
+  context.stroke();
+  context.fillStyle = "#1f7a6b";
+  context.fillText(label, x + 15, y - 16);
   context.restore();
 }
 
@@ -786,6 +2376,36 @@ function drawSegments(context, segments, color, width) {
   }
 }
 
+function drawOpenings(context, openings) {
+  for (const opening of openings) {
+    context.strokeStyle = openingColor(opening);
+    context.lineWidth = opening.kind === "door" ? 6 : opening.kind === "uncertain" ? 3 : 5;
+    context.lineCap = "round";
+    context.globalAlpha = opening.kind === "uncertain" ? 0.42 : 1;
+    context.setLineDash(opening.kind === "uncertain" ? [5, 5] : []);
+    context.beginPath();
+    context.moveTo(opening.x1, opening.y1);
+    context.lineTo(opening.x2, opening.y2);
+    context.stroke();
+    context.setLineDash([]);
+    context.globalAlpha = 1;
+  }
+}
+
+function openingColor(kind) {
+  if (kind && typeof kind === "object") {
+    const variant = openingVariant(kind);
+    if (variant === "high-window") return "#66bfd0";
+    if (variant === "floor-window") return "#1c95a8";
+    if (variant === "bay-window") return "#49b8c8";
+    kind = kind.kind;
+  }
+  if (kind === "door") return "#e8bf25";
+  if (kind === "window") return "#35a7b7";
+  if (kind === "opening") return "#f28c28";
+  return "#9aa3ad";
+}
+
 function drawPoint(context, x, y, color, radius) {
   context.fillStyle = color;
   context.strokeStyle = "#fff";
@@ -794,6 +2414,1372 @@ function drawPoint(context, x, y, color, radius) {
   context.arc(x, y, radius, 0, Math.PI * 2);
   context.fill();
   context.stroke();
+}
+
+function initThreeViewer() {
+  if (state.three.module && state.three.productsGroup) return Promise.resolve(state.three.module);
+  if (state.three.readyPromise) return state.three.readyPromise;
+  elements.threeStat.textContent = "3D 加载中";
+  state.three.readyPromise = import(THREE_MODULE_URL)
+    .then((module) => {
+      state.three.module = module;
+      setupThreeScene();
+      updateThreeModel(true);
+      return module;
+    })
+    .catch((error) => {
+      state.three.readyPromise = null;
+      elements.threeStat.textContent = "3D 加载失败";
+      elements.threeViewport.classList.add("is-unavailable");
+      throw error;
+    });
+  return state.three.readyPromise;
+}
+
+async function ensureThreeViewerReady() {
+  if (state.three.module && state.three.productsGroup) return true;
+  try {
+    await initThreeViewer();
+    return Boolean(state.three.module && state.three.productsGroup);
+  } catch (error) {
+    console.warn(error);
+    return false;
+  }
+}
+
+function setupThreeScene() {
+  const three = state.three.module;
+  state.three.scene = new three.Scene();
+  state.three.scene.background = new three.Color(0xedf3f4);
+  state.three.camera = new three.PerspectiveCamera(42, 1, 0.1, 1000);
+  state.three.renderer = new three.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+  state.three.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  state.three.renderer.shadowMap.enabled = true;
+  state.three.renderer.domElement.setAttribute("aria-label", "3D 模型预览");
+  elements.threeViewport.appendChild(state.three.renderer.domElement);
+
+  const ambient = new three.HemisphereLight(0xffffff, 0xa8b8bb, 1.6);
+  const key = new three.DirectionalLight(0xffffff, 2.2);
+  key.position.set(6, 9, 7);
+  key.castShadow = true;
+  state.three.scene.add(ambient, key);
+
+  state.three.wallsGroup = new three.Group();
+  state.three.scene.add(state.three.wallsGroup);
+  state.three.productsGroup = new three.Group();
+  state.three.scene.add(state.three.productsGroup);
+  state.three.center = new three.Vector3(0, WALL_HEIGHT_METERS * 0.42, 0);
+  state.three.roamPosition = new three.Vector3(0, 1.55, 0);
+  state.three.raycaster = new three.Raycaster();
+  state.three.pointer = new three.Vector2();
+
+  bindThreeViewportEvents();
+  resizeThreeViewer();
+  resetThreeCamera();
+}
+
+function bindThreeViewportEvents() {
+  elements.threeViewport.addEventListener("pointerdown", handleThreePointerDown);
+  elements.threeViewport.addEventListener("pointermove", handleThreePointerMove);
+  elements.threeViewport.addEventListener("pointerup", handleThreePointerUp);
+  elements.threeViewport.addEventListener("pointercancel", handleThreePointerUp);
+  elements.threeViewport.addEventListener("wheel", handleThreeWheel, { passive: false });
+  elements.threeViewport.addEventListener("keydown", handleThreeKeyDown);
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(resizeThreeViewer).observe(elements.threeViewport);
+  } else {
+    window.addEventListener("resize", resizeThreeViewer);
+  }
+}
+
+function resizeThreeViewer() {
+  const { renderer, camera } = state.three;
+  if (!renderer || !camera) return;
+  const rect = elements.threeViewport.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  renderer.setSize(width, height, false);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  positionThreeComponentCard();
+  renderThreeScene();
+}
+
+function updateThreeModel(resetCamera) {
+  updateThreeStat();
+  const { module: three, renderer, scene, wallsGroup } = state.three;
+  if (!three || !renderer || !scene || !wallsGroup) return;
+
+  clearThreeObject(wallsGroup);
+  if (state.three.floor) {
+    scene.remove(state.three.floor);
+    disposeThreeObject(state.three.floor);
+    state.three.floor = null;
+  }
+
+  const settings = getSettings();
+  const closedWallLines = getClosedWallLines(settings);
+  const bounds = getPlanBounds(closedWallLines.length ? closedWallLines : state.lines);
+  const sourceWidth = state.analysisCanvas ? state.analysisCanvas.width : 0;
+  const sourceHeight = state.analysisCanvas ? state.analysisCanvas.height : 0;
+  const maxSpan = Math.max(bounds.width, bounds.height, sourceWidth, sourceHeight, 1);
+  const unit = 12 / maxSpan;
+  const floorWidth = Math.max(5, bounds.width * unit + 1.4, sourceWidth * unit + 0.6);
+  const floorDepth = Math.max(5, bounds.height * unit + 1.4, sourceHeight * unit + 0.6);
+  state.three.roamBounds = { width: floorWidth, depth: floorDepth };
+  const floor = createThreeFloor(three, floorWidth, floorDepth, bounds, unit);
+  state.three.floor = floor;
+  scene.add(floor);
+
+  const pierIds = new Set((state.topology.endPiers || []).map((pier) => pier.wall));
+  const openings = constructibleOpenings();
+  const wallModels = buildContinuousWallModels(closedWallLines, openings, settings);
+  let maxWallHeight = WALL_HEIGHT_METERS;
+  for (const model of wallModels) {
+    for (const segment of splitWallModelByOpenings(model, openings, settings)) {
+      const { line, index } = segment;
+      maxWallHeight = Math.max(maxWallHeight, lineHeightMeters(line));
+      const wall = createThreeWall(three, line, index, unit, bounds, pierIds.has(line.id));
+      wallsGroup.add(wall);
+    }
+  }
+  (state.topology.openings || []).forEach((opening, index) => {
+    if (!isConstructibleOpening(opening)) return;
+    wallsGroup.add(createThreeOpeningComponent(three, opening, index, unit, bounds));
+  });
+  state.manualRailings.forEach((railing) => {
+    wallsGroup.add(createThreeRailing(three, railing, unit, bounds));
+  });
+  updateProductModelTransforms(unit, bounds);
+
+  state.three.center.set(0, maxWallHeight * 0.45, 0);
+  state.three.radius = Math.max(7.5, Math.max(floorWidth, floorDepth) * 0.9);
+  if (resetCamera) resetThreeCamera();
+  else updateThreeCamera();
+}
+
+function updateThreeStat() {
+  const rooms = state.topology && state.topology.rooms ? state.topology.rooms.length : 0;
+  const openings = state.topology && state.topology.openings ? constructibleOpenings().length : 0;
+  elements.threeStat.textContent = `${state.lines.length} 墙体 / ${openings} 洞口 / ${state.manualRailings.length} 栏杆 / ${state.productModels.length} 产品 / ${rooms} 房间`;
+}
+
+function createThreeFloor(three, width, depth, bounds, unit) {
+  const group = new three.Group();
+  const geometry = new three.PlaneGeometry(width, depth);
+  const material = new three.MeshStandardMaterial({
+    color: 0xf8fbfc,
+    roughness: 0.86,
+    metalness: 0,
+    side: three.DoubleSide,
+  });
+  const plane = new three.Mesh(geometry, material);
+  plane.rotation.x = -Math.PI / 2;
+  plane.receiveShadow = true;
+  group.add(plane);
+
+  const planPlane = createThreePlanImagePlane(three, bounds, unit);
+  if (planPlane) group.add(planPlane);
+
+  const grid = new three.GridHelper(Math.max(width, depth), 16, 0x9db2b7, 0xc9d6d9);
+  grid.position.y = 0.018;
+  group.add(grid);
+  return group;
+}
+
+function createThreePlanImagePlane(three, bounds, unit) {
+  if (!state.analysisCanvas) return null;
+  const texture = createBlurredPlanTexture(three);
+  if (!texture) return null;
+  const imageWidth = state.analysisCanvas.width * unit;
+  const imageDepth = state.analysisCanvas.height * unit;
+  const geometry = new three.PlaneGeometry(imageWidth, imageDepth);
+  const material = new three.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    opacity: 0.38,
+    side: three.DoubleSide,
+    depthWrite: false,
+  });
+  const plane = new three.Mesh(geometry, material);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  plane.rotation.x = -Math.PI / 2;
+  plane.position.set((state.analysisCanvas.width / 2 - centerX) * unit, 0.007, (state.analysisCanvas.height / 2 - centerY) * unit);
+  plane.renderOrder = -2;
+  return plane;
+}
+
+function createBlurredPlanTexture(three) {
+  if (!state.analysisCanvas) return null;
+  const source = state.analysisCanvas;
+  const maxSize = 1024;
+  const scale = Math.min(1, maxSize / Math.max(source.width, source.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(source.width * scale));
+  canvas.height = Math.max(1, Math.round(source.height * scale));
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.filter = "blur(2.8px) grayscale(18%) brightness(1.12)";
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  context.filter = "none";
+  const texture = new three.CanvasTexture(canvas);
+  texture.colorSpace = three.SRGBColorSpace;
+  texture.anisotropy = state.three.renderer ? Math.min(4, state.three.renderer.capabilities.getMaxAnisotropy()) : 1;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createThreeWall(three, line, index, unit, bounds, isPier) {
+  const settings = getSettings();
+  const length = Math.max(line.length * unit, 0.08);
+  const thickness = Math.max(visualWallThicknessPixels(line, settings) * unit, 0.08);
+  const width = line.orientation === "horizontal" ? length : thickness;
+  const depth = line.orientation === "horizontal" ? thickness : length;
+  const height = lineHeightMeters(line);
+  const base = Math.max(0, Number(line.baseMeters) || 0);
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const material = new three.MeshStandardMaterial({
+    color: index === state.selectedLineIndex ? 0xf2a13a : isPier ? 0x8b5cf6 : 0xd98b78,
+    roughness: 0.68,
+    metalness: 0.02,
+  });
+  const mesh = new three.Mesh(geometry, material);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  mesh.position.set(((line.x1 + line.x2) / 2 - centerX) * unit, base + height / 2, ((line.y1 + line.y2) / 2 - centerY) * unit);
+  mesh.userData.lineIndex = index;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+
+  const group = new three.Group();
+  group.userData.lineIndex = index;
+  group.add(mesh);
+  if (index === state.selectedLineIndex || isPier) {
+    const edge = new three.LineSegments(
+      new three.EdgesGeometry(geometry),
+      new three.LineBasicMaterial({ color: index === state.selectedLineIndex ? 0x8d4c0c : 0x6f45c5, transparent: true, opacity: 0.54 }),
+    );
+    edge.position.copy(mesh.position);
+    edge.userData.lineIndex = index;
+    group.add(edge);
+  }
+  return group;
+}
+
+function createThreeRailing(three, railing, unit, bounds) {
+  const settings = getSettings();
+  const length = Math.max(railing.length * unit, 0.08);
+  const thickness = Math.max(millimetersToPixels(railing.thicknessMillimeters || RAILING_DEFAULT_THICKNESS_MM, settings) * unit, 0.04);
+  const height = Math.max(0.1, (railing.heightMillimeters || RAILING_DEFAULT_HEIGHT_MM) / 1000);
+  const width = railing.orientation === "horizontal" ? length : thickness;
+  const depth = railing.orientation === "horizontal" ? thickness : length;
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const isSelected = railing.id === state.selectedRailingId;
+  const material = new three.MeshStandardMaterial({
+    color: isSelected ? 0xffb14a : 0x455a64,
+    roughness: 0.55,
+    metalness: 0.02,
+  });
+  const mesh = new three.Mesh(geometry, material);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  mesh.position.set(((railing.x1 + railing.x2) / 2 - centerX) * unit, height / 2, ((railing.y1 + railing.y2) / 2 - centerY) * unit);
+  mesh.userData.railingId = railing.id;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const group = new three.Group();
+  group.userData.railingId = railing.id;
+  group.add(mesh);
+  if (isSelected) {
+    const edge = new three.LineSegments(
+      new three.EdgesGeometry(geometry),
+      new three.LineBasicMaterial({ color: 0x8d4c0c, transparent: true, opacity: 0.62 }),
+    );
+    edge.position.copy(mesh.position);
+    edge.userData.railingId = railing.id;
+    group.add(edge);
+  }
+  return group;
+}
+
+function productCategoryLabel(category) {
+  if (category === "sanitary") return "洁具";
+  if (category === "hardware") return "五金";
+  return "家具";
+}
+
+function productDefaultSizeMeters(category) {
+  if (category === "sanitary") return 0.8;
+  if (category === "hardware") return 0.35;
+  return 1.2;
+}
+
+function productDefaultDepthMeters(category) {
+  if (category === "sanitary") return 0.55;
+  if (category === "hardware") return 0.18;
+  return 0.8;
+}
+
+function selectedProduct() {
+  if (!state.selectedProductId) return null;
+  return state.productModels.find((product) => product.id === state.selectedProductId) || null;
+}
+
+function productFootprintPixels(product, settings = getSettings()) {
+  const width = millimetersToPixels(product.widthMillimeters || productDefaultSizeMeters(product.category) * 1000, settings);
+  const depth = millimetersToPixels(product.depthMillimeters || productDefaultDepthMeters(product.category) * 1000, settings);
+  return { width: Math.max(10, width), depth: Math.max(10, depth) };
+}
+
+function productRotationHandlePoint(product, settings = getSettings()) {
+  const { width, depth } = productFootprintPixels(product, settings);
+  const localX = width / 2 + 26;
+  const localY = -depth / 2 - 26;
+  const angle = ((Number(product.rotationDegrees) || 0) * Math.PI) / 180;
+  return {
+    x: product.planX + localX * Math.cos(angle) - localY * Math.sin(angle),
+    y: product.planY + localX * Math.sin(angle) + localY * Math.cos(angle),
+  };
+}
+
+function normalizeDegrees(value) {
+  return ((value % 360) + 360) % 360;
+}
+
+function productColor(category) {
+  if (category === "sanitary") return "#2aa7b6";
+  if (category === "hardware") return "#455a64";
+  return "#5578c8";
+}
+
+function productThreeColor(category) {
+  if (category === "sanitary") return 0x2aa7b6;
+  if (category === "hardware") return 0x455a64;
+  return 0x5578c8;
+}
+
+function hasExportableContent() {
+  return Boolean(state.lines.length || state.manualRailings.length || state.productModels.length);
+}
+
+function defaultProductPlanPoint() {
+  const settings = getSettings();
+  const lines = getClosedWallLines(settings);
+  const bounds = getPlanBounds(lines.length ? lines : state.lines);
+  if (bounds.width && bounds.height) {
+    return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+  }
+  if (state.analysisCanvas) return { x: state.analysisCanvas.width / 2, y: state.analysisCanvas.height / 2 };
+  return { x: 0, y: 0 };
+}
+
+function openProductModelPicker(category) {
+  state.pendingProductCategory = category;
+  elements.productModelInput.value = "";
+  elements.productModelInput.click();
+}
+
+async function importProductModelFromFile(file) {
+  if (!file) return;
+  if (!state.three.module || !state.three.productsGroup) {
+    setStatus("3D loading...");
+    await ensureThreeViewerReady();
+  }
+  if (!state.analysisCanvas) {
+    setStatus("请先上传或加载平面图");
+    return;
+  }
+  if (!state.three.module || !state.three.productsGroup) {
+    setStatus("3D 模型尚未加载完成");
+    return;
+  }
+  try {
+    setStatus(`导入${productCategoryLabel(state.pendingProductCategory)}模型中`);
+    const three = state.three.module;
+    const loaderClass = await ensureGltfLoader();
+    const loader = new loaderClass();
+    const buffer = await file.arrayBuffer();
+    const gltf = await new Promise((resolve, reject) => loader.parse(buffer, "", resolve, reject));
+    const object = createProductModelObject(three, gltf.scene, state.pendingProductCategory);
+    const point = defaultProductPlanPoint();
+    const product = {
+      id: `product-${Date.now()}-${state.productModels.length + 1}`,
+      name: file.name || productCategoryLabel(state.pendingProductCategory),
+      category: state.pendingProductCategory,
+      planX: point.x,
+      planY: point.y,
+      widthMillimeters: Math.round(productDefaultSizeMeters(state.pendingProductCategory) * 1000),
+      depthMillimeters: Math.round(productDefaultDepthMeters(state.pendingProductCategory) * 1000),
+      heightMillimeters: Math.round(productDefaultSizeMeters(state.pendingProductCategory) * 1000),
+      rotationDegrees: 0,
+      rotationY: 0,
+      object,
+    };
+    object.userData.productId = product.id;
+    state.productModels.push(product);
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = null;
+    state.selectedProductId = product.id;
+    state.three.productsGroup.add(object);
+    syncProductObjectScale(product);
+    updateThreeModel(false);
+    renderPreview();
+    updateSelectedComponentInfo();
+    elements.exportJsonButton.disabled = !hasExportableContent();
+    setStatus(`${productCategoryLabel(product.category)}模型已导入`);
+  } catch (error) {
+    console.error(error);
+    setStatus("模型导入失败，请使用 GLB/GLTF 文件");
+  }
+}
+
+async function ensureGltfLoader() {
+  if (state.three.gltfLoaderClass) return state.three.gltfLoaderClass;
+  const module = await import(GLTF_LOADER_MODULE_URL);
+  state.three.gltfLoaderClass = module.GLTFLoader;
+  return state.three.gltfLoaderClass;
+}
+
+function createProductModelObject(three, source, category) {
+  const container = new three.Group();
+  container.add(source);
+  normalizeProductModelObject(three, container, source, category);
+  container.add(createProductProxyObject(three, category));
+  return container;
+}
+
+function createProductPlaceholderObject(three, category) {
+  const container = new three.Group();
+  container.userData.placeholderProduct = true;
+  container.add(createProductProxyObject(three, category));
+  return container;
+}
+
+function normalizeProductModelObject(three, container, source, category) {
+  const box = new three.Box3().setFromObject(source);
+  const size = new three.Vector3();
+  const center = new three.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  const maxAxis = Math.max(size.x, size.y, size.z, 0.001);
+  const scale = productDefaultSizeMeters(category) / maxAxis;
+  source.scale.multiplyScalar(scale);
+
+  const scaledBox = new three.Box3().setFromObject(source);
+  const scaledCenter = new three.Vector3();
+  scaledBox.getCenter(scaledCenter);
+  source.position.x -= scaledCenter.x;
+  source.position.z -= scaledCenter.z;
+  source.position.y -= scaledBox.min.y;
+  source.traverse((object) => {
+    object.castShadow = true;
+    object.receiveShadow = true;
+    if (object.material) {
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        material.side = three.DoubleSide;
+        material.needsUpdate = true;
+      }
+    }
+  });
+}
+
+function createProductProxyObject(three, category) {
+  const base = productDefaultSizeMeters(category);
+  const color = productThreeColor(category);
+  const group = new three.Group();
+  group.userData.productProxy = true;
+  group.add(createProductFootprint(three, base, color));
+  if (category === "sanitary") {
+    addSanitaryProxyParts(three, group, base, color);
+  } else if (category === "hardware") {
+    addHardwareProxyParts(three, group, base, color);
+  } else {
+    addFurnitureProxyParts(three, group, base, color);
+  }
+  return group;
+}
+
+function createProductFootprint(three, base, color) {
+  const height = 0.035;
+  const geometry = new three.BoxGeometry(base, height, base);
+  const material = new three.MeshStandardMaterial({
+    color,
+    roughness: 0.5,
+    metalness: 0.02,
+    transparent: true,
+    opacity: 0.2,
+    depthWrite: false,
+  });
+  material.userData.productBaseOpacity = 0.2;
+  const mesh = new three.Mesh(geometry, material);
+  mesh.position.y = height / 2 + 0.015;
+  mesh.userData.productProxyMesh = true;
+  mesh.castShadow = true;
+  mesh.receiveShadow = false;
+
+  const edge = new three.LineSegments(
+    new three.EdgesGeometry(geometry),
+    new three.LineBasicMaterial({ color, transparent: true, opacity: 0.86 }),
+  );
+  edge.position.copy(mesh.position);
+  edge.userData.productProxyEdge = true;
+  const group = new three.Group();
+  group.add(mesh, edge);
+  return group;
+}
+
+function addFurnitureProxyParts(three, group, base, color) {
+  const cushion = addProductBox(three, group, base * 0.78, 0.16, base * 0.62, 0, 0.15, 0.03, color, 0.88);
+  cushion.userData.productProxyMain = true;
+  addProductBox(three, group, base * 0.78, 0.34, base * 0.12, 0, 0.25, -base * 0.31, color, 0.92);
+  addProductBox(three, group, base * 0.1, 0.24, base * 0.58, -base * 0.39, 0.2, 0.03, color, 0.78);
+  addProductBox(three, group, base * 0.1, 0.24, base * 0.58, base * 0.39, 0.2, 0.03, color, 0.78);
+  addProductBox(three, group, base * 0.26, 0.08, base * 0.18, -base * 0.2, 0.28, -base * 0.16, 0xffffff, 0.92, true);
+  addProductBox(three, group, base * 0.26, 0.08, base * 0.18, base * 0.2, 0.28, -base * 0.16, 0xffffff, 0.92, true);
+  addProductLegs(three, group, base, color);
+}
+
+function addSanitaryProxyParts(three, group, base, color) {
+  addProductBox(three, group, base * 0.78, 0.1, base * 0.46, 0, 0.12, 0, color, 0.82);
+  const bowlGeometry = new three.CylinderGeometry(base * 0.2, base * 0.24, 0.13, 24);
+  const bowlMaterial = createProductMaterial(three, 0xe8fbff, 0.88);
+  const bowl = new three.Mesh(bowlGeometry, bowlMaterial);
+  bowl.position.set(0, 0.23, 0);
+  bowl.scale.z = 0.72;
+  bowl.userData.productProxyMesh = true;
+  bowl.userData.productProxyFixedColor = true;
+  bowl.castShadow = true;
+  group.add(bowl);
+  addProductBox(three, group, base * 0.34, 0.22, base * 0.1, 0, 0.28, -base * 0.28, color, 0.78);
+  addProductBox(three, group, base * 0.08, 0.22, base * 0.08, 0, 0.3, -base * 0.1, 0xd4dde2, 0.95, true);
+}
+
+function addHardwareProxyParts(three, group, base, color) {
+  addProductBox(three, group, base * 0.92, 0.05, base * 0.16, 0, 0.12, 0, color, 0.96);
+  addProductBox(three, group, base * 0.12, 0.14, base * 0.12, -base * 0.34, 0.16, 0, 0xd4dde2, 0.95, true);
+  addProductBox(three, group, base * 0.12, 0.14, base * 0.12, base * 0.34, 0.16, 0, 0xd4dde2, 0.95, true);
+}
+
+function addProductLegs(three, group, base, color) {
+  const legWidth = base * 0.055;
+  const x = base * 0.3;
+  const z = base * 0.2;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      addProductBox(three, group, legWidth, 0.14, legWidth, sx * x, 0.07, sz * z, color, 0.86);
+    }
+  }
+}
+
+function addProductBox(three, group, width, height, depth, x, y, z, color, opacity = 0.9, fixedColor = false) {
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const mesh = new three.Mesh(geometry, createProductMaterial(three, color, opacity));
+  mesh.position.set(x, y, z);
+  mesh.userData.productProxyMesh = true;
+  mesh.userData.productProxyFixedColor = fixedColor;
+  mesh.castShadow = true;
+  mesh.receiveShadow = false;
+  group.add(mesh);
+  const edge = new three.LineSegments(
+    new three.EdgesGeometry(geometry),
+    new three.LineBasicMaterial({ color: 0x2d3c4f, transparent: true, opacity: 0.34 }),
+  );
+  edge.position.copy(mesh.position);
+  edge.userData.productProxyEdge = true;
+  group.add(edge);
+  return mesh;
+}
+
+function createProductMaterial(three, color, opacity) {
+  const material = new three.MeshStandardMaterial({
+    color,
+    roughness: 0.52,
+    metalness: 0.02,
+    transparent: opacity < 1,
+    opacity,
+  });
+  material.userData.productBaseOpacity = opacity;
+  return material;
+}
+
+function updateProductModelTransforms(unit, bounds) {
+  if (!state.three.productsGroup) return;
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  for (const product of state.productModels) {
+    ensureProductThreeObject(product);
+    if (!product.object) continue;
+    syncProductObjectScale(product);
+    product.object.position.set((product.planX - centerX) * unit, 0.035, (product.planY - centerY) * unit);
+    product.object.rotation.y = ((Number(product.rotationDegrees) || 0) * Math.PI) / 180;
+    updateProductProxyAppearance(product);
+  }
+}
+
+function ensureProductThreeObject(product) {
+  if (!product || product.object || !state.three.module || !state.three.productsGroup) return;
+  const object = createProductPlaceholderObject(state.three.module, product.category);
+  object.userData.productId = product.id;
+  product.object = object;
+  state.three.productsGroup.add(object);
+}
+
+function updateProductProxyAppearance(product) {
+  if (!product || !product.object || !state.three.module) return;
+  const three = state.three.module;
+  const selected = product.id === state.selectedProductId;
+  const color = selected ? 0xffb14a : productThreeColor(product.category);
+  product.object.traverse((object) => {
+    if (object.userData && object.userData.productProxyMesh && object.material) {
+      if (!object.userData.productProxyFixedColor) object.material.color.setHex(color);
+      const baseOpacity = Number(object.material.userData && object.material.userData.productBaseOpacity) || 0.82;
+      object.material.opacity = selected ? Math.min(1, baseOpacity + 0.14) : baseOpacity;
+      object.material.transparent = object.material.opacity < 1;
+      object.material.depthWrite = false;
+      object.material.needsUpdate = true;
+    }
+    if (object.userData && object.userData.productProxyEdge && object.material) {
+      object.material.color.setHex(color);
+      object.material.opacity = selected ? 1 : 0.86;
+      object.material.needsUpdate = true;
+    }
+  });
+}
+
+function syncProductObjectScale(product) {
+  if (!product || !product.object) return;
+  const base = productDefaultSizeMeters(product.category);
+  const width = Math.max(0.05, (product.widthMillimeters || base * 1000) / 1000);
+  const depth = Math.max(0.05, (product.depthMillimeters || productDefaultDepthMeters(product.category) * 1000) / 1000);
+  const height = Math.max(0.05, (product.heightMillimeters || base * 1000) / 1000);
+  product.object.scale.set(width / base, height / base, depth / base);
+}
+
+function clearProductModels() {
+  if (state.three.productsGroup) clearThreeObject(state.three.productsGroup);
+  for (const product of state.productModels) product.object = null;
+  state.productModels = [];
+  state.selectedProductId = null;
+  state.draggedProduct = null;
+}
+
+function buildContinuousWallModels(lines, openings, settings) {
+  const eligibleOpenings = openings.filter((opening) => isConstructibleOpening(opening) && opening.leftWall && opening.rightWall);
+  const lineById = new Map(lines.map((line, index) => [line.id, { line, index }]));
+  const adjacency = new Map();
+  const connect = (leftId, rightId) => {
+    if (!adjacency.has(leftId)) adjacency.set(leftId, new Set());
+    if (!adjacency.has(rightId)) adjacency.set(rightId, new Set());
+    adjacency.get(leftId).add(rightId);
+    adjacency.get(rightId).add(leftId);
+  };
+  for (const opening of eligibleOpenings) {
+    const left = lineById.get(opening.leftWall);
+    const right = lineById.get(opening.rightWall);
+    if (!left || !right) continue;
+    if (left.line.orientation !== right.line.orientation || left.line.orientation !== opening.orientation) continue;
+    const axisDelta = Math.abs(getLineAxis(left.line, opening.orientation) - getLineAxis(right.line, opening.orientation));
+    if (axisDelta > Math.max(settings.mergeGap, settings.maxThickness)) continue;
+    connect(opening.leftWall, opening.rightWall);
+  }
+  connectCollinearWallGaps(lines, settings, connect);
+
+  const visited = new Set();
+  const models = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (visited.has(line.id)) continue;
+    const component = [];
+    const stack = [line.id];
+    visited.add(line.id);
+    while (stack.length) {
+      const id = stack.pop();
+      const entry = lineById.get(id);
+      if (entry) component.push(entry);
+      for (const next of adjacency.get(id) || []) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        stack.push(next);
+      }
+    }
+    if (component.length <= 1) {
+      models.push(closeSingleWallModel({ line, index }, lines));
+      continue;
+    }
+    models.push(mergeWallModelComponent(component, lines));
+  }
+  return models;
+}
+
+function closeSingleWallModel(model, hostLines) {
+  const [line] = closeWallModelComponentEndpoints([model.line], model.line.orientation, hostLines);
+  return { line, index: model.index };
+}
+
+function connectCollinearWallGaps(lines, settings, connect) {
+  const maxGap = openingCandidateMaxWidth(settings);
+  for (const orientation of ["horizontal", "vertical"]) {
+    const groups = groupByAxis(lines.filter((line) => line.orientation === orientation), orientation, Math.max(settings.mergeGap, settings.maxThickness));
+    for (const group of groups) {
+      const sorted = [...group.lines].sort((a, b) => getLineStart(a, orientation) - getLineStart(b, orientation));
+      for (let index = 0; index < sorted.length - 1; index += 1) {
+        const left = sorted[index];
+        const right = sorted[index + 1];
+        const gap = getLineStart(right, orientation) - getLineEnd(left, orientation);
+        if (gap < 0 || gap > maxGap) continue;
+        const thicknessMatch = 1 - Math.abs(left.thickness - right.thickness) / Math.max(left.thickness, right.thickness, 1);
+        if (thicknessMatch < 0.58) continue;
+        connect(left.id, right.id);
+      }
+    }
+  }
+}
+
+function mergeWallModelComponent(component, hostLines) {
+  const first = component[0];
+  const orientation = first.line.orientation;
+  const mergedLines = closeWallModelComponentEndpoints(component.map((entry) => entry.line), orientation, hostLines);
+  const starts = mergedLines.map((line) => getLineStart(line, orientation));
+  const ends = mergedLines.map((line) => getLineEnd(line, orientation));
+  const axis = Math.round(component.reduce((sum, entry) => sum + getLineAxis(entry.line, orientation), 0) / component.length);
+  const thickness = Math.round(component.reduce((sum, entry) => sum + entry.line.thickness, 0) / component.length);
+  const heightMillimeters = Math.max(...component.map((entry) => lineHeightMillimeters(entry.line)));
+  const start = Math.min(...starts);
+  const end = Math.max(...ends);
+  const line = orientation === "horizontal"
+    ? makeLine("horizontal", start, axis, end, axis, thickness)
+    : makeLine("vertical", axis, start, axis, end, thickness);
+  line.id = `continuous-${component.map((entry) => entry.line.id).join("-")}`;
+  line.heightMillimeters = heightMillimeters;
+  return { line, index: first.index };
+}
+
+function closeWallModelComponentEndpoints(lines, orientation, hostSource = state.lines) {
+  const merged = lines.map(cloneLine);
+  const perpendicular = orientation === "horizontal" ? "vertical" : "horizontal";
+  const hosts = hostSource.filter((line) => line.orientation === perpendicular);
+  const settings = getSettings();
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness);
+  for (const line of merged) {
+    for (const end of ["start", "end"]) {
+      const point = lineEndpoint(line, end);
+      const host = nearestPerpendicularHost(point, hosts, orientation, tolerance);
+      if (!host) continue;
+      if (orientation === "horizontal") {
+        setLineEndpoint(line, end, { x: host.x1, y: point.y });
+      } else {
+        setLineEndpoint(line, end, { x: point.x, y: host.y1 });
+      }
+      normalizeEditedLine(line);
+    }
+  }
+  return merged;
+}
+
+function nearestPerpendicularHost(point, hosts, orientation, tolerance) {
+  let best = null;
+  for (const host of hosts) {
+    const axisMiss = orientation === "horizontal" ? Math.abs(point.x - host.x1) : Math.abs(point.y - host.y1);
+    const spanMiss = orientation === "horizontal" ? perpendicularMiss(point.y, host.y1, host.y2) : perpendicularMiss(point.x, host.x1, host.x2);
+    if (axisMiss > tolerance || spanMiss > tolerance) continue;
+    if (!hasTopologyEvidenceNearWallJoin(point, host, orientation, tolerance)) continue;
+    const score = axisMiss + spanMiss * 0.5;
+    if (!best || score < best.score) best = { host, score };
+  }
+  return best ? best.host : null;
+}
+
+function hasTopologyEvidenceNearWallJoin(point, host, orientation, tolerance) {
+  const joinPoint = orientation === "horizontal" ? { x: host.x1, y: point.y } : { x: point.x, y: host.y1 };
+  if ((state.topology.intersections || []).some((node) => distance(node, joinPoint) <= tolerance * 1.4)) return true;
+  if (constructibleOpenings().some((opening) => distanceToSegment(joinPoint, opening) <= tolerance * 1.4 || distanceToSegment(point, opening) <= tolerance * 1.4)) return true;
+  if ((state.topology.breaks || []).some((breakPoint) => distance(breakPoint, point) <= tolerance * 1.4 || distance(breakPoint, joinPoint) <= tolerance * 1.4)) return true;
+  return endpointDistanceToLine(host, point) <= tolerance * 1.2;
+}
+
+function splitWallModelByOpenings(model, openings, settings) {
+  const { line, index } = model;
+  const cuts = openings
+    .filter((opening) => isConstructibleOpening(opening) && opening.orientation === line.orientation)
+    .map((opening) => openingCutOnLine(opening, line, settings))
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start);
+  if (!cuts.length) return [model];
+
+  const start = getLineStart(line, line.orientation);
+  const end = getLineEnd(line, line.orientation);
+  const minSegment = Math.max(2, settings.minWallThickness);
+  const segments = [];
+  let cursor = start;
+  for (const cut of cuts) {
+    const cutStart = clamp(cut.start, start, end);
+    const cutEnd = clamp(cut.end, start, end);
+    if (cutEnd <= cursor || cutEnd - cutStart < 1) continue;
+    if (cutStart - cursor >= minSegment) segments.push({ line: wallSegmentFromSpan(line, cursor, cutStart, `${line.id}-part-${segments.length + 1}`), index });
+    segments.push(...retainedWallSegmentsForOpening(line, cutStart, cutEnd, cut.opening, index, segments.length));
+    cursor = Math.max(cursor, cutEnd);
+  }
+  if (end - cursor >= minSegment) segments.push({ line: wallSegmentFromSpan(line, cursor, end, `${line.id}-part-${segments.length + 1}`), index });
+  return segments.length ? segments : [model];
+}
+
+function openingCutOnLine(opening, line, settings) {
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness);
+  const axisDelta = opening.orientation === "horizontal" ? Math.abs(opening.y1 - line.y1) : Math.abs(opening.x1 - line.x1);
+  if (axisDelta > tolerance) return null;
+  const lineStart = getLineStart(line, line.orientation);
+  const lineEnd = getLineEnd(line, line.orientation);
+  const start = getLineStart(opening, opening.orientation);
+  const end = getLineEnd(opening, opening.orientation);
+  if (end < lineStart - tolerance || start > lineEnd + tolerance) return null;
+  return { start, end, opening };
+}
+
+function wallSegmentFromSpan(source, start, end, id) {
+  const line = source.orientation === "horizontal"
+    ? makeLine("horizontal", start, source.y1, end, source.y1, source.thickness)
+    : makeLine("vertical", source.x1, start, source.x1, end, source.thickness);
+  line.id = id;
+  line.heightMillimeters = lineHeightMillimeters(source);
+  line.baseMeters = Number(source.baseMeters) || 0;
+  return line;
+}
+
+function retainedWallSegmentsForOpening(source, start, end, opening, index, serial) {
+  const profile = openingVoidProfile(opening, source);
+  const wallHeight = lineHeightMeters(source);
+  const retained = [];
+  if (profile.bottom > 0.05) {
+    const sill = wallSegmentFromSpan(source, start, end, `${source.id}-sill-${serial + 1}`);
+    sill.heightMillimeters = Math.round(profile.bottom * 1000);
+    sill.baseMeters = 0;
+    retained.push({ line: sill, index });
+  }
+  const topBase = Math.min(wallHeight, profile.bottom + profile.height);
+  if (wallHeight - topBase > 0.08) {
+    const lintel = wallSegmentFromSpan(source, start, end, `${source.id}-lintel-${serial + 1}`);
+    lintel.heightMillimeters = Math.round((wallHeight - topBase) * 1000);
+    lintel.baseMeters = topBase;
+    retained.push({ line: lintel, index });
+  }
+  return retained;
+}
+
+function openingVoidProfile(opening, wallLine = null) {
+  const wallHeight = wallLine ? lineHeightMeters(wallLine) : WALL_HEIGHT_METERS;
+  const profile = openingProfileMillimeters(opening);
+  const bottom = clamp(profile.sill / 1000, 0, Math.max(0, wallHeight - 0.1));
+  const height = clamp(profile.height / 1000, 0.1, Math.max(0.1, wallHeight - bottom));
+  return { bottom, height };
+}
+
+function createThreeOpeningComponent(three, opening, index, unit, bounds) {
+  const settings = getSettings();
+  const variant = openingVariant(opening);
+  const color = openingThreeColor(opening);
+  const length = Math.max((opening.width || distance({ x: opening.x1, y: opening.y1 }, { x: opening.x2, y: opening.y2 })) * unit, 0.08);
+  const band = Math.max(visualOpeningWallBand(opening, settings) * unit * 1.25, 0.09);
+  const profile = openingVoidProfile(opening);
+  const height = profile.height;
+  const bottom = profile.bottom;
+  const projection = Math.max(0, openingProfileMillimeters(opening).projection / 1000) * unit;
+  const isSelected = selectedOpening() && selectedOpening().id === opening.id;
+  const material = new three.MeshStandardMaterial({
+    color: isSelected ? 0xffb14a : color,
+    roughness: 0.58,
+    metalness: 0.01,
+    transparent: true,
+    opacity: isSelected ? 0.88 : 0.78,
+  });
+  const edgeMaterial = new three.LineBasicMaterial({ color: isSelected ? 0x8d4c0c : 0x6d5a08, transparent: true, opacity: 0.72 });
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  const group = new three.Group();
+  group.userData.openingIndex = index;
+  const frame = Math.max(0.055, Math.min(length * 0.12, band * 0.55));
+  const rail = Math.max(0.055, band * 0.45);
+  const center = {
+    x: ((opening.x1 + opening.x2) / 2 - centerX) * unit,
+    z: ((opening.y1 + opening.y2) / 2 - centerY) * unit,
+  };
+  const start = opening.orientation === "horizontal"
+    ? (Math.min(opening.x1, opening.x2) - centerX) * unit
+    : (Math.min(opening.y1, opening.y2) - centerY) * unit;
+  const end = opening.orientation === "horizontal"
+    ? (Math.max(opening.x1, opening.x2) - centerX) * unit
+    : (Math.max(opening.y1, opening.y2) - centerY) * unit;
+
+  const parts = [
+    makeOpeningFramePart(three, opening.orientation, frame, band, height, start, center, bottom, "start", material, edgeMaterial, index),
+    makeOpeningFramePart(three, opening.orientation, frame, band, height, end, center, bottom, "end", material, edgeMaterial, index),
+    makeOpeningTopRail(three, opening.orientation, length, band, rail, center, bottom + height, material, edgeMaterial, index),
+  ];
+  if (opening.kind !== "door") {
+    parts.push(makeOpeningPanel(three, opening.orientation, length, band, Math.max(0.12, height * 0.55), center, bottom + height * 0.52, color, index));
+    if (variant === "bay-window") {
+      parts.push(makeBayWindowProjection(three, opening.orientation, length, band, projection, Math.max(0.28, height * 0.55), center, bottom + height * 0.45, color, index));
+    }
+  } else {
+    parts.push(makeOpeningTopRail(three, opening.orientation, length, band, Math.max(0.035, rail * 0.6), center, 0.04, material, edgeMaterial, index));
+  }
+  for (const part of parts) group.add(part);
+  return group;
+}
+
+function makeOpeningFramePart(three, orientation, frame, band, height, axisPosition, center, bottom, side, material, edgeMaterial, openingIndex) {
+  const width = orientation === "horizontal" ? frame : band;
+  const depth = orientation === "horizontal" ? band : frame;
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const mesh = new three.Mesh(geometry, material);
+  if (orientation === "horizontal") {
+    mesh.position.set(axisPosition + (side === "start" ? frame / 2 : -frame / 2), bottom + height / 2, center.z);
+  } else {
+    mesh.position.set(center.x, bottom + height / 2, axisPosition + (side === "start" ? frame / 2 : -frame / 2));
+  }
+  mesh.userData.openingIndex = openingIndex;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const edge = new three.LineSegments(new three.EdgesGeometry(geometry), edgeMaterial);
+  edge.position.copy(mesh.position);
+  edge.userData.openingIndex = openingIndex;
+  const group = new three.Group();
+  group.userData.openingIndex = openingIndex;
+  group.add(mesh, edge);
+  return group;
+}
+
+function makeOpeningTopRail(three, orientation, length, band, height, center, y, material, edgeMaterial, openingIndex) {
+  const width = orientation === "horizontal" ? length : band;
+  const depth = orientation === "horizontal" ? band : length;
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const mesh = new three.Mesh(geometry, material);
+  mesh.position.set(center.x, Math.max(height / 2, y - height / 2), center.z);
+  mesh.userData.openingIndex = openingIndex;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const edge = new three.LineSegments(new three.EdgesGeometry(geometry), edgeMaterial);
+  edge.position.copy(mesh.position);
+  edge.userData.openingIndex = openingIndex;
+  const group = new three.Group();
+  group.userData.openingIndex = openingIndex;
+  group.add(mesh, edge);
+  return group;
+}
+
+function makeOpeningPanel(three, orientation, length, band, height, center, y, color, openingIndex) {
+  const width = orientation === "horizontal" ? length : band * 0.55;
+  const depth = orientation === "horizontal" ? band * 0.55 : length;
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const material = new three.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0, transparent: true, opacity: 0.22 });
+  const mesh = new three.Mesh(geometry, material);
+  mesh.position.set(center.x, y, center.z);
+  mesh.userData.openingIndex = openingIndex;
+  return mesh;
+}
+
+function makeBayWindowProjection(three, orientation, length, band, projection, height, center, y, color, openingIndex) {
+  const out = Math.max(projection, band * 1.3);
+  const width = orientation === "horizontal" ? length : out;
+  const depth = orientation === "horizontal" ? out : length;
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const material = new three.MeshStandardMaterial({ color, roughness: 0.48, metalness: 0, transparent: true, opacity: 0.36 });
+  const mesh = new three.Mesh(geometry, material);
+  const offset = band / 2 + out / 2;
+  mesh.position.set(
+    center.x + (orientation === "vertical" ? offset : 0),
+    y,
+    center.z + (orientation === "horizontal" ? offset : 0),
+  );
+  mesh.userData.openingIndex = openingIndex;
+  return mesh;
+}
+
+function openingThreeColor(opening) {
+  const variant = openingVariant(opening);
+  if (variant === "high-window") return 0x6fc3d0;
+  if (variant === "floor-window") return 0x2296a8;
+  if (variant === "bay-window") return 0x4cb5c5;
+  if (opening.kind === "door") return 0xe8bf25;
+  if (opening.kind === "window") return 0x35a7b7;
+  if (opening.kind === "opening") return 0xf28c28;
+  return 0x9aa3ad;
+}
+
+function getPlanBounds(lines) {
+  if (!lines.length) {
+    const width = state.analysisCanvas ? state.analysisCanvas.width : 600;
+    const height = state.analysisCanvas ? state.analysisCanvas.height : 420;
+    return { minX: 0, minY: 0, maxX: width, maxY: height, width, height };
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const line of lines) {
+    minX = Math.min(minX, line.x1, line.x2);
+    minY = Math.min(minY, line.y1, line.y2);
+    maxX = Math.max(maxX, line.x1, line.x2);
+    maxY = Math.max(maxY, line.y1, line.y2);
+  }
+  const padding = Math.max(24, Math.max(maxX - minX, maxY - minY) * 0.04);
+  minX -= padding;
+  minY -= padding;
+  maxX += padding;
+  maxY += padding;
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function resetThreeCamera() {
+  if (state.three.mode === "roam") {
+    resetThreeRoamCamera();
+    return;
+  }
+  state.three.yaw = -0.72;
+  state.three.pitch = 0.72;
+  if (state.three.camera) {
+    state.three.camera.fov = 42;
+    state.three.camera.updateProjectionMatrix();
+  }
+  updateThreeCamera();
+}
+
+function updateThreeCamera() {
+  if (state.three.mode === "roam") {
+    updateThreeRoamCamera();
+    return;
+  }
+  const { camera, center, radius, yaw, pitch } = state.three;
+  if (!camera || !center) return;
+  const horizontal = Math.cos(pitch) * radius;
+  camera.position.set(
+    center.x + Math.sin(yaw) * horizontal,
+    center.y + Math.sin(pitch) * radius,
+    center.z + Math.cos(yaw) * horizontal,
+  );
+  camera.lookAt(center);
+  renderThreeScene();
+}
+
+function setThreeMode(mode) {
+  state.three.mode = mode === "roam" ? "roam" : "orbit";
+  elements.threeRoamButton.classList.toggle("active", state.three.mode === "roam");
+  elements.threeViewport.classList.toggle("is-roaming", state.three.mode === "roam");
+  if (state.three.mode === "roam") {
+    resetThreeRoamCamera();
+    elements.threeViewport.focus({ preventScroll: true });
+    setStatus("3D 漫游模式");
+  } else {
+    resetThreeCamera();
+    setStatus("3D 俯视模式");
+  }
+}
+
+function toggleThreeRoamMode() {
+  setThreeMode(state.three.mode === "roam" ? "orbit" : "roam");
+}
+
+function resetThreeRoamCamera() {
+  const { camera, roamPosition, roamBounds } = state.three;
+  if (!camera || !roamPosition) return;
+  const widthLimit = roamBounds ? roamBounds.width / 2 - 0.5 : 3;
+  const depthLimit = roamBounds ? roamBounds.depth / 2 - 0.5 : 3;
+  roamPosition.set(clamp(0, -widthLimit, widthLimit), 1.55, clamp(depthLimit * 0.35, -depthLimit, depthLimit));
+  state.three.roamYaw = Math.PI;
+  state.three.roamPitch = 0;
+  camera.fov = 62;
+  camera.updateProjectionMatrix();
+  updateThreeRoamCamera();
+}
+
+function updateThreeRoamCamera() {
+  const { camera, roamPosition, roamYaw, roamPitch } = state.three;
+  if (!camera || !roamPosition) return;
+  const direction = threeRoamDirection();
+  camera.position.copy(roamPosition);
+  camera.lookAt(roamPosition.x + direction.x, roamPosition.y + direction.y, roamPosition.z + direction.z);
+  renderThreeScene();
+}
+
+function threeRoamDirection() {
+  const { module: three, roamYaw, roamPitch } = state.three;
+  const horizontal = Math.cos(roamPitch);
+  return new three.Vector3(
+    Math.sin(roamYaw) * horizontal,
+    Math.sin(roamPitch),
+    Math.cos(roamYaw) * horizontal,
+  ).normalize();
+}
+
+function moveThreeRoam(forwardAmount, strafeAmount = 0, verticalAmount = 0) {
+  const { module: three, roamPosition, roamYaw, roamBounds } = state.three;
+  if (!three || !roamPosition) return;
+  const forward = new three.Vector3(Math.sin(roamYaw), 0, Math.cos(roamYaw)).normalize();
+  const right = new three.Vector3(Math.cos(roamYaw), 0, -Math.sin(roamYaw)).normalize();
+  roamPosition.addScaledVector(forward, forwardAmount);
+  roamPosition.addScaledVector(right, strafeAmount);
+  roamPosition.y = clamp(roamPosition.y + verticalAmount, 0.35, WALL_HEIGHT_METERS + 1.4);
+  if (roamBounds) {
+    const xLimit = Math.max(1, roamBounds.width / 2 - 0.2);
+    const zLimit = Math.max(1, roamBounds.depth / 2 - 0.2);
+    roamPosition.x = clamp(roamPosition.x, -xLimit, xLimit);
+    roamPosition.z = clamp(roamPosition.z, -zLimit, zLimit);
+  }
+  updateThreeRoamCamera();
+}
+
+function renderThreeScene() {
+  const { renderer, scene, camera } = state.three;
+  if (!renderer || !scene || !camera) return;
+  renderer.render(scene, camera);
+}
+
+function handleThreePointerDown(event) {
+  if (!state.three.renderer) return;
+  elements.threeViewport.focus({ preventScroll: true });
+  state.three.dragging = true;
+  state.three.dragDistance = 0;
+  state.three.lastX = event.clientX;
+  state.three.lastY = event.clientY;
+  elements.threeViewport.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function handleThreePointerMove(event) {
+  if (!state.three.dragging) return;
+  const dx = event.clientX - state.three.lastX;
+  const dy = event.clientY - state.three.lastY;
+  state.three.lastX = event.clientX;
+  state.three.lastY = event.clientY;
+  state.three.dragDistance += Math.hypot(dx, dy);
+  if (state.three.mode === "roam") {
+    state.three.roamYaw -= dx * 0.006;
+    state.three.roamPitch = clamp(state.three.roamPitch - dy * 0.0045, -0.75, 0.75);
+    updateThreeRoamCamera();
+    return;
+  }
+  state.three.yaw -= dx * 0.008;
+  state.three.pitch = clamp(state.three.pitch + dy * 0.006, 0.22, 1.28);
+  updateThreeCamera();
+}
+
+function handleThreePointerUp(event) {
+  if (!state.three.dragging) return;
+  const wasClick = state.three.dragDistance < 5;
+  state.three.dragging = false;
+  if (elements.threeViewport.hasPointerCapture(event.pointerId)) {
+    elements.threeViewport.releasePointerCapture(event.pointerId);
+  }
+  if (wasClick) selectThreeWallAt(event);
+}
+
+function handleThreeWheel(event) {
+  if (!state.three.renderer) return;
+  event.preventDefault();
+  if (state.three.mode === "roam") {
+    const step = state.three.roamSpeed * (event.shiftKey ? 2.2 : 1);
+    moveThreeRoam(event.deltaY < 0 ? step : -step);
+    return;
+  }
+  state.three.radius = clamp(state.three.radius * Math.exp(event.deltaY * 0.0012), 3.8, 48);
+  updateThreeCamera();
+}
+
+function handleThreeKeyDown(event) {
+  if (state.three.mode !== "roam") return;
+  const key = event.key.toLowerCase();
+  const step = state.three.roamSpeed * (event.shiftKey ? 2.2 : 1);
+  let forward = 0;
+  let strafe = 0;
+  let vertical = 0;
+  if (key === "w" || event.key === "ArrowUp") {
+    forward = step;
+  } else if (key === "s" || event.key === "ArrowDown") {
+    forward = -step;
+  } else if (key === "a" || event.key === "ArrowLeft") {
+    strafe = -step;
+  } else if (key === "d" || event.key === "ArrowRight") {
+    strafe = step;
+  } else if (key === "q") {
+    vertical = -step * 0.5;
+  } else if (key === "e") {
+    vertical = step * 0.5;
+  } else if (event.key === "Escape") {
+    setThreeMode("orbit");
+    event.preventDefault();
+    return;
+  } else {
+    return;
+  }
+  moveThreeRoam(forward, strafe, vertical);
+  event.preventDefault();
+}
+
+function selectThreeWallAt(event) {
+  const { renderer, camera, wallsGroup, productsGroup, raycaster, pointer } = state.three;
+  if (!renderer || !camera || !wallsGroup || !raycaster || !pointer) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const productHits = productsGroup ? raycaster.intersectObjects(productsGroup.children, true) : [];
+  const productHit = productHits.find((candidate) => findThreeProductId(candidate.object));
+  if (productHit) {
+    const productId = findThreeProductId(productHit.object);
+    if (!productId) return;
+    state.three.cardX = event.clientX - rect.left;
+    state.three.cardY = event.clientY - rect.top;
+    setTool("select");
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = null;
+    state.selectedProductId = productId;
+    state.hoveredEndpoint = null;
+    elements.threeComponentCard.hidden = false;
+    updateStats();
+    if (state.analysisCanvas) renderPreview();
+    updateThreeModel(false);
+    setStatus("已选择产品模型");
+    return;
+  }
+  const hits = raycaster.intersectObjects(wallsGroup.children, true);
+  const railingHit = hits.find((candidate) => findThreeRailingId(candidate.object) !== null);
+  if (railingHit) {
+    const railingId = findThreeRailingId(railingHit.object);
+    if (!railingId) return;
+    state.three.cardX = event.clientX - rect.left;
+    state.three.cardY = event.clientY - rect.top;
+    setTool("select");
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = railingId;
+    state.selectedProductId = null;
+    state.hoveredEndpoint = null;
+    elements.threeComponentCard.hidden = false;
+    updateStats();
+    if (state.analysisCanvas) renderPreview();
+    updateThreeModel(false);
+    setStatus("已选择栏杆构件");
+    return;
+  }
+  const openingHit = hits.find((candidate) => findThreeOpeningIndex(candidate.object) !== null);
+  if (openingHit) {
+    const openingIndex = findThreeOpeningIndex(openingHit.object);
+    const opening = state.topology.openings[openingIndex];
+    if (!opening) return;
+    state.three.cardX = event.clientX - rect.left;
+    state.three.cardY = event.clientY - rect.top;
+    setTool("select");
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = openingIndex;
+    state.selectedOpeningId = opening.id;
+    state.selectedRailingId = null;
+    state.selectedProductId = null;
+    state.hoveredEndpoint = null;
+    elements.threeComponentCard.hidden = false;
+    updateStats();
+    if (state.analysisCanvas) renderPreview();
+    updateThreeModel(false);
+    setStatus("已选择洞口构件");
+    return;
+  }
+
+  const hit = hits.find((candidate) => findThreeLineIndex(candidate.object) !== null);
+  if (!hit) {
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = null;
+    state.selectedProductId = null;
+    state.hoveredEndpoint = null;
+    updateSelectedComponentInfo();
+    if (state.analysisCanvas) renderPreview();
+    updateThreeModel(false);
+    return;
+  }
+
+  const index = findThreeLineIndex(hit.object);
+  if (index === null) return;
+  state.three.cardX = event.clientX - rect.left;
+  state.three.cardY = event.clientY - rect.top;
+  setTool("select");
+  state.selectedLineIndex = index;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
+  state.selectedProductId = null;
+  state.hoveredEndpoint = null;
+  elements.threeComponentCard.hidden = false;
+  updateStats();
+  if (state.analysisCanvas) renderPreview();
+  updateThreeModel(false);
+  setStatus("已选择 3D 构件");
+}
+
+function findThreeLineIndex(object) {
+  let current = object;
+  while (current) {
+    if (Number.isInteger(current.userData && current.userData.lineIndex)) return current.userData.lineIndex;
+    current = current.parent;
+  }
+  return null;
+}
+
+function findThreeOpeningIndex(object) {
+  let current = object;
+  while (current) {
+    if (Number.isInteger(current.userData && current.userData.openingIndex)) return current.userData.openingIndex;
+    current = current.parent;
+  }
+  return null;
+}
+
+function findThreeRailingId(object) {
+  let current = object;
+  while (current) {
+    if (current.userData && current.userData.railingId) return current.userData.railingId;
+    current = current.parent;
+  }
+  return null;
+}
+
+function findThreeProductId(object) {
+  let current = object;
+  while (current) {
+    if (current.userData && current.userData.productId) return current.userData.productId;
+    current = current.parent;
+  }
+  return null;
+}
+
+function clearThreeObject(object) {
+  while (object.children.length) {
+    const child = object.children.pop();
+    disposeThreeObject(child);
+  }
+}
+
+function disposeThreeObject(object) {
+  if (object.children) clearThreeObject(object);
+  if (object.geometry) object.geometry.dispose();
+  if (Array.isArray(object.material)) {
+    object.material.forEach(disposeThreeMaterial);
+  } else if (object.material) {
+    disposeThreeMaterial(object.material);
+  }
+}
+
+function disposeThreeMaterial(material) {
+  for (const value of Object.values(material)) {
+    if (value && typeof value.dispose === "function" && value.isTexture) value.dispose();
+  }
+  material.dispose();
 }
 
 function createEmptyTopology() {
@@ -811,9 +3797,343 @@ function setView(view) {
   if (state.analysisCanvas) renderPreview();
 }
 
+function setTool(tool) {
+  state.tool = tool;
+  state.drawingLine = null;
+  state.openingDraft = null;
+  state.calibrationLine = null;
+  state.measurementLine = null;
+  if (tool !== "select") {
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = null;
+    state.selectedProductId = null;
+  }
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
+  state.draggedProduct = null;
+  state.hoveredEndpoint = null;
+  elements.drawWallButton.classList.toggle("active", tool === "draw-wall");
+  elements.drawDoorButton.classList.toggle("active", tool === "draw-door");
+  elements.drawWindowButton.classList.toggle("active", tool === "draw-window");
+  elements.drawRailingButton.classList.toggle("active", tool === "draw-railing");
+  elements.calibrateToolButton.classList.toggle("active", tool === "calibrate-scale");
+  elements.calibrateScaleButton.classList.toggle("active", tool === "calibrate-scale");
+  elements.measureToolButton.classList.toggle("active", tool === "measure");
+  elements.previewCanvas.style.cursor = isPointDrawingTool(tool) ? "crosshair" : "default";
+  if (isPointDrawingTool(tool)) {
+    ensureDrawingCanvas();
+    setStatus(toolStatusText(tool));
+  }
+  if (state.analysisCanvas) renderPreview();
+  updateSelectedComponentInfo();
+}
+
+function isPointDrawingTool(tool) {
+  return tool === "draw-wall" || tool === "draw-door" || tool === "draw-window" || tool === "draw-railing" || tool === "calibrate-scale" || tool === "measure";
+}
+
+function toolStatusText(tool) {
+  if (tool === "draw-wall") return "画墙模式";
+  if (tool === "draw-door") return "画门模式";
+  if (tool === "draw-window") return "画窗模式";
+  if (tool === "draw-railing") return "画栏杆模式";
+  if (tool === "calibrate-scale") return "标定比例";
+  if (tool === "measure") return "测量尺寸";
+  return "已生成";
+}
+
+function toggleDrawWallTool() {
+  setTool(state.tool === "draw-wall" ? "select" : "draw-wall");
+}
+
+function toggleDrawDoorTool() {
+  setTool(state.tool === "draw-door" ? "select" : "draw-door");
+}
+
+function toggleDrawWindowTool() {
+  setTool(state.tool === "draw-window" ? "select" : "draw-window");
+}
+
+function toggleDrawRailingTool() {
+  setTool(state.tool === "draw-railing" ? "select" : "draw-railing");
+}
+
+function toggleCalibrateScaleTool() {
+  setTool(state.tool === "calibrate-scale" ? "select" : "calibrate-scale");
+}
+
+function toggleMeasureTool() {
+  setTool(state.tool === "measure" ? "select" : "measure");
+}
+
+function getCalibrationLengthMillimeters() {
+  return Math.max(1, Number(elements.calibrationLengthInput.value) || 3000);
+}
+
+function applyCalibrationFromDraft() {
+  if (!state.calibrationLine) return false;
+  const pixelLength = distance(state.calibrationLine.start, state.calibrationLine.end);
+  const actualLength = getCalibrationLengthMillimeters();
+  state.calibrationLine = null;
+  if (pixelLength < 6) {
+    renderPreview();
+    setStatus("标定线太短");
+    return false;
+  }
+  pushUndoSnapshot("calibrate-scale");
+  state.manualMillimetersPerPixel = actualLength / pixelLength;
+  syncControlLabels();
+  updateStats();
+  renderPreview();
+  updateThreeModel(false);
+  setStatus("已标定");
+  return true;
+}
+
+function addMeasurementFromDraft() {
+  if (!state.measurementLine) return false;
+  const measurement = state.measurementLine;
+  const pixelLength = distance(measurement.start, measurement.end);
+  state.measurementLine = null;
+  if (pixelLength < 6) {
+    renderPreview();
+    setStatus("测量线太短");
+    return false;
+  }
+  pushUndoSnapshot("add-measurement");
+  state.measurements.push({
+    id: `measurement-${Date.now()}-${state.measurements.length + 1}`,
+    start: { ...measurement.start },
+    end: { ...measurement.end },
+    pixelLength,
+    millimeterLength: pxToMillimeters(pixelLength, getSettings()),
+  });
+  renderPreview();
+  setStatus("已测量");
+  return true;
+}
+
+function lineFromDrawingDraft(start, end, settings) {
+  if (!start || !end) return null;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const thickness = clamp(Math.round(settings.maxThickness), settings.minWallThickness, settings.maxThickness);
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const x1 = Math.min(start.x, end.x);
+    const x2 = Math.max(start.x, end.x);
+    return makeLine("horizontal", x1, start.y, x2, start.y, thickness);
+  }
+  const y1 = Math.min(start.y, end.y);
+  const y2 = Math.max(start.y, end.y);
+  return makeLine("vertical", start.x, y1, start.x, y2, thickness);
+}
+
+function openingFromDraft(start, end, variant) {
+  if (!start || !end) return null;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const definition = OPENING_VARIANTS[variant] || OPENING_VARIANTS.door;
+  let opening;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const x1 = Math.min(start.x, end.x);
+    const x2 = Math.max(start.x, end.x);
+    opening = { orientation: "horizontal", x1, y1: start.y, x2, y2: start.y };
+  } else {
+    const y1 = Math.min(start.y, end.y);
+    const y2 = Math.max(start.y, end.y);
+    opening = { orientation: "vertical", x1: start.x, y1, x2: start.x, y2 };
+  }
+  opening.variant = variant;
+  opening.kind = definition.kind;
+  opening.sillHeightMillimeters = definition.sill;
+  opening.openingHeightMillimeters = definition.height;
+  opening.projectionMillimeters = definition.projection || 0;
+  snapOpeningDraftToWall(opening);
+  normalizeOpeningComponent(opening);
+  return opening;
+}
+
+function railingFromDraft(start, end) {
+  if (!start || !end) return null;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  let railing;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const x1 = Math.min(start.x, end.x);
+    const x2 = Math.max(start.x, end.x);
+    railing = { orientation: "horizontal", x1, y1: start.y, x2, y2: start.y };
+  } else {
+    const y1 = Math.min(start.y, end.y);
+    const y2 = Math.max(start.y, end.y);
+    railing = { orientation: "vertical", x1: start.x, y1, x2: start.x, y2 };
+  }
+  railing.thicknessMillimeters = RAILING_DEFAULT_THICKNESS_MM;
+  railing.heightMillimeters = RAILING_DEFAULT_HEIGHT_MM;
+  normalizeRailing(railing);
+  return railing;
+}
+
+function normalizeRailing(railing) {
+  if (railing.orientation === "horizontal") {
+    if (railing.x1 > railing.x2) [railing.x1, railing.x2] = [railing.x2, railing.x1];
+    railing.y2 = railing.y1;
+    railing.length = Math.abs(railing.x2 - railing.x1);
+  } else {
+    if (railing.y1 > railing.y2) [railing.y1, railing.y2] = [railing.y2, railing.y1];
+    railing.x2 = railing.x1;
+    railing.length = Math.abs(railing.y2 - railing.y1);
+  }
+  railing.thicknessMillimeters = Math.max(10, Number(railing.thicknessMillimeters) || RAILING_DEFAULT_THICKNESS_MM);
+  railing.heightMillimeters = Math.max(100, Number(railing.heightMillimeters) || RAILING_DEFAULT_HEIGHT_MM);
+  return railing;
+}
+
+function snapRailingToNearbyGeometry(railing) {
+  const settings = getSettings();
+  const tolerance = snapPointDistancePixels(settings);
+  for (const end of ["start", "end"]) {
+    const point = lineEndpoint(railing, end);
+    const snapped = nearestRailingSnapPoint(point, railing, tolerance);
+    if (snapped) setLineEndpoint(railing, end, snapped);
+  }
+  normalizeRailing(railing);
+  return railing;
+}
+
+function snapOpeningDraftToWall(opening) {
+  if (!state.lines.length) return opening;
+  const settings = getSettings();
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness);
+  const start = getLineStart(opening, opening.orientation);
+  const end = getLineEnd(opening, opening.orientation);
+  let best = null;
+  for (const line of state.lines) {
+    if (line.orientation !== opening.orientation) continue;
+    const axisDelta = Math.abs(getLineAxis(line, line.orientation) - getLineAxis(opening, opening.orientation));
+    if (axisDelta > tolerance) continue;
+    const overlap = Math.min(getLineEnd(line, line.orientation), end) - Math.max(getLineStart(line, line.orientation), start);
+    const score = axisDelta - Math.max(0, overlap) * 0.02;
+    if (!best || score < best.score) best = { line, score };
+  }
+  if (!best) return opening;
+  if (opening.orientation === "horizontal") {
+    opening.y1 = best.line.y1;
+    opening.y2 = best.line.y1;
+  } else {
+    opening.x1 = best.line.x1;
+    opening.x2 = best.line.x1;
+  }
+  opening.hostWall = best.line.id;
+  opening.leftThickness = best.line.thickness;
+  opening.rightThickness = best.line.thickness;
+  return opening;
+}
+
+function addManualWallFromDraft() {
+  if (!state.drawingLine) return false;
+  const settings = getSettings();
+  const line = lineFromDrawingDraft(state.drawingLine.start, state.drawingLine.end, settings);
+  state.drawingLine = null;
+  if (!line || line.length < manualWallMinLengthPixels(settings)) {
+    renderPreview();
+    setStatus("线段太短");
+    return false;
+  }
+
+  pushUndoSnapshot("add-wall");
+  const nextIndex = state.lines.length + 1;
+  const wall = { ...line, id: `manual-wall-${Date.now()}-${nextIndex}` };
+  state.lines.push(wall);
+  state.selectedLineIndex = state.lines.length - 1;
+  state.hoveredEndpoint = null;
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.recognitionMode = state.recognitionMode === "-" ? "manual" : state.recognitionMode;
+  refreshAfterEdit({ skipEndpointSnapLineId: wall.id });
+  updateSelectedComponentInfo();
+  elements.exportJsonButton.disabled = !state.lines.length;
+  elements.processButton.disabled = !state.analysisCanvas;
+  setStatus("已添加墙体");
+  return true;
+}
+
+function addManualOpeningFromDraft() {
+  if (!state.openingDraft) return false;
+  const settings = getSettings();
+  const opening = openingFromDraft(state.openingDraft.start, state.openingDraft.end, state.openingDraft.variant);
+  state.openingDraft = null;
+  if (!opening || opening.width < Math.max(2, settings.openingMinWidth * 0.35)) {
+    renderPreview();
+    setStatus("构件太短");
+    return false;
+  }
+
+  pushUndoSnapshot("add-opening-component");
+  opening.id = `manual-opening-${Date.now()}-${state.manualOpenings.length + 1}`;
+  opening.manual = true;
+  state.manualOpenings.push(opening);
+  state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = opening.id;
+  state.hoveredEndpoint = null;
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.recognitionMode = state.recognitionMode === "-" ? "manual" : state.recognitionMode;
+  refreshAfterEdit();
+  updateSelectedComponentInfo();
+  elements.exportJsonButton.disabled = !state.lines.length;
+  elements.processButton.disabled = !state.analysisCanvas;
+  setStatus(`${openingKindLabel(opening)}构件已添加`);
+  return true;
+}
+
+function addManualRailingFromDraft() {
+  if (!state.railingDraft) return false;
+  const settings = getSettings();
+  const railing = railingFromDraft(state.railingDraft.start, state.railingDraft.end);
+  state.railingDraft = null;
+  if (!railing || railing.length < manualWallMinLengthPixels(settings)) {
+    renderPreview();
+    setStatus("栏杆太短");
+    return false;
+  }
+
+  pushUndoSnapshot("add-railing");
+  railing.id = `manual-railing-${Date.now()}-${state.manualRailings.length + 1}`;
+  snapRailingToNearbyGeometry(railing);
+  state.manualRailings.push(railing);
+  state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = railing.id;
+  state.hoveredEndpoint = null;
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
+  state.recognitionMode = state.recognitionMode === "-" ? "manual" : state.recognitionMode;
+  setTool("select");
+  refreshAfterEdit();
+  updateSelectedComponentInfo();
+  elements.exportJsonButton.disabled = !state.lines.length && !state.manualRailings.length;
+  elements.processButton.disabled = !state.analysisCanvas;
+  setStatus("栏杆已添加");
+  return true;
+}
+
 function selectedLine() {
   if (state.selectedLineIndex === null) return null;
   return state.lines[state.selectedLineIndex] || null;
+}
+
+function selectedRailing() {
+  if (!state.selectedRailingId) return null;
+  return state.manualRailings.find((railing) => railing.id === state.selectedRailingId) || null;
 }
 
 function canvasPointFromEvent(event) {
@@ -826,17 +4146,65 @@ function canvasPointFromEvent(event) {
 
 function findNearestLineIndex(point) {
   const radius = lineHitRadius();
+  const settings = getSettings();
   let nearest = null;
 
   for (let index = 0; index < state.lines.length; index += 1) {
     const line = state.lines[index];
     const hitDistance = distanceToSegment(point, line);
-    const lineRadius = Math.max(radius, line.thickness / 2 + 10);
+    const lineRadius = Math.max(radius, visualWallThicknessPixels(line, settings) / 2 + 10);
     if (hitDistance > lineRadius) continue;
     if (!nearest || hitDistance < nearest.distance) nearest = { index, distance: hitDistance };
   }
 
   return nearest ? nearest.index : null;
+}
+
+function findNearestOpeningIndex(point) {
+  const radius = lineHitRadius();
+  let nearest = null;
+  for (let index = 0; index < state.topology.openings.length; index += 1) {
+    const opening = state.topology.openings[index];
+    if (!isConstructibleOpening(opening)) continue;
+    const hitDistance = distanceToSegment(point, opening);
+    if (hitDistance > radius + 6) continue;
+    if (!nearest || hitDistance < nearest.distance) nearest = { index, distance: hitDistance };
+  }
+  return nearest ? nearest.index : null;
+}
+
+function findNearestRailingId(point) {
+  const radius = lineHitRadius();
+  let nearest = null;
+  for (const railing of state.manualRailings) {
+    const hitDistance = distanceToSegment(point, railing);
+    const thicknessPx = millimetersToPixels(railing.thicknessMillimeters || RAILING_DEFAULT_THICKNESS_MM, getSettings());
+    if (hitDistance > Math.max(radius, thicknessPx / 2 + 8)) continue;
+    if (!nearest || hitDistance < nearest.distance) nearest = { id: railing.id, distance: hitDistance };
+  }
+  return nearest ? nearest.id : null;
+}
+
+function findNearestProductId(point) {
+  const settings = getSettings();
+  for (let index = state.productModels.length - 1; index >= 0; index -= 1) {
+    const product = state.productModels[index];
+    const { width, depth } = productFootprintPixels(product, settings);
+    const angle = -((Number(product.rotationDegrees) || 0) * Math.PI) / 180;
+    const dx = point.x - product.planX;
+    const dy = point.y - product.planY;
+    const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
+    const localY = dx * Math.sin(angle) + dy * Math.cos(angle);
+    if (Math.abs(localX) <= width / 2 + 8 && Math.abs(localY) <= depth / 2 + 8) return product.id;
+  }
+  return null;
+}
+
+function findSelectedProductRotationHandle(point) {
+  const product = selectedProduct();
+  if (!product) return null;
+  const handle = productRotationHandlePoint(product);
+  return distance(point, handle) <= editableHitRadius() ? product.id : null;
 }
 
 function lineHitRadius() {
@@ -847,12 +4215,14 @@ function lineHitRadius() {
 
 function findNearestSelectedEndpoint(point) {
   const line = selectedLine();
-  if (!line) return null;
+  const railing = selectedRailing();
+  const editable = line || railing;
+  if (!editable) return null;
 
   const radius = editableHitRadius();
   const endpoints = [
-    { end: "start", x: line.x1, y: line.y1 },
-    { end: "end", x: line.x2, y: line.y2 },
+    { kind: line ? "line" : "railing", end: "start", x: editable.x1, y: editable.y1 },
+    { kind: line ? "line" : "railing", end: "end", x: editable.x2, y: editable.y2 },
   ];
   let nearest = null;
 
@@ -873,6 +4243,11 @@ function editableHitRadius() {
 
 function moveSelectedEndpoint(selection, point) {
   const line = selectedLine();
+  const railing = selectedRailing();
+  if (selection.kind === "railing" || (!line && railing)) {
+    moveSelectedRailingEndpoint(selection, point);
+    return;
+  }
   if (!line) return;
 
   const minLength = 6;
@@ -895,6 +4270,285 @@ function moveSelectedEndpoint(selection, point) {
   normalizeEditedLine(line);
 }
 
+function moveSelectedRailingEndpoint(selection, point) {
+  const railing = selectedRailing();
+  if (!railing) return;
+  const minLength = 2;
+  if (railing.orientation === "horizontal") {
+    if (selection.end === "start") railing.x1 = Math.min(point.x, railing.x2 - minLength);
+    else railing.x2 = Math.max(point.x, railing.x1 + minLength);
+    railing.y2 = railing.y1;
+  } else {
+    if (selection.end === "start") railing.y1 = Math.min(point.y, railing.y2 - minLength);
+    else railing.y2 = Math.max(point.y, railing.y1 + minLength);
+    railing.x2 = railing.x1;
+  }
+  normalizeRailing(railing);
+}
+
+function beginSelectedLineDrag(index, point) {
+  const line = state.lines[index];
+  if (!line) return;
+  state.draggedLine = {
+    index,
+    start: { ...point },
+    original: cloneLine(line),
+    moved: false,
+    snapshotPushed: false,
+  };
+}
+
+function moveSelectedLine(selection, point) {
+  if (!selection) return;
+  const line = state.lines[selection.index];
+  if (!line) return;
+  const dx = point.x - selection.start.x;
+  const dy = point.y - selection.start.y;
+  if (!selection.snapshotPushed && Math.hypot(dx, dy) > 1.5) {
+    pushUndoSnapshot("move-line");
+    selection.snapshotPushed = true;
+  }
+  if (!selection.snapshotPushed) return;
+
+  line.x1 = selection.original.x1 + dx;
+  line.y1 = selection.original.y1 + dy;
+  line.x2 = selection.original.x2 + dx;
+  line.y2 = selection.original.y2 + dy;
+  normalizeEditedLine(line);
+  selection.moved = true;
+}
+
+function beginSelectedOpeningDrag(index, point) {
+  const opening = state.topology.openings[index];
+  if (!opening) return;
+  state.draggedOpening = {
+    index,
+    start: { ...point },
+    original: cloneOpening(opening),
+    moved: false,
+    snapshotPushed: false,
+    manualId: opening.manual ? opening.id : null,
+  };
+}
+
+function beginSelectedRailingDrag(id, point) {
+  const railing = state.manualRailings.find((item) => item.id === id);
+  if (!railing) return;
+  state.draggedRailing = {
+    id,
+    start: { ...point },
+    original: cloneRailing(railing),
+    moved: false,
+    snapshotPushed: false,
+  };
+}
+
+function beginSelectedProductDrag(id, point) {
+  const product = state.productModels.find((item) => item.id === id);
+  if (!product) return;
+  state.draggedProduct = {
+    id,
+    start: { ...point },
+    original: { planX: product.planX, planY: product.planY },
+    moved: false,
+    snapshotPushed: false,
+  };
+}
+
+function moveSelectedProduct(selection, point) {
+  if (!selection) return;
+  const product = state.productModels.find((item) => item.id === selection.id);
+  if (!product) return;
+  const dx = point.x - selection.start.x;
+  const dy = point.y - selection.start.y;
+  if (!selection.snapshotPushed && Math.hypot(dx, dy) > 1.5) {
+    pushUndoSnapshot("move-product");
+    selection.snapshotPushed = true;
+  }
+  if (!selection.snapshotPushed) return;
+  product.planX = selection.original.planX + dx;
+  product.planY = selection.original.planY + dy;
+  if (state.analysisCanvas) {
+    product.planX = clamp(product.planX, 0, state.analysisCanvas.width);
+    product.planY = clamp(product.planY, 0, state.analysisCanvas.height);
+  }
+  selection.moved = true;
+}
+
+function rotateSelectedProductByStep() {
+  const product = selectedProduct();
+  if (!product) return false;
+  pushUndoSnapshot("rotate-product");
+  product.rotationDegrees = normalizeDegrees((Number(product.rotationDegrees) || 0) + PRODUCT_ROTATE_STEP_DEGREES);
+  renderPreview();
+  updateSelectedComponentInfo();
+  updateThreeModel(false);
+  elements.exportJsonButton.disabled = !hasExportableContent();
+  setStatus("产品模型已旋转");
+  return true;
+}
+
+function moveSelectedRailing(selection, point) {
+  if (!selection) return;
+  const railing = state.manualRailings.find((item) => item.id === selection.id);
+  if (!railing) return;
+  const dx = point.x - selection.start.x;
+  const dy = point.y - selection.start.y;
+  if (!selection.snapshotPushed && Math.hypot(dx, dy) > 1.5) {
+    pushUndoSnapshot("move-railing");
+    selection.snapshotPushed = true;
+  }
+  if (!selection.snapshotPushed) return;
+  railing.x1 = selection.original.x1 + dx;
+  railing.y1 = selection.original.y1 + dy;
+  railing.x2 = selection.original.x2 + dx;
+  railing.y2 = selection.original.y2 + dy;
+  normalizeRailing(railing);
+  selection.moved = true;
+}
+
+function deleteSelectedLine() {
+  const line = selectedLine();
+  if (!line) return false;
+  pushUndoSnapshot("delete-line");
+  state.lines = state.lines.filter((_, index) => index !== state.selectedLineIndex);
+  state.selectedLineIndex = null;
+  state.hoveredEndpoint = null;
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  refreshAfterEdit();
+  elements.exportJsonButton.disabled = !state.lines.length && !state.manualRailings.length;
+  setStatus("墙体已删除");
+  return true;
+}
+
+function materializeOpeningForEdit(selection) {
+  if (selection.manualId) return selection.manualId;
+  const original = selection.original;
+  const key = openingKey(original);
+  if (!state.hiddenOpeningKeys.includes(key)) state.hiddenOpeningKeys.push(key);
+  const manual = {
+    ...original,
+    id: `manual-opening-${Date.now()}-${state.manualOpenings.length + 1}`,
+    manual: true,
+    sourceOpeningKey: key,
+  };
+  state.manualOpenings.push(manual);
+  selection.manualId = manual.id;
+  state.selectedOpeningId = manual.id;
+  state.selectedOpeningIndex = null;
+  return manual.id;
+}
+
+function materializeSelectedOpeningForEdit() {
+  const opening = selectedOpening();
+  if (!opening) return null;
+  if (opening.manual) return state.manualOpenings.find((item) => item.id === opening.id) || opening;
+  const key = openingKey(opening);
+  if (!state.hiddenOpeningKeys.includes(key)) state.hiddenOpeningKeys.push(key);
+  const manual = {
+    ...opening,
+    id: `manual-opening-${Date.now()}-${state.manualOpenings.length + 1}`,
+    manual: true,
+    sourceOpeningKey: key,
+  };
+  normalizeOpeningComponent(manual);
+  state.manualOpenings.push(manual);
+  state.selectedOpeningId = manual.id;
+  state.selectedOpeningIndex = null;
+  return manual;
+}
+
+function normalizeOpeningComponent(opening) {
+  opening.variant = openingVariant(opening);
+  syncOpeningKindFromVariant(opening);
+  const profile = openingProfileMillimeters(opening);
+  opening.sillHeightMillimeters = Math.round(profile.sill);
+  opening.openingHeightMillimeters = Math.round(profile.height);
+  opening.projectionMillimeters = Math.round(profile.projection);
+  opening.width = distance({ x: opening.x1, y: opening.y1 }, { x: opening.x2, y: opening.y2 });
+  opening.widthMm = round(pxToMillimeters(opening.width, getSettings()));
+  return opening;
+}
+
+function moveSelectedOpening(selection, point) {
+  if (!selection) return;
+  const dx = point.x - selection.start.x;
+  const dy = point.y - selection.start.y;
+  if (!selection.snapshotPushed && Math.hypot(dx, dy) > 1.5) {
+    pushUndoSnapshot("move-opening");
+    selection.snapshotPushed = true;
+    materializeOpeningForEdit(selection);
+  }
+  if (!selection.snapshotPushed) return;
+  const opening = state.manualOpenings.find((item) => item.id === selection.manualId);
+  if (!opening) return;
+  opening.x1 = selection.original.x1 + dx;
+  opening.y1 = selection.original.y1 + dy;
+  opening.x2 = selection.original.x2 + dx;
+  opening.y2 = selection.original.y2 + dy;
+  normalizeOpeningComponent(opening);
+  selection.moved = true;
+  const visible = selectedOpening();
+  if (visible && visible.id === opening.id) Object.assign(visible, opening);
+}
+
+function deleteSelectedOpening() {
+  const opening = selectedOpening();
+  if (!opening) return false;
+  pushUndoSnapshot("delete-opening");
+  if (opening.manual) {
+    state.manualOpenings = state.manualOpenings.filter((item) => item.id !== opening.id);
+  } else {
+    const key = openingKey(opening);
+    if (!state.hiddenOpeningKeys.includes(key)) state.hiddenOpeningKeys.push(key);
+  }
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  refreshAfterEdit();
+  elements.exportJsonButton.disabled = !state.lines.length && !state.manualRailings.length;
+  setStatus("已删除构件");
+  return true;
+}
+
+function deleteSelectedRailing() {
+  const railing = selectedRailing();
+  if (!railing) return false;
+  pushUndoSnapshot("delete-railing");
+  state.manualRailings = state.manualRailings.filter((item) => item.id !== railing.id);
+  state.selectedRailingId = null;
+  refreshAfterEdit();
+  elements.exportJsonButton.disabled = !state.lines.length && !state.manualRailings.length;
+  setStatus("栏杆已删除");
+  return true;
+}
+
+function deleteSelectedProduct() {
+  const product = selectedProduct();
+  if (!product) return false;
+  pushUndoSnapshot("delete-product");
+  if (state.three.productsGroup && product.object) {
+    state.three.productsGroup.remove(product.object);
+    disposeThreeObject(product.object);
+  }
+  state.productModels = state.productModels.filter((item) => item.id !== product.id);
+  state.selectedProductId = null;
+  renderPreview();
+  updateSelectedComponentInfo();
+  updateThreeModel(false);
+  elements.exportJsonButton.disabled = !hasExportableContent();
+  setStatus("产品模型已删除");
+  return true;
+}
+
+function deleteSelectedComponent() {
+  if (selectedProduct()) return deleteSelectedProduct();
+  if (selectedRailing()) return deleteSelectedRailing();
+  if (selectedOpening()) return deleteSelectedOpening();
+  if (selectedLine()) return deleteSelectedLine();
+  return false;
+}
+
 function normalizeEditedLine(line) {
   if (line.orientation === "horizontal") {
     if (line.x1 > line.x2) [line.x1, line.x2] = [line.x2, line.x1];
@@ -907,14 +4561,40 @@ function normalizeEditedLine(line) {
   line.length = Math.abs(line.y2 - line.y1);
 }
 
-function refreshAfterEdit() {
-  state.topology = analyzeTopology(state.lines, getSettings());
+function refreshAfterEdit(options = {}) {
+  const settings = getSettings();
+  applyAutoCloseToLines(settings, options);
+  state.topology = analyzeTopology(state.lines, settings);
   updateStats();
   renderPreview();
+  updateThreeModel(false);
   setStatus("已编辑");
 }
 
+function applyAutoCloseToLines(settings = getSettings(), options = {}) {
+  if (!state.lines.length) return false;
+  const tolerance = Math.max(8, settings.mergeGap + settings.minWallThickness);
+  const closed = autoCloseLineIntersections(state.lines, settings, tolerance, options);
+  let changed = false;
+  for (let index = 0; index < state.lines.length; index += 1) {
+    const source = state.lines[index];
+    const target = closed[index];
+    if (!target) continue;
+    for (const key of ["x1", "y1", "x2", "y2", "length"]) {
+      if (source[key] !== target[key]) {
+        source[key] = target[key];
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 function snapDraggedEndpointToNearbyWall(selection) {
+  if (selection && selection.kind === "railing") {
+    snapSelectedRailingEndpoint(selection);
+    return;
+  }
   const line = selectedLine();
   if (!line || !selection) return;
 
@@ -951,11 +4631,166 @@ function snapDraggedEndpointToNearbyWall(selection) {
   normalizeEditedLine(line);
 }
 
+function snapSelectedRailingEndpoint(selection) {
+  const railing = selectedRailing();
+  if (!railing || !selection) return;
+  const settings = getSettings();
+  const tolerance = snapPointDistancePixels(settings);
+  const point = lineEndpoint(railing, selection.end);
+  const snapped = nearestRailingSnapPoint(point, railing, tolerance);
+  if (!snapped) return;
+  setLineEndpoint(railing, selection.end, snapped);
+  normalizeRailing(railing);
+}
+
+function nearestRailingSnapPoint(point, sourceRailing, tolerance) {
+  let best = null;
+  const consider = (candidate, weight = 1) => {
+    const score = distance(point, candidate) * weight;
+    if (score > tolerance) return;
+    if (!best || score < best.score) best = { point: candidate, score };
+  };
+
+  for (const wall of state.lines) {
+    const projected = projectPointToAxisSegment(point, wall);
+    if (projected) consider(projected, 0.88);
+  }
+  for (const railing of state.manualRailings) {
+    if (railing.id === sourceRailing.id) continue;
+    consider({ x: railing.x1, y: railing.y1 });
+    consider({ x: railing.x2, y: railing.y2 });
+    const projected = projectPointToAxisSegment(point, railing);
+    if (projected) consider(projected, 0.92);
+  }
+  return best ? { x: Math.round(best.point.x), y: Math.round(best.point.y) } : null;
+}
+
+function projectPointToAxisSegment(point, segment) {
+  if (segment.orientation === "horizontal") {
+    const x = clamp(point.x, Math.min(segment.x1, segment.x2), Math.max(segment.x1, segment.x2));
+    return { x, y: segment.y1 };
+  }
+  const y = clamp(point.y, Math.min(segment.y1, segment.y2), Math.max(segment.y1, segment.y2));
+  return { x: segment.x1, y };
+}
+
 function handleCanvasPointerDown(event) {
-  if (!state.lines.length) return;
+  if (state.tool === "measure") {
+    if (!ensureDrawingCanvas()) return;
+    const point = canvasPointFromEvent(event);
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.hoveredEndpoint = null;
+    if (!state.measurementLine) {
+      state.measurementLine = { start: point, end: point };
+      setStatus("选择测量终点");
+    } else {
+      state.measurementLine.end = point;
+      addMeasurementFromDraft();
+    }
+    elements.previewCanvas.style.cursor = "crosshair";
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (state.tool === "calibrate-scale") {
+    if (!ensureDrawingCanvas()) return;
+    const point = canvasPointFromEvent(event);
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.hoveredEndpoint = null;
+    if (!state.calibrationLine) {
+      state.calibrationLine = { start: point, end: point };
+      setStatus("选择标定终点");
+    } else {
+      state.calibrationLine.end = point;
+      applyCalibrationFromDraft();
+    }
+    elements.previewCanvas.style.cursor = "crosshair";
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (state.tool === "draw-wall") {
+    if (!ensureDrawingCanvas()) return;
+    const point = canvasPointFromEvent(event);
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.hoveredEndpoint = null;
+    if (!state.drawingLine) {
+      state.drawingLine = { start: point, end: point };
+      setStatus("选择终点");
+    } else {
+      state.drawingLine.end = point;
+      addManualWallFromDraft();
+    }
+    elements.previewCanvas.style.cursor = "crosshair";
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (state.tool === "draw-door" || state.tool === "draw-window") {
+    if (!ensureDrawingCanvas()) return;
+    const point = canvasPointFromEvent(event);
+    const variant = state.tool === "draw-door" ? "door" : "window";
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.hoveredEndpoint = null;
+    if (!state.openingDraft) {
+      state.openingDraft = { start: point, end: point, variant };
+      setStatus("选择构件终点");
+    } else {
+      state.openingDraft.end = point;
+      state.openingDraft.variant = variant;
+      addManualOpeningFromDraft();
+    }
+    elements.previewCanvas.style.cursor = "crosshair";
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (state.tool === "draw-railing") {
+    if (!ensureDrawingCanvas()) return;
+    const point = canvasPointFromEvent(event);
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = null;
+    state.hoveredEndpoint = null;
+    if (!state.railingDraft) {
+      state.railingDraft = { start: point, end: point };
+      setStatus("选择栏杆终点");
+    } else {
+      state.railingDraft.end = point;
+      addManualRailingFromDraft();
+    }
+    elements.previewCanvas.style.cursor = "crosshair";
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (!state.lines.length && !state.manualRailings.length && !state.productModels.length) return;
   const point = canvasPointFromEvent(event);
+  const rotateProductId = findSelectedProductRotationHandle(point);
+  if (rotateProductId) {
+    rotateSelectedProductByStep();
+    elements.previewCanvas.style.cursor = "grab";
+    event.preventDefault();
+    return;
+  }
+
   const endpoint = findNearestSelectedEndpoint(point);
   if (endpoint) {
+    pushUndoSnapshot("move-endpoint");
     state.draggedEndpoint = endpoint;
     elements.previewCanvas.setPointerCapture(event.pointerId);
     elements.previewCanvas.style.cursor = "grabbing";
@@ -963,14 +4798,117 @@ function handleCanvasPointerDown(event) {
     return;
   }
 
+  const productId = findNearestProductId(point);
+  if (productId !== null) {
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = null;
+    state.selectedProductId = productId;
+    state.hoveredEndpoint = null;
+    beginSelectedProductDrag(productId, point);
+    elements.previewCanvas.setPointerCapture(event.pointerId);
+    elements.previewCanvas.style.cursor = "grabbing";
+    renderPreview();
+    updateSelectedComponentInfo();
+    updateThreeModel(false);
+    event.preventDefault();
+    return;
+  }
+
+  const openingIndex = findNearestOpeningIndex(point);
+  if (openingIndex !== null) {
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = openingIndex;
+    state.selectedOpeningId = state.topology.openings[openingIndex] ? state.topology.openings[openingIndex].id : null;
+    state.selectedProductId = null;
+    state.hoveredEndpoint = null;
+    beginSelectedOpeningDrag(openingIndex, point);
+    elements.previewCanvas.setPointerCapture(event.pointerId);
+    elements.previewCanvas.style.cursor = "grabbing";
+    renderPreview();
+    updateSelectedComponentInfo();
+    updateThreeModel(false);
+    event.preventDefault();
+    return;
+  }
+
+  const railingId = findNearestRailingId(point);
+  if (railingId !== null) {
+    state.selectedLineIndex = null;
+    state.selectedOpeningIndex = null;
+    state.selectedOpeningId = null;
+    state.selectedRailingId = railingId;
+    state.selectedProductId = null;
+    state.hoveredEndpoint = null;
+    beginSelectedRailingDrag(railingId, point);
+    elements.previewCanvas.setPointerCapture(event.pointerId);
+    elements.previewCanvas.style.cursor = "grabbing";
+    renderPreview();
+    updateSelectedComponentInfo();
+    updateThreeModel(false);
+    event.preventDefault();
+    return;
+  }
+
   state.selectedLineIndex = findNearestLineIndex(point);
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
+  state.selectedProductId = null;
   state.hoveredEndpoint = null;
-  elements.previewCanvas.style.cursor = state.selectedLineIndex === null ? "default" : "pointer";
+  if (state.selectedLineIndex !== null) {
+    beginSelectedLineDrag(state.selectedLineIndex, point);
+    elements.previewCanvas.setPointerCapture(event.pointerId);
+    elements.previewCanvas.style.cursor = "grabbing";
+    event.preventDefault();
+  } else {
+    state.draggedLine = null;
+    elements.previewCanvas.style.cursor = "default";
+  }
   renderPreview();
+  updateSelectedComponentInfo();
+  updateThreeModel(false);
 }
 
 function handleCanvasPointerMove(event) {
-  if (!state.lines.length) return;
+  if (state.tool === "measure" && state.measurementLine) {
+    state.measurementLine.end = canvasPointFromEvent(event);
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (state.tool === "calibrate-scale" && state.calibrationLine) {
+    state.calibrationLine.end = canvasPointFromEvent(event);
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (state.tool === "draw-wall" && state.drawingLine) {
+    state.drawingLine.end = canvasPointFromEvent(event);
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if ((state.tool === "draw-door" || state.tool === "draw-window") && state.openingDraft) {
+    state.openingDraft.end = canvasPointFromEvent(event);
+    state.openingDraft.variant = state.tool === "draw-door" ? "door" : "window";
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (state.tool === "draw-railing" && state.railingDraft) {
+    state.railingDraft.end = canvasPointFromEvent(event);
+    renderPreview();
+    event.preventDefault();
+    return;
+  }
+
+  if (!state.lines.length && !state.manualRailings.length && !state.productModels.length) return;
   const point = canvasPointFromEvent(event);
 
   if (state.draggedEndpoint) {
@@ -978,29 +4916,100 @@ function handleCanvasPointerMove(event) {
     state.topology = analyzeTopology(state.lines, getSettings());
     updateStats();
     renderPreview();
+    updateThreeModel(false);
+    event.preventDefault();
+    return;
+  }
+
+  if (state.draggedLine) {
+    moveSelectedLine(state.draggedLine, point);
+    if (state.draggedLine.snapshotPushed) {
+      state.topology = analyzeTopology(state.lines, getSettings());
+      updateStats();
+      renderPreview();
+      updateThreeModel(false);
+    }
+    event.preventDefault();
+    return;
+  }
+
+  if (state.draggedOpening) {
+    moveSelectedOpening(state.draggedOpening, point);
+    if (state.draggedOpening.snapshotPushed) {
+      updateStats();
+      renderPreview();
+      updateThreeModel(false);
+    }
+    event.preventDefault();
+    return;
+  }
+
+  if (state.draggedRailing) {
+    moveSelectedRailing(state.draggedRailing, point);
+    if (state.draggedRailing.snapshotPushed) {
+      updateStats();
+      renderPreview();
+      updateThreeModel(false);
+    }
+    event.preventDefault();
+    return;
+  }
+
+  if (state.draggedProduct) {
+    moveSelectedProduct(state.draggedProduct, point);
+    if (state.draggedProduct.snapshotPushed) {
+      renderPreview();
+      updateSelectedComponentInfo();
+      updateThreeModel(false);
+    }
     event.preventDefault();
     return;
   }
 
   state.hoveredEndpoint = findNearestSelectedEndpoint(point);
-  if (state.hoveredEndpoint) {
+  if (findSelectedProductRotationHandle(point)) {
+    elements.previewCanvas.style.cursor = "grab";
+  } else if (state.hoveredEndpoint) {
     elements.previewCanvas.style.cursor = "grab";
   } else {
-    elements.previewCanvas.style.cursor = findNearestLineIndex(point) === null ? "default" : "pointer";
+    elements.previewCanvas.style.cursor = findNearestProductId(point) === null && findNearestOpeningIndex(point) === null && findNearestRailingId(point) === null && findNearestLineIndex(point) === null ? "default" : "pointer";
   }
   renderPreview();
 }
 
 function handleCanvasPointerUp(event) {
-  if (!state.draggedEndpoint) return;
-  snapDraggedEndpointToNearbyWall(state.draggedEndpoint);
+  if (!state.draggedEndpoint && !state.draggedLine && !state.draggedOpening && !state.draggedRailing && !state.draggedProduct) return;
+  const hadEndpointDrag = Boolean(state.draggedEndpoint);
+  const hadLineMove = Boolean(state.draggedLine && state.draggedLine.moved);
+  const hadOpeningMove = Boolean(state.draggedOpening && state.draggedOpening.moved);
+  const hadRailingMove = Boolean(state.draggedRailing && state.draggedRailing.moved);
+  const hadProductMove = Boolean(state.draggedProduct && state.draggedProduct.moved);
+  if (state.draggedEndpoint) snapDraggedEndpointToNearbyWall(state.draggedEndpoint);
+  if (state.draggedRailing && state.draggedRailing.moved) {
+    const railing = state.manualRailings.find((item) => item.id === state.draggedRailing.id);
+    if (railing) snapRailingToNearbyGeometry(railing);
+  }
   state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
+  state.draggedProduct = null;
   state.hoveredEndpoint = null;
   if (elements.previewCanvas.hasPointerCapture(event.pointerId)) {
     elements.previewCanvas.releasePointerCapture(event.pointerId);
   }
-  elements.previewCanvas.style.cursor = "default";
-  refreshAfterEdit();
+  elements.previewCanvas.style.cursor = state.selectedLineIndex === null && !state.selectedRailingId && !state.selectedProductId ? "default" : "pointer";
+  if (hadEndpointDrag || hadLineMove || hadOpeningMove || hadRailingMove) refreshAfterEdit();
+  else if (hadProductMove) {
+    renderPreview();
+    updateSelectedComponentInfo();
+    updateThreeModel(false);
+  }
+  else {
+    renderPreview();
+    updateSelectedComponentInfo();
+    updateThreeModel(false);
+  }
 }
 
 function handleCanvasWheel(event) {
@@ -1022,17 +5031,351 @@ function handleCanvasWheel(event) {
 }
 
 function exportJson() {
-  const payload = { source: state.sourceName, walls: state.lines, topology: state.topology, settings: getSettings() };
+  const settings = getSettings();
+  const millimetersPerPixel = getMillimetersPerPixel(settings);
+  const payload = {
+    source: state.sourceName,
+    scale: {
+      millimetersPerPixel,
+      outerWallThicknessMillimeters: { min: OUTER_WALL_MIN_MM, max: OUTER_WALL_MAX_MM },
+      source: state.manualMillimetersPerPixel ? "manual-calibration" : "outer-wall-default",
+      reference: state.manualMillimetersPerPixel
+        ? `manual calibration ${millimetersPerPixel.toFixed(4)}mm/px`
+        : `maxThickness ${settings.maxThickness}px = ${OUTER_WALL_MAX_MM}mm`,
+    },
+    walls: state.lines,
+    wallsMillimeters: state.lines.map((line) => ({
+      id: line.id,
+      orientation: line.orientation,
+      x1: round(pxToMillimeters(line.x1, settings)),
+      y1: round(pxToMillimeters(line.y1, settings)),
+      x2: round(pxToMillimeters(line.x2, settings)),
+      y2: round(pxToMillimeters(line.y2, settings)),
+      thickness: round(physicalWallThicknessMillimeters(line.thickness, settings)),
+      length: round(pxToMillimeters(line.length, settings)),
+      height: round(lineHeightMillimeters(line)),
+    })),
+    measurements: state.measurements.map((measurement) => ({
+      id: measurement.id,
+      x1: round(measurement.start.x),
+      y1: round(measurement.start.y),
+      x2: round(measurement.end.x),
+      y2: round(measurement.end.y),
+      pixelLength: round(distance(measurement.start, measurement.end)),
+      millimeterLength: round(pxToMillimeters(distance(measurement.start, measurement.end), settings)),
+    })),
+    openingOverrides: {
+      manualOpenings: state.manualOpenings.map(cloneOpening),
+      hiddenOpeningKeys: [...state.hiddenOpeningKeys],
+    },
+    railings: state.manualRailings.map(cloneRailing),
+    products: state.productModels.map(cloneProductMeta),
+    topology: state.topology,
+    settings,
+  };
+  downloadJson(payload, `${state.sourceName}-walls.json`);
+}
+
+function createProjectArchive() {
+  if (!state.analysisCanvas) {
+    setStatus("没有可保存项目");
+    return null;
+  }
+  return {
+    version: 1,
+    type: "floor-plan-generation-project",
+    savedAt: new Date().toISOString(),
+    sourceName: state.sourceName,
+    image: state.analysisCanvas.toDataURL("image/png"),
+    view: state.view,
+    recognitionMode: state.recognitionMode,
+    selectedLineIndex: state.selectedLineIndex,
+    selectedOpeningIndex: state.selectedOpeningIndex,
+    selectedOpeningId: state.selectedOpeningId,
+    selectedRailingId: state.selectedRailingId,
+    selectedProductId: state.selectedProductId,
+    manualMillimetersPerPixel: state.manualMillimetersPerPixel,
+    calibrationLengthMillimeters: getCalibrationLengthMillimeters(),
+    settings: getSettings(),
+    lines: state.lines.map(cloneLine),
+    measurements: state.measurements.map(cloneMeasurement),
+    manualOpenings: state.manualOpenings.map(cloneOpening),
+    manualRailings: state.manualRailings.map(cloneRailing),
+    products: state.productModels.map(cloneProductMeta),
+    hiddenOpeningKeys: [...state.hiddenOpeningKeys],
+  };
+}
+
+async function saveProjectArchive() {
+  const payload = createProjectArchive();
+  if (!payload) return;
+  const fileName = `${state.sourceName || "floor-plan"}-project.floorplan.json`;
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+
+  if (state.projectFileHandle) {
+    try {
+      await writeProjectBlobToHandle(state.projectFileHandle, blob);
+      setStatus("项目已保存到原文件");
+      return;
+    } catch (error) {
+      console.warn(error);
+      state.projectFileHandle = null;
+      setStatus("原文件不可写，请重新选择保存路径");
+    }
+  }
+
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{ description: "建筑平面项目", accept: { "application/json": [".json"] } }],
+      });
+      await writeProjectBlobToHandle(handle, blob);
+      state.projectFileHandle = handle;
+      setStatus("项目已保存");
+      return;
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      console.warn(error);
+    }
+  }
+
+  downloadBlob(blob, fileName);
+  setStatus("项目已下载");
+}
+
+async function writeProjectBlobToHandle(handle, blob) {
+  const writable = await handle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+
+async function openProjectArchive() {
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        multiple: false,
+        types: [{ description: "建筑平面项目", accept: { "application/json": [".json"] } }],
+      });
+      const file = await handle.getFile();
+      await loadProjectArchiveFromFile(file, handle);
+      return;
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      console.warn(error);
+    }
+  }
+  elements.projectFileInput.click();
+}
+
+async function loadProjectArchiveFromFile(file, handle = null) {
+  try {
+    setStatus("打开项目中");
+    const archive = JSON.parse(await file.text());
+    await restoreProjectArchive(archive);
+    state.projectFileHandle = handle;
+  } catch (error) {
+    console.error(error);
+    setStatus("项目打开失败");
+  } finally {
+    elements.projectFileInput.value = "";
+  }
+}
+
+async function restoreProjectArchive(archive) {
+  if (!archive || archive.type !== "floor-plan-generation-project" || !archive.image) {
+    throw new Error("项目文件格式不正确");
+  }
+
+  const image = await loadImage(archive.image);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  canvas.getContext("2d").drawImage(image, 0, 0);
+
+  state.analysisCanvas = canvas;
+  state.maskImage = null;
+  state.lines = Array.isArray(archive.lines) ? archive.lines.map((line, index) => ({ ...line, id: line.id || `wall-${index + 1}` })) : [];
+  state.measurements = Array.isArray(archive.measurements) ? archive.measurements.map(cloneMeasurement) : [];
+  state.manualOpenings = Array.isArray(archive.manualOpenings) ? archive.manualOpenings.map(cloneOpening) : [];
+  state.manualRailings = Array.isArray(archive.manualRailings) ? archive.manualRailings.map(cloneRailing).map(normalizeRailing) : [];
+  clearProductModels();
+  state.productModels = Array.isArray(archive.products) ? archive.products.map((product) => ({ ...product, object: null })) : [];
+  state.hiddenOpeningKeys = Array.isArray(archive.hiddenOpeningKeys) ? [...archive.hiddenOpeningKeys] : [];
+  state.selectedLineIndex = Number.isInteger(archive.selectedLineIndex) ? archive.selectedLineIndex : null;
+  if (state.selectedLineIndex !== null && !state.lines[state.selectedLineIndex]) state.selectedLineIndex = null;
+  state.selectedOpeningIndex = Number.isInteger(archive.selectedOpeningIndex) ? archive.selectedOpeningIndex : null;
+  state.selectedOpeningId = archive.selectedOpeningId || null;
+  state.selectedRailingId = archive.selectedRailingId || null;
+  if (state.selectedRailingId && !state.manualRailings.some((railing) => railing.id === state.selectedRailingId)) state.selectedRailingId = null;
+  state.selectedProductId = archive.selectedProductId || null;
+  if (state.selectedProductId && !state.productModels.some((product) => product.id === state.selectedProductId)) state.selectedProductId = null;
+  state.draggedEndpoint = null;
+  state.draggedLine = null;
+  state.draggedOpening = null;
+  state.draggedRailing = null;
+  state.hoveredEndpoint = null;
+  state.drawingLine = null;
+  state.openingDraft = null;
+  state.railingDraft = null;
+  state.calibrationLine = null;
+  state.measurementLine = null;
+  state.manualMillimetersPerPixel = Number(archive.manualMillimetersPerPixel) || null;
+  state.undoStack = [];
+  state.removedPixels = 0;
+  state.recognitionMode = archive.recognitionMode || "project";
+  state.sourceName = archive.sourceName || "floor-plan-project";
+
+  applySettings(archive.settings || {});
+  if (archive.calibrationLengthMillimeters) elements.calibrationLengthInput.value = String(Math.round(archive.calibrationLengthMillimeters));
+  fitCanvasToImage(state.analysisCanvas);
+  elements.emptyState.hidden = true;
+  elements.imageStat.textContent = `${state.analysisCanvas.width} x ${state.analysisCanvas.height}`;
+  state.topology = analyzeTopology(state.lines, getSettings());
+  setView(archive.view === "vector" ? "vector" : "overlay");
+  syncControlLabels();
+  updateStats();
+  renderPreview();
+  updateThreeModel(true);
+  elements.processButton.disabled = false;
+  elements.saveProjectButton.disabled = false;
+  elements.exportJsonButton.disabled = !state.lines.length;
+  setStatus("项目已打开");
+}
+
+function applySettings(settings) {
+  setControlValue(elements.thresholdRange, settings.threshold);
+  setControlValue(elements.minLengthRange, settings.minLength);
+  setControlValue(elements.mergeGapRange, settings.mergeGap);
+  setControlValue(elements.maxThicknessRange, settings.maxThickness);
+  setControlValue(elements.minNoiseAreaRange, settings.minNoiseArea);
+  setControlValue(elements.minWallThicknessRange, settings.minWallThickness);
+  setControlValue(elements.openingMinWidthRange, settings.openingMinWidth);
+  setControlValue(elements.openingMaxWidthRange, settings.openingMaxWidth);
+  if (typeof settings.denoiseEnabled === "boolean") elements.denoiseToggle.checked = settings.denoiseEnabled;
+  if (settings.recognitionMode && [...elements.recognitionModeSelect.options].some((option) => option.value === settings.recognitionMode)) {
+    elements.recognitionModeSelect.value = settings.recognitionMode;
+  }
+}
+
+function setControlValue(element, value) {
+  if (value === undefined || value === null || Number.isNaN(Number(value))) return;
+  element.value = String(value);
+}
+
+function downloadJson(payload, fileName) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  downloadBlob(blob, fileName);
+}
+
+function downloadBlob(blob, fileName) {
   const anchor = document.createElement("a");
   anchor.href = URL.createObjectURL(blob);
-  anchor.download = `${state.sourceName}-walls.json`;
+  anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(anchor.href);
 }
 
+function bindComponentParameterInputs(prefix) {
+  const card = componentElements(prefix);
+  if (prefix === "selected") {
+    card.card.addEventListener("pointerdown", beginSelectedCardDrag);
+    card.card.addEventListener("pointermove", moveSelectedCard);
+    card.card.addEventListener("pointerup", endSelectedCardDrag);
+    card.card.addEventListener("pointercancel", endSelectedCardDrag);
+  } else {
+    card.card.addEventListener("pointerdown", (event) => event.stopPropagation());
+  }
+  card.card.addEventListener("click", (event) => event.stopPropagation());
+  card.card.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
+  card.variantSelect.addEventListener("change", () => commitSelectedOpeningVariant(prefix));
+  card.variantSelect.addEventListener("pointerdown", (event) => event.stopPropagation());
+  card.variantSelect.addEventListener("click", (event) => event.stopPropagation());
+  const bindings = [
+    ["length", card.lengthInput],
+    ["thickness", card.thicknessInput],
+    ["height", card.heightInput],
+  ];
+  for (const [parameter, input] of bindings) {
+    input.addEventListener("change", () => commitSelectedComponentParameter(parameter, prefix));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        input.blur();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        updateSelectedComponentInfo();
+        input.blur();
+      }
+      event.stopPropagation();
+    });
+    input.addEventListener("pointerdown", (event) => event.stopPropagation());
+    input.addEventListener("click", (event) => event.stopPropagation());
+  }
+}
+
 function openImagePicker() {
   elements.fileInput.click();
+}
+
+function isEditableTarget(target) {
+  if (!target) return false;
+  const tagName = target.tagName ? target.tagName.toLowerCase() : "";
+  return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
+}
+
+function handleDocumentKeyDown(event) {
+  if (state.three.mode === "roam" && !event.defaultPrevented && !event.ctrlKey && !event.metaKey && !isEditableTarget(event.target)) {
+    handleThreeKeyDown(event);
+    if (event.defaultPrevented) return;
+  }
+  if ((event.key === "Delete" || event.key === "Backspace") && deleteSelectedComponent()) {
+    event.preventDefault();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    if (!state.analysisCanvas) {
+      setStatus("没有可保存项目");
+      return;
+    }
+    saveProjectArchive();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    if (state.drawingLine) {
+      state.drawingLine = null;
+      renderPreview();
+      setStatus("已取消画线");
+      return;
+    }
+    if (state.openingDraft) {
+      state.openingDraft = null;
+      renderPreview();
+      setStatus("已取消构件绘制");
+      return;
+    }
+    if (state.railingDraft) {
+      state.railingDraft = null;
+      renderPreview();
+      setStatus("已取消栏杆绘制");
+      return;
+    }
+    if (state.calibrationLine) {
+      state.calibrationLine = null;
+      renderPreview();
+      setStatus("已取消标定");
+      return;
+    }
+    if (state.measurementLine) {
+      state.measurementLine = null;
+      renderPreview();
+      setStatus("已取消测量");
+      return;
+    }
+    undoLastEdit();
+  }
 }
 
 elements.uploadButton.addEventListener("click", openImagePicker);
@@ -1044,20 +5387,53 @@ elements.nativeFileInput.addEventListener("change", (event) => {
   const [file] = event.target.files;
   if (file) loadImageFromFile(file);
 });
+elements.projectFileInput.addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  if (file) loadProjectArchiveFromFile(file);
+});
 elements.demoButton.addEventListener("click", loadDemoPlan);
 elements.processButton.addEventListener("click", runRecognition);
+elements.saveProjectButton.addEventListener("click", saveProjectArchive);
+elements.openProjectButton.addEventListener("click", openProjectArchive);
 elements.exportJsonButton.addEventListener("click", exportJson);
+elements.drawWallButton.addEventListener("click", toggleDrawWallTool);
+elements.drawDoorButton.addEventListener("click", toggleDrawDoorTool);
+elements.drawWindowButton.addEventListener("click", toggleDrawWindowTool);
+elements.drawRailingButton.addEventListener("click", toggleDrawRailingTool);
+elements.importFurnitureButton.addEventListener("click", () => openProductModelPicker("furniture"));
+elements.importSanitaryButton.addEventListener("click", () => openProductModelPicker("sanitary"));
+elements.importHardwareButton.addEventListener("click", () => openProductModelPicker("hardware"));
+elements.productModelInput.addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  if (file) importProductModelFromFile(file);
+});
+elements.calibrateToolButton.addEventListener("click", toggleCalibrateScaleTool);
+elements.calibrateScaleButton.addEventListener("click", toggleCalibrateScaleTool);
+elements.measureToolButton.addEventListener("click", toggleMeasureTool);
+elements.threeRoamButton.addEventListener("click", toggleThreeRoamMode);
+elements.threeResetButton.addEventListener("click", resetThreeCamera);
+elements.selectedDeleteComponentButton.addEventListener("click", deleteSelectedComponent);
+elements.threeDeleteComponentButton.addEventListener("click", deleteSelectedComponent);
 elements.overlayTab.addEventListener("click", () => setView("overlay"));
 elements.vectorTab.addEventListener("click", () => setView("vector"));
 elements.recognitionModeSelect.addEventListener("change", () => state.analysisCanvas && runRecognition());
+bindComponentParameterInputs("selected");
+bindComponentParameterInputs("three");
 elements.previewCanvas.addEventListener("pointerdown", handleCanvasPointerDown);
 elements.previewCanvas.addEventListener("pointermove", handleCanvasPointerMove);
 elements.previewCanvas.addEventListener("pointerup", handleCanvasPointerUp);
 elements.previewCanvas.addEventListener("pointercancel", handleCanvasPointerUp);
 elements.previewCanvas.addEventListener("pointerleave", () => {
+  if (state.drawingLine) return;
+  if (state.openingDraft) return;
+  if (state.railingDraft) return;
+  if (state.calibrationLine) return;
+  if (state.measurementLine) return;
   if (state.draggedEndpoint) return;
+  if (state.draggedLine) return;
+  if (state.draggedRailing) return;
   state.hoveredEndpoint = null;
-  elements.previewCanvas.style.cursor = "default";
+  elements.previewCanvas.style.cursor = isPointDrawingTool(state.tool) ? "crosshair" : "default";
   if (state.analysisCanvas && state.lines.length) renderPreview();
 });
 elements.canvasWrap.addEventListener("wheel", handleCanvasWheel, { passive: false });
@@ -1090,5 +5466,7 @@ elements.canvasWrap.addEventListener("drop", (event) => {
   const [file] = event.dataTransfer.files;
   if (file) loadImageFromFile(file);
 });
+document.addEventListener("keydown", handleDocumentKeyDown);
 
 syncControlLabels();
+initThreeViewer();

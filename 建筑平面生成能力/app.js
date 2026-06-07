@@ -1,4 +1,4 @@
-const IMAGE_ACCEPT = ".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml";
+﻿const IMAGE_ACCEPT = ".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml";
 const MIN_CANVAS_ZOOM = 0.35;
 const MAX_CANVAS_ZOOM = 5;
 const THREE_MODULE_URL = "https://unpkg.com/three@0.164.1/build/three.module.js";
@@ -127,6 +127,7 @@ const state = {
   draggedOpening: null,
   draggedRailing: null,
   draggedProduct: null,
+  draggedProductResize: null,
   hoveredEndpoint: null,
   removedPixels: 0,
   recognitionMode: "-",
@@ -145,6 +146,7 @@ const state = {
   hiddenOpeningKeys: [],
   manualMillimetersPerPixel: null,
   undoStack: [],
+  clipboard: null,
   sourceName: "floor-plan",
   projectFileHandle: null,
   zoom: 1,
@@ -172,6 +174,10 @@ const state = {
     pointer: null,
     dragging: false,
     dragDistance: 0,
+    resizeHandlesGroup: null,
+    resizeDrag: null,
+    productMoveDrag: null,
+    productTransformMode: "move",
     lastX: 0,
     lastY: 0,
     cardX: 16,
@@ -315,7 +321,7 @@ function cloneRailing(railing) {
 }
 
 function cloneProductMeta(product) {
-  const { object, ...meta } = product;
+  const { object, restoringModel, ...meta } = product;
   return { ...meta };
 }
 
@@ -350,7 +356,7 @@ function undoLastEdit() {
   state.manualOpenings = (snapshot.manualOpenings || []).map(cloneOpening);
   state.manualRailings = (snapshot.manualRailings || []).map(cloneRailing);
   clearProductModels();
-  state.productModels = (snapshot.productModels || []).map((product) => ({ ...product, object: null }));
+  state.productModels = (snapshot.productModels || []).map((product) => normalizeProductMetadata({ ...product, object: null }));
   state.hiddenOpeningKeys = [...(snapshot.hiddenOpeningKeys || [])];
   state.selectedLineIndex = snapshot.selectedLineIndex;
   state.selectedOpeningIndex = snapshot.selectedOpeningIndex ?? null;
@@ -364,6 +370,8 @@ function undoLastEdit() {
   state.draggedOpening = null;
   state.draggedRailing = null;
   state.draggedProduct = null;
+  state.draggedProductResize = null;
+  state.three.productMoveDrag = null;
   state.hoveredEndpoint = null;
   state.drawingLine = null;
   state.openingDraft = null;
@@ -402,6 +410,8 @@ function ensureDrawingCanvas() {
   state.draggedOpening = null;
   state.draggedRailing = null;
   state.draggedProduct = null;
+  state.draggedProductResize = null;
+  state.three.productMoveDrag = null;
   state.hoveredEndpoint = null;
   state.drawingLine = null;
   state.openingDraft = null;
@@ -448,6 +458,8 @@ async function loadImageFromFile(file) {
     state.draggedOpening = null;
     state.draggedRailing = null;
     state.draggedProduct = null;
+    state.draggedProductResize = null;
+    state.three.productMoveDrag = null;
     state.hoveredEndpoint = null;
     state.drawingLine = null;
     state.openingDraft = null;
@@ -1403,18 +1415,20 @@ function updateSelectedComponentInfo() {
 }
 
 function updateSelectedProductInfo(product) {
+  normalizeProductMetadata(product);
   elements.selectedComponentCard.hidden = false;
   const settings = getSettings();
+  const footprint = productFootprintMeters(product);
   const values = {
     title: product.name || product.id || "产品模型",
-    type: productCategoryLabel(product.category),
+    type: productSubtypeLabel(product),
     orientation: `旋转 ${Math.round(product.rotationDegrees || 0)}°`,
     lengthLabel: "宽度",
     thicknessLabel: "深度",
     heightLabel: "高度",
-    length: Math.round(product.widthMillimeters || productDefaultSizeMeters(product.category) * 1000),
-    thickness: Math.round(product.depthMillimeters || productDefaultSizeMeters(product.category) * 700),
-    height: Math.round(product.heightMillimeters || productDefaultSizeMeters(product.category) * 1000),
+    length: Math.round(footprint.width * 1000),
+    thickness: Math.round(footprint.depth * 1000),
+    height: Math.round(product.heightMillimeters || productDefaultHeightMeters(product.category, product.productSubtype) * 1000),
     coords: `${formatMillimeters(pxToMillimeters(product.planX, settings))},${formatMillimeters(pxToMillimeters(product.planY, settings))}`,
   };
   fillComponentCard("selected", values);
@@ -2140,13 +2154,23 @@ function drawProductModels(context) {
     context.strokeText(label, 0, 0);
     context.fillText(label, 0, 0);
     if (selected) {
-      drawEditableEndpoint(context, -width / 2, -depth / 2, true);
-      drawEditableEndpoint(context, width / 2, depth / 2, true);
+      for (const handle of productResizeHandleDefinitions(width, depth)) {
+        drawEditableEndpoint(context, handle.x, handle.y, true);
+      }
       drawProductRotationHandle(context, width, depth);
     }
     context.restore();
   }
   context.restore();
+}
+
+function productResizeHandleDefinitions(width, depth) {
+  return [
+    { corner: "nw", x: -width / 2, y: -depth / 2, sideX: -1, sideY: -1 },
+    { corner: "ne", x: width / 2, y: -depth / 2, sideX: 1, sideY: -1 },
+    { corner: "se", x: width / 2, y: depth / 2, sideX: 1, sideY: 1 },
+    { corner: "sw", x: -width / 2, y: depth / 2, sideX: -1, sideY: 1 },
+  ];
 }
 
 function drawProductRotationHandle(context, width, depth) {
@@ -2483,6 +2507,7 @@ function bindThreeViewportEvents() {
   elements.threeViewport.addEventListener("pointermove", handleThreePointerMove);
   elements.threeViewport.addEventListener("pointerup", handleThreePointerUp);
   elements.threeViewport.addEventListener("pointercancel", handleThreePointerUp);
+  elements.threeViewport.addEventListener("dblclick", handleThreeDoubleClick);
   elements.threeViewport.addEventListener("wheel", handleThreeWheel, { passive: false });
   elements.threeViewport.addEventListener("keydown", handleThreeKeyDown);
   if ("ResizeObserver" in window) {
@@ -2524,6 +2549,8 @@ function updateThreeModel(resetCamera) {
   const sourceHeight = state.analysisCanvas ? state.analysisCanvas.height : 0;
   const maxSpan = Math.max(bounds.width, bounds.height, sourceWidth, sourceHeight, 1);
   const unit = 12 / maxSpan;
+  state.three.planBounds = bounds;
+  state.three.unit = unit;
   const floorWidth = Math.max(5, bounds.width * unit + 1.4, sourceWidth * unit + 0.6);
   const floorDepth = Math.max(5, bounds.height * unit + 1.4, sourceHeight * unit + 0.6);
   state.three.roamBounds = { width: floorWidth, depth: floorDepth };
@@ -2535,13 +2562,18 @@ function updateThreeModel(resetCamera) {
   const openings = constructibleOpenings();
   const wallModels = buildContinuousWallModels(closedWallLines, openings, settings);
   let maxWallHeight = WALL_HEIGHT_METERS;
+  const renderedWallSegments = [];
   for (const model of wallModels) {
     for (const segment of splitWallModelByOpenings(model, openings, settings)) {
       const { line, index } = segment;
       maxWallHeight = Math.max(maxWallHeight, lineHeightMeters(line));
-      const wall = createThreeWall(three, line, index, unit, bounds, pierIds.has(line.id));
+      const wall = createThreeWall(three, line, index, unit, bounds, pierIds.has(line.id), closedWallLines);
       wallsGroup.add(wall);
+      renderedWallSegments.push({ line: lineWithJointExtensions(line, closedWallLines, settings), sourceLine: line, index });
     }
+  }
+  for (const cap of createThreeWallJointCaps(three, renderedWallSegments, unit, bounds, settings)) {
+    wallsGroup.add(cap);
   }
   (state.topology.openings || []).forEach((opening, index) => {
     if (!isConstructibleOpening(opening)) return;
@@ -2631,24 +2663,60 @@ function createBlurredPlanTexture(three) {
   return texture;
 }
 
-function createThreeWall(three, line, index, unit, bounds, isPier) {
+function lineWithJointExtensions(line, hostLines, settings) {
+  const renderLine = cloneLine(line);
+  const center = {
+    x: (line.x1 + line.x2) / 2,
+    y: (line.y1 + line.y2) / 2,
+  };
+
+  ["start", "end"].forEach((end) => {
+    if (shouldSkipJointExtension(renderLine, end)) return;
+    const point = lineEndpoint(line, end);
+    const host = nearestPerpendicularWallAtEndpoint(line, point, hostLines, settings);
+    if (!host) return;
+    if (line.orientation === "horizontal") {
+      setLineEndpoint(renderLine, end, { x: perpendicularHostOuterAxis(line, point, host, settings), y: point.y });
+    } else {
+      setLineEndpoint(renderLine, end, { x: point.x, y: perpendicularHostOuterAxis(line, point, host, settings) });
+    }
+    normalizeEditedLine(renderLine);
+  });
+
+  return renderLine;
+}
+
+function perpendicularHostOuterAxis(line, point, host, settings) {
+  return line.orientation === "horizontal" ? host.x1 : host.y1;
+}
+
+function shouldSkipJointExtension(line, end) {
+  const skipEnds = line.skipJointExtensionEnds;
+  if (line.skipJointExtensions && !skipEnds) return true;
+  return Boolean(skipEnds && skipEnds[end]);
+}
+
+function createThreeWall(three, line, index, unit, bounds, isPier, hostLines = state.lines) {
   const settings = getSettings();
-  const length = Math.max(line.length * unit, 0.08);
+  const renderLine = lineWithJointExtensions(line, hostLines, settings);
+  const length = Math.max(renderLine.length * unit, 0.08);
   const thickness = Math.max(visualWallThicknessPixels(line, settings) * unit, 0.08);
-  const width = line.orientation === "horizontal" ? length : thickness;
-  const depth = line.orientation === "horizontal" ? thickness : length;
+  const width = renderLine.orientation === "horizontal" ? length : thickness;
+  const depth = renderLine.orientation === "horizontal" ? thickness : length;
   const height = lineHeightMeters(line);
   const base = Math.max(0, Number(line.baseMeters) || 0);
   const geometry = new three.BoxGeometry(width, height, depth);
   const material = new three.MeshStandardMaterial({
-    color: index === state.selectedLineIndex ? 0xf2a13a : isPier ? 0x8b5cf6 : 0xd98b78,
-    roughness: 0.68,
-    metalness: 0.02,
+    color: index === state.selectedLineIndex ? 0xf2a13a : 0xf7f5ef,
+    roughness: 0.76,
+    metalness: 0,
+    transparent: index === state.selectedLineIndex,
+    opacity: index === state.selectedLineIndex ? 0.86 : 1,
   });
   const mesh = new three.Mesh(geometry, material);
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
-  mesh.position.set(((line.x1 + line.x2) / 2 - centerX) * unit, base + height / 2, ((line.y1 + line.y2) / 2 - centerY) * unit);
+  mesh.position.set(((renderLine.x1 + renderLine.x2) / 2 - centerX) * unit, base + height / 2, ((renderLine.y1 + renderLine.y2) / 2 - centerY) * unit);
   mesh.userData.lineIndex = index;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
@@ -2656,16 +2724,135 @@ function createThreeWall(three, line, index, unit, bounds, isPier) {
   const group = new three.Group();
   group.userData.lineIndex = index;
   group.add(mesh);
-  if (index === state.selectedLineIndex || isPier) {
-    const edge = new three.LineSegments(
-      new three.EdgesGeometry(geometry),
-      new three.LineBasicMaterial({ color: index === state.selectedLineIndex ? 0x8d4c0c : 0x6f45c5, transparent: true, opacity: 0.54 }),
-    );
-    edge.position.copy(mesh.position);
-    edge.userData.lineIndex = index;
-    group.add(edge);
-  }
+  const edge = new three.LineSegments(
+    new three.EdgesGeometry(geometry),
+    new three.LineBasicMaterial({
+      color: index === state.selectedLineIndex ? 0x8d4c0c : 0xd8d3c8,
+      transparent: true,
+      opacity: index === state.selectedLineIndex ? 0.54 : 0.24,
+    }),
+  );
+  edge.position.copy(mesh.position);
+  edge.userData.lineIndex = index;
+  group.add(edge);
   return group;
+}
+
+function createThreeWallJointCaps(three, segments, unit, bounds, settings) {
+  const horizontal = segments.filter((segment) => segment.line.orientation === "horizontal" && shouldWallSegmentReceiveJointCaps(segment.sourceLine));
+  const vertical = segments.filter((segment) => segment.line.orientation === "vertical" && shouldWallSegmentReceiveJointCaps(segment.sourceLine));
+  const eligible = [...horizontal, ...vertical];
+  const caps = [];
+  const seen = new Set();
+  const addCap = (h, v) => {
+    const key = wallJointCapKey(h, v);
+    if (seen.has(key)) return;
+    seen.add(key);
+    caps.push(createThreeWallJointCap(three, h, v, unit, bounds, settings));
+  };
+  for (const h of horizontal) {
+    for (const v of vertical) {
+      if (!wallSegmentsIntersectForCap(h.line, v.line, settings)) continue;
+      addCap(h, v);
+    }
+  }
+  for (const segment of eligible) {
+    for (const end of ["start", "end"]) {
+      const host = nearestPerpendicularSegmentAtEndpoint(segment, lineEndpoint(segment.line, end), eligible, settings);
+      if (!host) continue;
+      const h = segment.line.orientation === "horizontal" ? segment : host;
+      const v = segment.line.orientation === "vertical" ? segment : host;
+      addCap(h, v);
+    }
+  }
+  return caps;
+}
+
+function shouldWallSegmentReceiveJointCaps(line) {
+  return (Number(line.baseMeters) || 0) <= 0.05;
+}
+
+function wallJointCapKey(horizontal, vertical) {
+  return `${Math.round(vertical.line.x1)}:${Math.round(horizontal.line.y1)}:${Math.round(Math.min(lineHeightMeters(horizontal.sourceLine), lineHeightMeters(vertical.sourceLine)) * 1000)}`;
+}
+
+function wallSegmentsIntersectForCap(horizontal, vertical, settings) {
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness);
+  const x = vertical.x1;
+  const y = horizontal.y1;
+  if (x < horizontal.x1 - tolerance || x > horizontal.x2 + tolerance) return false;
+  if (y < vertical.y1 - tolerance || y > vertical.y2 + tolerance) return false;
+  return true;
+}
+
+function nearestPerpendicularSegmentAtEndpoint(segment, point, candidates, settings) {
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness, segment.sourceLine.thickness || 1);
+  const targetOrientation = segment.line.orientation === "horizontal" ? "vertical" : "horizontal";
+  let best = null;
+  for (const candidate of candidates) {
+    if (candidate === segment || candidate.line.orientation !== targetOrientation) continue;
+    const axisMiss = segment.line.orientation === "horizontal" ? Math.abs(candidate.line.x1 - point.x) : Math.abs(candidate.line.y1 - point.y);
+    const spanMiss = segment.line.orientation === "horizontal"
+      ? perpendicularMiss(point.y, candidate.line.y1, candidate.line.y2)
+      : perpendicularMiss(point.x, candidate.line.x1, candidate.line.x2);
+    if (axisMiss > tolerance || spanMiss > tolerance) continue;
+    const score = axisMiss + spanMiss * 0.5;
+    if (!best || score < best.score) best = { segment: candidate, score };
+  }
+  return best ? best.segment : null;
+}
+
+function createThreeWallJointCap(three, horizontal, vertical, unit, bounds, settings) {
+  const hThickness = Math.max(visualWallThicknessPixels(horizontal.sourceLine, settings) * unit, 0.08);
+  const vThickness = Math.max(visualWallThicknessPixels(vertical.sourceLine, settings) * unit, 0.08);
+  const height = Math.min(lineHeightMeters(horizontal.sourceLine), lineHeightMeters(vertical.sourceLine));
+  const base = Math.max(Number(horizontal.sourceLine.baseMeters) || 0, Number(vertical.sourceLine.baseMeters) || 0);
+  const geometry = new three.BoxGeometry(vThickness, height, hThickness);
+  const material = new three.MeshStandardMaterial({
+    color: 0xf7f5ef,
+    roughness: 0.76,
+    metalness: 0,
+  });
+  const mesh = new three.Mesh(geometry, material);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  mesh.position.set((vertical.line.x1 - centerX) * unit, base + height / 2, (horizontal.line.y1 - centerY) * unit);
+  mesh.userData.wallJointCap = true;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const group = new three.Group();
+  group.userData.wallJointCap = true;
+  group.add(mesh);
+  const edge = new three.LineSegments(
+    new three.EdgesGeometry(geometry),
+    new three.LineBasicMaterial({ color: 0xd8d3c8, transparent: true, opacity: 0.16 }),
+  );
+  edge.position.copy(mesh.position);
+  edge.userData.wallJointCap = true;
+  group.add(edge);
+  return group;
+}
+
+function nearestPerpendicularWallAtEndpoint(line, point, candidates, settings) {
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness, line.thickness || 1);
+  const targetOrientation = line.orientation === "horizontal" ? "vertical" : "horizontal";
+  return candidates
+    .filter((candidate) => candidate.orientation === targetOrientation)
+    .filter((candidate) => {
+      if (line.orientation === "horizontal") {
+        const endpointNearAxis = Math.abs(candidate.x1 - point.x) <= tolerance;
+        const crossesAxis = point.y >= Math.min(candidate.y1, candidate.y2) - tolerance && point.y <= Math.max(candidate.y1, candidate.y2) + tolerance;
+        return endpointNearAxis && crossesAxis;
+      }
+      const endpointNearAxis = Math.abs(candidate.y1 - point.y) <= tolerance;
+      const crossesAxis = point.x >= Math.min(candidate.x1, candidate.x2) - tolerance && point.x <= Math.max(candidate.x1, candidate.x2) + tolerance;
+      return endpointNearAxis && crossesAxis;
+    })
+    .sort((a, b) => {
+      const aDistance = line.orientation === "horizontal" ? Math.abs(a.x1 - point.x) : Math.abs(a.y1 - point.y);
+      const bDistance = line.orientation === "horizontal" ? Math.abs(b.x1 - point.x) : Math.abs(b.y1 - point.y);
+      return aDistance - bDistance;
+    })[0];
 }
 
 function createThreeRailing(three, railing, unit, bounds) {
@@ -2705,21 +2892,82 @@ function createThreeRailing(three, railing, unit, bounds) {
 }
 
 function productCategoryLabel(category) {
+  if (category === "window") return "门窗";
   if (category === "sanitary") return "洁具";
   if (category === "hardware") return "五金";
   return "家具";
 }
 
-function productDefaultSizeMeters(category) {
+function inferProductSubtype(name, category) {
+  if (category === "window") {
+    const text = String(name || "").toLowerCase();
+    if (/door|门/.test(text)) return "door-window";
+    if (/louver|shutter|blind|百叶|百页/.test(text)) return "louver-window";
+    return "window";
+  }
+  if (category !== "furniture") return category || "product";
+  const text = String(name || "").toLowerCase();
+  if (/coffee[_\-\s]*table|table[_\-\s]*coffee|茶几/.test(text)) return "coffee-table";
+  if (/wardrobe|closet|cabinet|衣柜|柜/.test(text)) return "wardrobe";
+  if (/chair|餐椅|椅/.test(text)) return "chair";
+  if (/bed|床/.test(text)) return "bed";
+  if (/sofa|couch|沙发/.test(text)) return "sofa";
+  return "furniture";
+}
+
+function normalizeProductMetadata(product) {
+  if (!product) return product;
+  product.productSubtype = product.productSubtype || inferProductSubtype(product.name, product.category);
+  return product;
+}
+
+function productSubtypeLabel(product) {
+  const subtype = product && (product.productSubtype || inferProductSubtype(product.name, product.category));
+  if (subtype === "louver-window") return "百叶窗";
+  if (subtype === "door-window") return "门窗";
+  if (subtype === "window") return "窗";
+  if (subtype === "coffee-table") return "茶几";
+  if (subtype === "wardrobe") return "衣柜";
+  if (subtype === "chair") return "餐椅";
+  if (subtype === "bed") return "床";
+  if (subtype === "sofa") return "沙发";
+  return productCategoryLabel(product ? product.category : "furniture");
+}
+
+function productDefaultSizeMeters(category, subtype = null) {
+  if (category === "window") return subtype === "door-window" ? 0.9 : 1.2;
   if (category === "sanitary") return 0.8;
   if (category === "hardware") return 0.35;
+  if (subtype === "coffee-table") return 1.0;
+  if (subtype === "wardrobe") return 1.6;
+  if (subtype === "chair") return 0.55;
+  if (subtype === "bed") return 2.0;
+  if (subtype === "sofa") return 1.8;
   return 1.2;
 }
 
-function productDefaultDepthMeters(category) {
+function productDefaultDepthMeters(category, subtype = null) {
+  if (category === "window") return subtype === "door-window" ? 0.12 : 0.16;
   if (category === "sanitary") return 0.55;
   if (category === "hardware") return 0.18;
+  if (subtype === "coffee-table") return 0.6;
+  if (subtype === "wardrobe") return 0.6;
+  if (subtype === "chair") return 0.55;
+  if (subtype === "bed") return 1.5;
+  if (subtype === "sofa") return 0.85;
   return 0.8;
+}
+
+function productDefaultHeightMeters(category, subtype = null) {
+  if (category === "window") return subtype === "door-window" ? 2.1 : 1.5;
+  if (category === "sanitary") return 0.8;
+  if (category === "hardware") return 0.35;
+  if (subtype === "coffee-table") return 0.45;
+  if (subtype === "wardrobe") return 2.2;
+  if (subtype === "chair") return 0.85;
+  if (subtype === "bed") return 0.55;
+  if (subtype === "sofa") return 0.85;
+  return productDefaultSizeMeters(category, subtype);
 }
 
 function selectedProduct() {
@@ -2728,9 +2976,27 @@ function selectedProduct() {
 }
 
 function productFootprintPixels(product, settings = getSettings()) {
-  const width = millimetersToPixels(product.widthMillimeters || productDefaultSizeMeters(product.category) * 1000, settings);
-  const depth = millimetersToPixels(product.depthMillimeters || productDefaultDepthMeters(product.category) * 1000, settings);
+  normalizeProductMetadata(product);
+  const footprint = productFootprintMeters(product);
+  const width = millimetersToPixels(footprint.width * 1000, settings);
+  const depth = millimetersToPixels(footprint.depth * 1000, settings);
   return { width: Math.max(10, width), depth: Math.max(10, depth) };
+}
+
+function productFootprintMeters(product) {
+  normalizeProductMetadata(product);
+  const base = productDefaultSizeMeters(product.category, product.productSubtype);
+  const fallback = {
+    width: Math.max(0.05, (product.widthMillimeters || base * 1000) / 1000),
+    depth: Math.max(0.05, (product.depthMillimeters || productDefaultDepthMeters(product.category, product.productSubtype) * 1000) / 1000),
+  };
+  const modelRoot = product.object ? findProductScenePart(product.object, "productModelRoot") : null;
+  const normalizedSize = modelRoot && modelRoot.userData && modelRoot.userData.productNormalizedSize;
+  if (!modelRoot || !normalizedSize) return fallback;
+  return {
+    width: Math.max(0.05, normalizedSize.x * modelRoot.scale.x),
+    depth: Math.max(0.05, normalizedSize.z * modelRoot.scale.z),
+  };
 }
 
 function productRotationHandlePoint(product, settings = getSettings()) {
@@ -2749,12 +3015,14 @@ function normalizeDegrees(value) {
 }
 
 function productColor(category) {
+  if (category === "window") return "#c49a33";
   if (category === "sanitary") return "#2aa7b6";
   if (category === "hardware") return "#455a64";
   return "#5578c8";
 }
 
 function productThreeColor(category) {
+  if (category === "window") return 0xc49a33;
   if (category === "sanitary") return 0x2aa7b6;
   if (category === "hardware") return 0x455a64;
   return 0x5578c8;
@@ -2778,7 +3046,17 @@ function defaultProductPlanPoint() {
 function openProductModelPicker(category) {
   state.pendingProductCategory = category;
   elements.productModelInput.value = "";
+  setStatus(`请选择${productCategoryLabel(category)}模型 GLB/GLTF`);
   elements.productModelInput.click();
+}
+
+function openWindowModelPicker(event) {
+  if (event && event.shiftKey) {
+    toggleDrawWindowTool();
+    return;
+  }
+  setTool("select");
+  openProductModelPicker("window");
 }
 
 async function importProductModelFromFile(file) {
@@ -2796,23 +3074,27 @@ async function importProductModelFromFile(file) {
     return;
   }
   try {
-    setStatus(`导入${productCategoryLabel(state.pendingProductCategory)}模型中`);
+    const productSubtype = inferProductSubtype(file.name, state.pendingProductCategory);
+    setStatus(`导入${productSubtypeLabel({ category: state.pendingProductCategory, productSubtype })}模型中`);
     const three = state.three.module;
     const loaderClass = await ensureGltfLoader();
     const loader = new loaderClass();
     const buffer = await file.arrayBuffer();
     const gltf = await new Promise((resolve, reject) => loader.parse(buffer, "", resolve, reject));
-    const object = createProductModelObject(three, gltf.scene, state.pendingProductCategory);
+    const object = createProductModelObject(three, gltf.scene, state.pendingProductCategory, productSubtype);
+    const modelData = await arrayBufferToDataUrl(buffer, file.type || "model/gltf-binary");
     const point = defaultProductPlanPoint();
     const product = {
       id: `product-${Date.now()}-${state.productModels.length + 1}`,
       name: file.name || productCategoryLabel(state.pendingProductCategory),
       category: state.pendingProductCategory,
+      productSubtype,
+      modelData,
       planX: point.x,
       planY: point.y,
-      widthMillimeters: Math.round(productDefaultSizeMeters(state.pendingProductCategory) * 1000),
-      depthMillimeters: Math.round(productDefaultDepthMeters(state.pendingProductCategory) * 1000),
-      heightMillimeters: Math.round(productDefaultSizeMeters(state.pendingProductCategory) * 1000),
+      widthMillimeters: Math.round(productDefaultSizeMeters(state.pendingProductCategory, productSubtype) * 1000),
+      depthMillimeters: Math.round(productDefaultDepthMeters(state.pendingProductCategory, productSubtype) * 1000),
+      heightMillimeters: Math.round(productDefaultHeightMeters(state.pendingProductCategory, productSubtype) * 1000),
       rotationDegrees: 0,
       rotationY: 0,
       object,
@@ -2830,13 +3112,12 @@ async function importProductModelFromFile(file) {
     renderPreview();
     updateSelectedComponentInfo();
     elements.exportJsonButton.disabled = !hasExportableContent();
-    setStatus(`${productCategoryLabel(product.category)}模型已导入`);
+    setStatus(`${productSubtypeLabel(product)}模型已导入`);
   } catch (error) {
     console.error(error);
     setStatus("模型导入失败，请使用 GLB/GLTF 文件");
   }
 }
-
 async function ensureGltfLoader() {
   if (state.three.gltfLoaderClass) return state.three.gltfLoaderClass;
   const module = await import(GLTF_LOADER_MODULE_URL);
@@ -2844,64 +3125,163 @@ async function ensureGltfLoader() {
   return state.three.gltfLoaderClass;
 }
 
-function createProductModelObject(three, source, category) {
+function arrayBufferToDataUrl(buffer, mimeType = "model/gltf-binary") {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(new Blob([buffer], { type: mimeType }));
+  });
+}
+
+function dataUrlToArrayBuffer(dataUrl) {
+  const [header, base64] = String(dataUrl || "").split(",");
+  if (!header || !base64) return null;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
+async function restoreStoredProductModelObjects() {
+  const products = state.productModels.filter((product) => product.modelData);
+  if (!products.length) return;
+  await ensureThreeViewerReady();
+  for (const product of products) {
+    await restoreProductModelObject(product);
+  }
+}
+
+async function restoreProductModelObject(product) {
+  if (!product || !product.modelData || !state.three.module || !state.three.productsGroup) return false;
+  if (product.object && product.object.userData && product.object.userData.productHasSourceModel) return true;
+  if (product.restoringModel) return false;
+  const buffer = dataUrlToArrayBuffer(product.modelData);
+  if (!buffer) return false;
+  try {
+    product.restoringModel = true;
+    normalizeProductMetadata(product);
+    const three = state.three.module;
+    const loaderClass = await ensureGltfLoader();
+    const loader = new loaderClass();
+    const gltf = await new Promise((resolve, reject) => loader.parse(buffer, "", resolve, reject));
+    const object = createProductModelObject(three, gltf.scene, product.category, product.productSubtype);
+    object.userData.productId = product.id;
+    if (product.object) {
+      state.three.productsGroup.remove(product.object);
+      disposeThreeObject(product.object);
+    }
+    product.object = object;
+    state.three.productsGroup.add(object);
+    syncProductObjectScale(product);
+    return true;
+  } catch (error) {
+    console.warn("产品模型恢复失败", error);
+    return false;
+  } finally {
+    product.restoringModel = false;
+  }
+}
+
+function createProductModelObject(three, source, category, subtype = null) {
   const container = new three.Group();
-  container.add(source);
-  normalizeProductModelObject(three, container, source, category);
-  container.add(createProductProxyObject(three, category));
+  const modelRoot = new three.Group();
+  modelRoot.userData.productModelRoot = true;
+  modelRoot.add(source);
+  container.userData.productHasSourceModel = true;
+  container.add(modelRoot);
+  normalizeProductModelObject(three, modelRoot, source, category, subtype);
+  container.add(createProductFootprintProxyObject(three, category, subtype));
   return container;
 }
 
-function createProductPlaceholderObject(three, category) {
+function createProductPlaceholderObject(three, category, subtype = null) {
   const container = new three.Group();
   container.userData.placeholderProduct = true;
-  container.add(createProductProxyObject(three, category));
+  container.add(createProductProxyObject(three, category, subtype));
   return container;
 }
 
-function normalizeProductModelObject(three, container, source, category) {
+function normalizeProductModelObject(three, modelRoot, source, category, subtype = null) {
   const box = new three.Box3().setFromObject(source);
   const size = new three.Vector3();
   const center = new three.Vector3();
   box.getSize(size);
   box.getCenter(center);
   const maxAxis = Math.max(size.x, size.y, size.z, 0.001);
-  const scale = productDefaultSizeMeters(category) / maxAxis;
+  const scale = productDefaultSizeMeters(category, subtype) / maxAxis;
   source.scale.multiplyScalar(scale);
 
   const scaledBox = new three.Box3().setFromObject(source);
   const scaledCenter = new three.Vector3();
+  const scaledSize = new three.Vector3();
   scaledBox.getCenter(scaledCenter);
+  scaledBox.getSize(scaledSize);
   source.position.x -= scaledCenter.x;
   source.position.z -= scaledCenter.z;
   source.position.y -= scaledBox.min.y;
+  modelRoot.userData.productNormalizedSize = {
+    x: Math.max(0.001, scaledSize.x),
+    y: Math.max(0.001, scaledSize.y),
+    z: Math.max(0.001, scaledSize.z),
+  };
   source.traverse((object) => {
     object.castShadow = true;
     object.receiveShadow = true;
+    if (object.isMesh) object.renderOrder = 3;
     if (object.material) {
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       for (const material of materials) {
         material.side = three.DoubleSide;
+        material.depthWrite = material.transparent ? false : true;
         material.needsUpdate = true;
       }
     }
   });
 }
 
-function createProductProxyObject(three, category) {
-  const base = productDefaultSizeMeters(category);
+function createProductFootprintProxyObject(three, category, subtype = null) {
+  const group = createProductFootprint(three, productDefaultSizeMeters(category, subtype), productThreeColor(category));
+  group.userData.productProxy = true;
+  group.userData.productFootprintOnly = true;
+  group.userData.productSubtype = subtype || category;
+  group.renderOrder = 1;
+  return group;
+}
+
+function createProductProxyObject(three, category, subtype = null) {
+  const base = productDefaultSizeMeters(category, subtype);
   const color = productThreeColor(category);
   const group = new three.Group();
   group.userData.productProxy = true;
+  group.userData.productSubtype = subtype || category;
   group.add(createProductFootprint(three, base, color));
-  if (category === "sanitary") {
+  if (category === "window") {
+    addWindowProxyParts(three, group, base, color, subtype);
+  } else if (category === "sanitary") {
     addSanitaryProxyParts(three, group, base, color);
   } else if (category === "hardware") {
     addHardwareProxyParts(three, group, base, color);
   } else {
-    addFurnitureProxyParts(three, group, base, color);
+    addFurnitureProxyParts(three, group, base, color, subtype);
   }
   return group;
+}
+
+function addWindowProxyParts(three, group, base, color, subtype = "window") {
+  const width = base;
+  const height = subtype === "door-window" ? 1.25 : 0.9;
+  const depth = Math.max(0.08, base * 0.08);
+  addProductBox(three, group, width, 0.06, depth, 0, height, 0, color, 0.9);
+  addProductBox(three, group, width, 0.06, depth, 0, 0.08, 0, color, 0.9);
+  addProductBox(three, group, 0.06, height, depth, -width / 2 + 0.03, height / 2 + 0.04, 0, color, 0.9);
+  addProductBox(three, group, 0.06, height, depth, width / 2 - 0.03, height / 2 + 0.04, 0, color, 0.9);
+  addProductBox(three, group, 0.04, height * 0.92, depth * 0.85, 0, height / 2 + 0.04, 0, 0x6b3c12, 0.68);
+  const slatCount = subtype === "door-window" ? 10 : 8;
+  for (let index = 0; index < slatCount; index += 1) {
+    const y = 0.18 + (height - 0.24) * (index / Math.max(1, slatCount - 1));
+    addProductBox(three, group, width * 0.82, 0.025, depth * 1.15, 0, y, 0.02, 0xf0c36a, 0.86);
+  }
 }
 
 function createProductFootprint(three, base, color) {
@@ -2919,8 +3299,10 @@ function createProductFootprint(three, base, color) {
   const mesh = new three.Mesh(geometry, material);
   mesh.position.y = height / 2 + 0.015;
   mesh.userData.productProxyMesh = true;
+  mesh.userData.productFootprintMesh = true;
   mesh.castShadow = true;
   mesh.receiveShadow = false;
+  mesh.renderOrder = 1;
 
   const edge = new three.LineSegments(
     new three.EdgesGeometry(geometry),
@@ -2928,12 +3310,29 @@ function createProductFootprint(three, base, color) {
   );
   edge.position.copy(mesh.position);
   edge.userData.productProxyEdge = true;
+  edge.renderOrder = 2;
   const group = new three.Group();
   group.add(mesh, edge);
   return group;
 }
 
-function addFurnitureProxyParts(three, group, base, color) {
+function addFurnitureProxyParts(three, group, base, color, subtype = "furniture") {
+  if (subtype === "coffee-table") {
+    addCoffeeTableProxyParts(three, group, base, color);
+    return;
+  }
+  if (subtype === "wardrobe") {
+    addWardrobeProxyParts(three, group, base, color);
+    return;
+  }
+  if (subtype === "chair") {
+    addChairProxyParts(three, group, base, color);
+    return;
+  }
+  if (subtype === "bed") {
+    addBedProxyParts(three, group, base, color);
+    return;
+  }
   const cushion = addProductBox(three, group, base * 0.78, 0.16, base * 0.62, 0, 0.15, 0.03, color, 0.88);
   cushion.userData.productProxyMain = true;
   addProductBox(three, group, base * 0.78, 0.34, base * 0.12, 0, 0.25, -base * 0.31, color, 0.92);
@@ -2942,6 +3341,34 @@ function addFurnitureProxyParts(three, group, base, color) {
   addProductBox(three, group, base * 0.26, 0.08, base * 0.18, -base * 0.2, 0.28, -base * 0.16, 0xffffff, 0.92, true);
   addProductBox(three, group, base * 0.26, 0.08, base * 0.18, base * 0.2, 0.28, -base * 0.16, 0xffffff, 0.92, true);
   addProductLegs(three, group, base, color);
+}
+
+function addCoffeeTableProxyParts(three, group, base, color) {
+  addProductBox(three, group, base * 0.9, 0.08, base * 0.52, 0, 0.26, 0, color, 0.9);
+  addProductBox(three, group, base * 0.74, 0.035, base * 0.4, 0, 0.14, 0, 0xffffff, 0.45, true);
+  addProductBox(three, group, base * 0.08, 0.22, base * 0.08, -base * 0.34, 0.11, -base * 0.2, color, 0.84);
+  addProductBox(three, group, base * 0.08, 0.22, base * 0.08, base * 0.34, 0.11, -base * 0.2, color, 0.84);
+  addProductBox(three, group, base * 0.08, 0.22, base * 0.08, -base * 0.34, 0.11, base * 0.2, color, 0.84);
+  addProductBox(three, group, base * 0.08, 0.22, base * 0.08, base * 0.34, 0.11, base * 0.2, color, 0.84);
+}
+
+function addWardrobeProxyParts(three, group, base, color) {
+  addProductBox(three, group, base * 0.85, 1.15, base * 0.36, 0, 0.58, 0, color, 0.86);
+  addProductBox(three, group, base * 0.035, 1.08, base * 0.39, 0, 0.59, 0, 0xffffff, 0.42, true);
+  addProductBox(three, group, base * 0.08, 0.08, base * 0.03, -base * 0.12, 0.66, -base * 0.21, 0xd4dde2, 0.95, true);
+  addProductBox(three, group, base * 0.08, 0.08, base * 0.03, base * 0.12, 0.66, -base * 0.21, 0xd4dde2, 0.95, true);
+}
+
+function addChairProxyParts(three, group, base, color) {
+  addProductBox(three, group, base * 0.5, 0.08, base * 0.48, 0, 0.28, 0.04, color, 0.88);
+  addProductBox(three, group, base * 0.5, 0.55, base * 0.08, 0, 0.52, -base * 0.22, color, 0.9);
+  addProductLegs(three, group, base * 0.8, color);
+}
+
+function addBedProxyParts(three, group, base, color) {
+  addProductBox(three, group, base * 0.9, 0.18, base * 0.64, 0, 0.22, 0.04, color, 0.84);
+  addProductBox(three, group, base * 0.82, 0.08, base * 0.54, 0, 0.34, 0.05, 0xffffff, 0.72, true);
+  addProductBox(three, group, base * 0.9, 0.42, base * 0.08, 0, 0.38, -base * 0.33, color, 0.88);
 }
 
 function addSanitaryProxyParts(three, group, base, color) {
@@ -3015,18 +3442,177 @@ function updateProductModelTransforms(unit, bounds) {
     ensureProductThreeObject(product);
     if (!product.object) continue;
     syncProductObjectScale(product);
-    product.object.position.set((product.planX - centerX) * unit, 0.035, (product.planY - centerY) * unit);
+    product.object.position.set((product.planX - centerX) * unit, 0.035 + Math.max(0, Number(product.elevationMeters) || 0), (product.planY - centerY) * unit);
     product.object.rotation.y = ((Number(product.rotationDegrees) || 0) * Math.PI) / 180;
     updateProductProxyAppearance(product);
   }
+  renderThreeProductResizeHandles();
+}
+
+function clearThreeProductResizeHandles() {
+  const { scene, resizeHandlesGroup } = state.three;
+  if (!resizeHandlesGroup) return;
+  scene?.remove(resizeHandlesGroup);
+  disposeThreeObject(resizeHandlesGroup);
+  state.three.resizeHandlesGroup = null;
+}
+
+function selectedProductWorldBounds() {
+  const product = selectedProduct();
+  if (!product?.object || !state.three.module) return null;
+  product.object.updateWorldMatrix?.(true, true);
+  const bounds = new state.three.module.Box3().setFromObject(product.object);
+  if (!Number.isFinite(bounds.min.x) || bounds.isEmpty()) return null;
+  return { product, bounds };
+}
+
+function productResizeDimensionsMeters(product) {
+  normalizeProductMetadata(product);
+  const footprint = productFootprintMeters(product);
+  return {
+    width: Math.max(0.05, footprint.width),
+    depth: Math.max(0.05, footprint.depth),
+    height: Math.max(0.05, (product.heightMillimeters || productDefaultHeightMeters(product.category, product.productSubtype) * 1000) / 1000),
+  };
+}
+
+function selectedProductResizeFrame() {
+  const product = selectedProduct();
+  const { module: three } = state.three;
+  if (!product?.object || !three) return null;
+  product.object.updateWorldMatrix?.(true, true);
+  const dimensions = productResizeDimensionsMeters(product);
+  const localCenter = new three.Vector3(0, dimensions.height / 2, 0);
+  const worldCenter = product.object.localToWorld(localCenter.clone());
+  return { product, object: product.object, dimensions, worldCenter };
+}
+
+function renderThreeProductResizeHandles() {
+  clearThreeProductResizeHandles();
+  const { module: three, scene } = state.three;
+  if (!three || !scene || state.three.mode === "roam") return;
+  const selected = selectedProductResizeFrame();
+  if (!selected) return;
+
+  if (state.three.productTransformMode !== "resize") {
+    renderThreeProductMoveHandles(three, scene, selected);
+    return;
+  }
+  renderThreeProductScaleHandles(three, scene, selected);
+}
+
+function renderThreeProductScaleHandles(three, scene, selected) {
+  const { object, dimensions } = selected;
+  const halfWidth = dimensions.width / 2;
+  const halfDepth = dimensions.depth / 2;
+  const centerY = dimensions.height / 2;
+  const faces = [
+    { axis: "x", sign: -1, local: new three.Vector3(-halfWidth, centerY, 0), size: [0.08, 0.24, 0.24], color: 0xe6b747 },
+    { axis: "x", sign: 1, local: new three.Vector3(halfWidth, centerY, 0), size: [0.08, 0.24, 0.24], color: 0xe6b747 },
+    { axis: "z", sign: -1, local: new three.Vector3(0, centerY, -halfDepth), size: [0.24, 0.24, 0.08], color: 0xe6b747 },
+    { axis: "z", sign: 1, local: new three.Vector3(0, centerY, halfDepth), size: [0.24, 0.24, 0.08], color: 0xe6b747 },
+    { axis: "y", sign: -1, local: new three.Vector3(0, 0.04, 0), size: [0.24, 0.08, 0.24], color: 0xff6b57 },
+    { axis: "y", sign: 1, local: new three.Vector3(0, dimensions.height + 0.04, 0), size: [0.24, 0.08, 0.24], color: 0xff6b57 },
+  ];
+
+  const group = new three.Group();
+  group.userData.resizeHandlesGroup = true;
+  faces.forEach((face, index) => {
+    const geometry = new three.BoxGeometry(...face.size);
+    const material = new three.MeshStandardMaterial({
+      color: face.color,
+      roughness: 0.42,
+      metalness: 0.06,
+      transparent: true,
+      opacity: 0.95,
+    });
+    const handle = new three.Mesh(geometry, material);
+    handle.position.copy(object.localToWorld(face.local.clone()));
+    handle.rotation.y = object.rotation.y;
+    handle.userData.resizeHandle = true;
+    handle.userData.handleIndex = index;
+    handle.userData.axis = face.axis;
+    handle.userData.sign = face.sign;
+    handle.userData.sideX = face.axis === "x" ? face.sign : 0;
+    handle.userData.sideY = face.axis === "y" ? face.sign : 0;
+    handle.userData.sideZ = face.axis === "z" ? face.sign : 0;
+    handle.castShadow = false;
+    handle.renderOrder = 12;
+    group.add(handle);
+  });
+  state.three.resizeHandlesGroup = group;
+  scene.add(group);
+}
+
+function renderThreeProductMoveHandles(three, scene, selected) {
+  const { object, dimensions } = selected;
+  const halfWidth = dimensions.width / 2;
+  const halfDepth = dimensions.depth / 2;
+  const centerY = dimensions.height / 2;
+  const span = Math.max(dimensions.width, dimensions.depth, dimensions.height, 0.7) * 0.74;
+  const axes = [
+    { axis: "x", color: 0xe94b3c, local: new three.Vector3(1, 0, 0), center: new three.Vector3(0, centerY, 0) },
+    { axis: "z", color: 0x2f80ed, local: new three.Vector3(0, 0, 1), center: new three.Vector3(0, centerY, 0) },
+    { axis: "y", color: 0x22a06b, local: new three.Vector3(0, 1, 0), center: new three.Vector3(0, centerY, 0) },
+  ];
+  const group = new three.Group();
+  group.userData.resizeHandlesGroup = true;
+  group.userData.productMoveHandlesGroup = true;
+  for (const axis of axes) {
+    const lineGeometry = new three.BufferGeometry().setFromPoints([
+      object.localToWorld(axis.center.clone().add(axis.local.clone().multiplyScalar(-span))),
+      object.localToWorld(axis.center.clone().add(axis.local.clone().multiplyScalar(span))),
+    ]);
+    const line = new three.Line(
+      lineGeometry,
+      new three.LineBasicMaterial({ color: axis.color, transparent: true, opacity: 0.92 }),
+    );
+    line.userData.moveAxisLine = true;
+    group.add(line);
+    for (const sign of [-1, 1]) {
+      const local = axis.center.clone().add(axis.local.clone().multiplyScalar(sign * span));
+      if (axis.axis === "x") local.x += sign * halfWidth;
+      if (axis.axis === "z") local.z += sign * halfDepth;
+      if (axis.axis === "y") local.y += sign > 0 ? dimensions.height / 2 : -dimensions.height / 2;
+      const size = axis.axis === "y" ? [0.2, 0.13, 0.2] : [0.18, 0.18, 0.18];
+      const geometry = new three.BoxGeometry(...size);
+      const material = new three.MeshStandardMaterial({
+        color: axis.color,
+        roughness: 0.4,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.96,
+      });
+      const handle = new three.Mesh(geometry, material);
+      handle.position.copy(object.localToWorld(local));
+      handle.rotation.y = object.rotation.y;
+      handle.userData.moveHandle = true;
+      handle.userData.axis = axis.axis;
+      handle.userData.sign = sign;
+      handle.castShadow = false;
+      handle.renderOrder = 12;
+      group.add(handle);
+    }
+  }
+  state.three.resizeHandlesGroup = group;
+  scene.add(group);
 }
 
 function ensureProductThreeObject(product) {
   if (!product || product.object || !state.three.module || !state.three.productsGroup) return;
-  const object = createProductPlaceholderObject(state.three.module, product.category);
+  normalizeProductMetadata(product);
+  const object = createProductPlaceholderObject(state.three.module, product.category, product.productSubtype);
   object.userData.productId = product.id;
   product.object = object;
   state.three.productsGroup.add(object);
+  if (product.modelData && !product.restoringModel) {
+    restoreProductModelObject(product).then((restored) => {
+      if (!restored) return;
+      updateProductModelTransforms(state.three.unit || 1, state.three.planBounds || getPlanBounds(state.lines));
+      updateSelectedComponentInfo();
+      renderThreeScene();
+    });
+  }
 }
 
 function updateProductProxyAppearance(product) {
@@ -3034,38 +3620,73 @@ function updateProductProxyAppearance(product) {
   const three = state.three.module;
   const selected = product.id === state.selectedProductId;
   const color = selected ? 0xffb14a : productThreeColor(product.category);
+  const hasSourceModel = Boolean(product.object.userData && product.object.userData.productHasSourceModel);
   product.object.traverse((object) => {
     if (object.userData && object.userData.productProxyMesh && object.material) {
       if (!object.userData.productProxyFixedColor) object.material.color.setHex(color);
       const baseOpacity = Number(object.material.userData && object.material.userData.productBaseOpacity) || 0.82;
-      object.material.opacity = selected ? Math.min(1, baseOpacity + 0.14) : baseOpacity;
+      if (hasSourceModel && object.userData.productFootprintMesh) {
+        object.material.opacity = selected ? 0.08 : 0.0;
+        object.visible = selected;
+      } else {
+        object.material.opacity = selected ? Math.min(1, baseOpacity + 0.14) : baseOpacity;
+        object.visible = true;
+      }
       object.material.transparent = object.material.opacity < 1;
       object.material.depthWrite = false;
       object.material.needsUpdate = true;
     }
     if (object.userData && object.userData.productProxyEdge && object.material) {
       object.material.color.setHex(color);
-      object.material.opacity = selected ? 1 : 0.86;
+      object.material.opacity = hasSourceModel ? (selected ? 0.95 : 0.28) : (selected ? 1 : 0.86);
       object.material.needsUpdate = true;
     }
   });
 }
 
+function findProductScenePart(productObject, key) {
+  let result = null;
+  productObject.traverse((object) => {
+    if (!result && object.userData && object.userData[key]) result = object;
+  });
+  return result;
+}
+
 function syncProductObjectScale(product) {
   if (!product || !product.object) return;
-  const base = productDefaultSizeMeters(product.category);
+  normalizeProductMetadata(product);
+  const base = productDefaultSizeMeters(product.category, product.productSubtype);
   const width = Math.max(0.05, (product.widthMillimeters || base * 1000) / 1000);
-  const depth = Math.max(0.05, (product.depthMillimeters || productDefaultDepthMeters(product.category) * 1000) / 1000);
-  const height = Math.max(0.05, (product.heightMillimeters || base * 1000) / 1000);
-  product.object.scale.set(width / base, height / base, depth / base);
+  const depth = Math.max(0.05, (product.depthMillimeters || productDefaultDepthMeters(product.category, product.productSubtype) * 1000) / 1000);
+  const height = Math.max(0.05, (product.heightMillimeters || productDefaultHeightMeters(product.category, product.productSubtype) * 1000) / 1000);
+  product.object.scale.set(1, 1, 1);
+
+  const proxy = findProductScenePart(product.object, "productProxy");
+  if (proxy) {
+    const yScale = proxy.userData.productFootprintOnly ? 1 : height / base;
+    proxy.scale.set(width / base, yScale, depth / base);
+  }
+
+  const modelRoot = findProductScenePart(product.object, "productModelRoot");
+  if (!modelRoot) return;
+  const normalizedSize = modelRoot.userData.productNormalizedSize || { x: base, y: base, z: base };
+  modelRoot.scale.set(
+    Math.max(0.01, (width / Math.max(0.001, normalizedSize.x)) * 0.96),
+    Math.max(0.01, (height / Math.max(0.001, normalizedSize.y)) * 0.96),
+    Math.max(0.01, (depth / Math.max(0.001, normalizedSize.z)) * 0.96),
+  );
 }
 
 function clearProductModels() {
+  clearThreeProductResizeHandles();
   if (state.three.productsGroup) clearThreeObject(state.three.productsGroup);
   for (const product of state.productModels) product.object = null;
   state.productModels = [];
   state.selectedProductId = null;
   state.draggedProduct = null;
+  state.draggedProductResize = null;
+  state.three.resizeDrag = null;
+  state.three.productMoveDrag = null;
 }
 
 function buildContinuousWallModels(lines, openings, settings) {
@@ -3118,7 +3739,7 @@ function buildContinuousWallModels(lines, openings, settings) {
 
 function closeSingleWallModel(model, hostLines) {
   const [line] = closeWallModelComponentEndpoints([model.line], model.line.orientation, hostLines);
-  return { line, index: model.index };
+  return { line, index: model.index, sourceWallIds: new Set([model.line.id]) };
 }
 
 function connectCollinearWallGaps(lines, settings, connect) {
@@ -3156,7 +3777,7 @@ function mergeWallModelComponent(component, hostLines) {
     : makeLine("vertical", axis, start, axis, end, thickness);
   line.id = `continuous-${component.map((entry) => entry.line.id).join("-")}`;
   line.heightMillimeters = heightMillimeters;
-  return { line, index: first.index };
+  return { line, index: first.index, sourceWallIds: new Set(component.map((entry) => entry.line.id)) };
 }
 
 function closeWallModelComponentEndpoints(lines, orientation, hostSource = state.lines) {
@@ -3206,6 +3827,7 @@ function splitWallModelByOpenings(model, openings, settings) {
   const { line, index } = model;
   const cuts = openings
     .filter((opening) => isConstructibleOpening(opening) && opening.orientation === line.orientation)
+    .filter((opening) => openingBelongsToWallModel(opening, model))
     .map((opening) => openingCutOnLine(opening, line, settings))
     .filter(Boolean)
     .sort((a, b) => a.start - b.start);
@@ -3214,18 +3836,42 @@ function splitWallModelByOpenings(model, openings, settings) {
   const start = getLineStart(line, line.orientation);
   const end = getLineEnd(line, line.orientation);
   const minSegment = Math.max(2, settings.minWallThickness);
+  const minJambSegment = Math.max(1.5, Math.min(minSegment, settings.maxThickness) * 0.28);
   const segments = [];
   let cursor = start;
   for (const cut of cuts) {
     const cutStart = clamp(cut.start, start, end);
     const cutEnd = clamp(cut.end, start, end);
     if (cutEnd <= cursor || cutEnd - cutStart < 1) continue;
-    if (cutStart - cursor >= minSegment) segments.push({ line: wallSegmentFromSpan(line, cursor, cutStart, `${line.id}-part-${segments.length + 1}`), index });
+    if (cutStart - cursor >= minJambSegment) {
+      segments.push({
+        line: wallSegmentFromSpan(line, cursor, cutStart, `${line.id}-part-${segments.length + 1}`, {
+          start: cursor > start + 0.5,
+          end: true,
+        }),
+        index,
+      });
+    }
     segments.push(...retainedWallSegmentsForOpening(line, cutStart, cutEnd, cut.opening, index, segments.length));
     cursor = Math.max(cursor, cutEnd);
   }
-  if (end - cursor >= minSegment) segments.push({ line: wallSegmentFromSpan(line, cursor, end, `${line.id}-part-${segments.length + 1}`), index });
+  if (end - cursor >= minJambSegment) {
+    segments.push({
+      line: wallSegmentFromSpan(line, cursor, end, `${line.id}-part-${segments.length + 1}`, {
+        start: true,
+        end: false,
+      }),
+      index,
+    });
+  }
   return segments.length ? segments : [model];
+}
+
+function openingBelongsToWallModel(opening, model) {
+  const sourceWallIds = model.sourceWallIds || new Set([model.line.id]);
+  const relatedWallIds = [opening.leftWall, opening.rightWall, opening.hostWall].filter(Boolean);
+  if (!relatedWallIds.length) return true;
+  return relatedWallIds.some((id) => sourceWallIds.has(id));
 }
 
 function openingCutOnLine(opening, line, settings) {
@@ -3240,13 +3886,14 @@ function openingCutOnLine(opening, line, settings) {
   return { start, end, opening };
 }
 
-function wallSegmentFromSpan(source, start, end, id) {
+function wallSegmentFromSpan(source, start, end, id, skipJointExtensionEnds = null) {
   const line = source.orientation === "horizontal"
     ? makeLine("horizontal", start, source.y1, end, source.y1, source.thickness)
     : makeLine("vertical", source.x1, start, source.x1, end, source.thickness);
   line.id = id;
   line.heightMillimeters = lineHeightMillimeters(source);
   line.baseMeters = Number(source.baseMeters) || 0;
+  if (skipJointExtensionEnds) line.skipJointExtensionEnds = { ...skipJointExtensionEnds };
   return line;
 }
 
@@ -3255,14 +3902,14 @@ function retainedWallSegmentsForOpening(source, start, end, opening, index, seri
   const wallHeight = lineHeightMeters(source);
   const retained = [];
   if (profile.bottom > 0.05) {
-    const sill = wallSegmentFromSpan(source, start, end, `${source.id}-sill-${serial + 1}`);
+    const sill = wallSegmentFromSpan(source, start, end, `${source.id}-sill-${serial + 1}`, { start: true, end: true });
     sill.heightMillimeters = Math.round(profile.bottom * 1000);
     sill.baseMeters = 0;
     retained.push({ line: sill, index });
   }
   const topBase = Math.min(wallHeight, profile.bottom + profile.height);
   if (wallHeight - topBase > 0.08) {
-    const lintel = wallSegmentFromSpan(source, start, end, `${source.id}-lintel-${serial + 1}`);
+    const lintel = wallSegmentFromSpan(source, start, end, `${source.id}-lintel-${serial + 1}`, { start: true, end: true });
     lintel.heightMillimeters = Math.round((wallHeight - topBase) * 1000);
     lintel.baseMeters = topBase;
     retained.push({ line: lintel, index });
@@ -3297,6 +3944,12 @@ function createThreeOpeningComponent(three, opening, index, unit, bounds) {
     opacity: isSelected ? 0.88 : 0.78,
   });
   const edgeMaterial = new three.LineBasicMaterial({ color: isSelected ? 0x8d4c0c : 0x6d5a08, transparent: true, opacity: 0.72 });
+  const revealMaterial = new three.MeshStandardMaterial({
+    color: 0xf7f5ef,
+    roughness: 0.76,
+    metalness: 0,
+  });
+  const revealEdgeMaterial = new three.LineBasicMaterial({ color: 0xd8d3c8, transparent: true, opacity: 0.28 });
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerY = (bounds.minY + bounds.maxY) / 2;
   const group = new three.Group();
@@ -3315,6 +3968,8 @@ function createThreeOpeningComponent(three, opening, index, unit, bounds) {
     : (Math.max(opening.y1, opening.y2) - centerY) * unit;
 
   const parts = [
+    makeOpeningRevealPart(three, opening.orientation, band, height, start, center, bottom, "start", revealMaterial, revealEdgeMaterial, index),
+    makeOpeningRevealPart(three, opening.orientation, band, height, end, center, bottom, "end", revealMaterial, revealEdgeMaterial, index),
     makeOpeningFramePart(three, opening.orientation, frame, band, height, start, center, bottom, "start", material, edgeMaterial, index),
     makeOpeningFramePart(three, opening.orientation, frame, band, height, end, center, bottom, "end", material, edgeMaterial, index),
     makeOpeningTopRail(three, opening.orientation, length, band, rail, center, bottom + height, material, edgeMaterial, index),
@@ -3328,6 +3983,29 @@ function createThreeOpeningComponent(three, opening, index, unit, bounds) {
     parts.push(makeOpeningTopRail(three, opening.orientation, length, band, Math.max(0.035, rail * 0.6), center, 0.04, material, edgeMaterial, index));
   }
   for (const part of parts) group.add(part);
+  return group;
+}
+
+function makeOpeningRevealPart(three, orientation, band, height, axisPosition, center, bottom, side, material, edgeMaterial, openingIndex) {
+  const cap = Math.max(0.018, Math.min(0.06, band * 0.22));
+  const width = orientation === "horizontal" ? cap : band;
+  const depth = orientation === "horizontal" ? band : cap;
+  const geometry = new three.BoxGeometry(width, height, depth);
+  const mesh = new three.Mesh(geometry, material);
+  if (orientation === "horizontal") {
+    mesh.position.set(axisPosition + (side === "start" ? -cap / 2 : cap / 2), bottom + height / 2, center.z);
+  } else {
+    mesh.position.set(center.x, bottom + height / 2, axisPosition + (side === "start" ? -cap / 2 : cap / 2));
+  }
+  mesh.userData.openingIndex = openingIndex;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const edge = new three.LineSegments(new three.EdgesGeometry(geometry), edgeMaterial);
+  edge.position.copy(mesh.position);
+  edge.userData.openingIndex = openingIndex;
+  const group = new three.Group();
+  group.userData.openingIndex = openingIndex;
+  group.add(mesh, edge);
   return group;
 }
 
@@ -3469,6 +4147,7 @@ function setThreeMode(mode) {
   state.three.mode = mode === "roam" ? "roam" : "orbit";
   elements.threeRoamButton.classList.toggle("active", state.three.mode === "roam");
   elements.threeViewport.classList.toggle("is-roaming", state.three.mode === "roam");
+  renderThreeProductResizeHandles();
   if (state.three.mode === "roam") {
     resetThreeRoamCamera();
     elements.threeViewport.focus({ preventScroll: true });
@@ -3538,9 +4217,291 @@ function renderThreeScene() {
   renderer.render(scene, camera);
 }
 
+function updateThreeRaycasterFromEvent(event) {
+  const { renderer, camera, raycaster, pointer } = state.three;
+  if (!renderer || !camera || !raycaster || !pointer) return false;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  return true;
+}
+
+function threeGroundPointFromEvent(event) {
+  const { module: three, raycaster } = state.three;
+  if (!three || !updateThreeRaycasterFromEvent(event)) return null;
+  const point = new three.Vector3();
+  const plane = new three.Plane(new three.Vector3(0, 1, 0), 0);
+  return raycaster.ray.intersectPlane(plane, point) ? point : null;
+}
+
+function threeResizeHandleHit(event) {
+  const { resizeHandlesGroup, raycaster } = state.three;
+  if (!resizeHandlesGroup || !updateThreeRaycasterFromEvent(event)) return null;
+  const hits = raycaster.intersectObjects(resizeHandlesGroup.children, true);
+  return hits.find((hit) => hit.object.userData && hit.object.userData.resizeHandle) || null;
+}
+
+function threeMoveHandleHit(event) {
+  const { resizeHandlesGroup, raycaster } = state.three;
+  if (!resizeHandlesGroup || !updateThreeRaycasterFromEvent(event)) return null;
+  const hits = raycaster.intersectObjects(resizeHandlesGroup.children, true);
+  return hits.find((hit) => hit.object.userData && hit.object.userData.moveHandle) || null;
+}
+
+function threeProductHit(event) {
+  const { productsGroup, raycaster } = state.three;
+  if (!productsGroup || !updateThreeRaycasterFromEvent(event)) return null;
+  const hits = raycaster.intersectObjects(productsGroup.children, true);
+  const hit = hits.find((candidate) => findThreeProductId(candidate.object));
+  if (!hit) return null;
+  const productId = findThreeProductId(hit.object);
+  return productId ? { ...hit, productId } : null;
+}
+
+function beginThreeProductResize(event, hit) {
+  const selected = selectedProductResizeFrame();
+  const point = threeGroundPointFromEvent(event);
+  if (!hit || !selected || !point || event.button !== 0) return false;
+  state.three.productMoveDrag = null;
+  const { product, object, dimensions } = selected;
+  const inverseWorldMatrix = object.matrixWorld.clone().invert();
+  state.three.resizeDrag = {
+    pointerId: event.pointerId,
+    productId: product.id,
+    startPoint: point,
+    startClientY: event.clientY,
+    startProduct: {
+      widthMillimeters: product.widthMillimeters,
+      depthMillimeters: product.depthMillimeters,
+      heightMillimeters: product.heightMillimeters,
+      planX: product.planX,
+      planY: product.planY,
+      rotationDegrees: product.rotationDegrees,
+    },
+    dimensions,
+    inverseWorldMatrix,
+    axis: hit.object.userData.axis || "x",
+    sign: hit.object.userData.sign || 1,
+    sideX: hit.object.userData.sideX || 1,
+    sideY: hit.object.userData.sideY || 0,
+    sideZ: hit.object.userData.sideZ || 1,
+    pushedUndo: false,
+  };
+  elements.threeViewport.setPointerCapture(event.pointerId);
+  setStatus("拖动控点调整产品尺寸");
+  return true;
+}
+
+function beginThreeProductMove(event, hit) {
+  const point = threeGroundPointFromEvent(event);
+  const productId = hit && (hit.productId || state.selectedProductId);
+  const product = productId ? state.productModels.find((item) => item.id === productId) : null;
+  if (!hit || !product || !point || event.button !== 0 || state.three.mode === "roam") return false;
+  const rect = state.three.renderer.domElement.getBoundingClientRect();
+  setTool("select");
+  state.three.productTransformMode = "move";
+  const axis = hit.object?.userData?.moveHandle ? hit.object.userData.axis : "free";
+  const object = product.object;
+  const inverseWorldMatrix = object ? object.matrixWorld.clone().invert() : null;
+  state.three.productMoveDrag = {
+    pointerId: event.pointerId,
+    productId: product.id,
+    startPoint: point,
+    startLocalPoint: inverseWorldMatrix ? point.clone().applyMatrix4(inverseWorldMatrix) : null,
+    inverseWorldMatrix,
+    axis,
+    sign: hit.object?.userData?.sign || 0,
+    startClientY: event.clientY,
+    startProduct: {
+      planX: product.planX,
+      planY: product.planY,
+      elevationMeters: Math.max(0, Number(product.elevationMeters) || 0),
+      rotationDegrees: product.rotationDegrees,
+    },
+    pushedUndo: false,
+    moved: false,
+  };
+  state.three.dragging = false;
+  state.three.dragDistance = 0;
+  state.three.cardX = event.clientX - rect.left;
+  state.three.cardY = event.clientY - rect.top;
+  state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
+  state.selectedProductId = product.id;
+  state.hoveredEndpoint = null;
+  elements.threeComponentCard.hidden = false;
+  updateSelectedComponentInfo();
+  if (state.analysisCanvas) renderPreview();
+  renderThreeProductResizeHandles();
+  elements.threeViewport.setPointerCapture(event.pointerId);
+  elements.threeViewport.classList.add("is-moving-product");
+  setStatus("拖动产品模型移动位置");
+  return true;
+}
+
+function updateThreeProductMove(event) {
+  const drag = state.three.productMoveDrag;
+  const product = drag ? state.productModels.find((item) => item.id === drag.productId) : null;
+  const point = product ? threeGroundPointFromEvent(event) : null;
+  if (!drag || !product || !point) return;
+  const unit = state.three.unit || 1;
+  const localPoint = drag.inverseWorldMatrix ? point.clone().applyMatrix4(drag.inverseWorldMatrix) : null;
+  const localDelta = localPoint && drag.startLocalPoint
+    ? { x: localPoint.x - drag.startLocalPoint.x, z: localPoint.z - drag.startLocalPoint.z }
+    : null;
+  const freeDelta = {
+    x: (point.x - drag.startPoint.x) / Math.max(0.001, unit),
+    y: (point.z - drag.startPoint.z) / Math.max(0.001, unit),
+  };
+  const verticalDelta = drag.axis === "y" ? (drag.startClientY - event.clientY) * 0.012 : 0;
+  const movedDistance = drag.axis === "y" ? Math.abs(verticalDelta) * 60 : Math.hypot(freeDelta.x, freeDelta.y);
+  if (!drag.pushedUndo && movedDistance > 0.75) {
+    pushUndoSnapshot("move-product-3d");
+    drag.pushedUndo = true;
+  }
+  if (!drag.pushedUndo) return;
+  if (drag.axis === "x" && localDelta) {
+    const delta = productLocalOffsetToPlanDelta({ x: localDelta.x, z: 0 }, drag.startProduct.rotationDegrees, unit);
+    product.planX = drag.startProduct.planX + delta.x;
+    product.planY = drag.startProduct.planY + delta.y;
+    product.elevationMeters = drag.startProduct.elevationMeters;
+  } else if (drag.axis === "z" && localDelta) {
+    const delta = productLocalOffsetToPlanDelta({ x: 0, z: localDelta.z }, drag.startProduct.rotationDegrees, unit);
+    product.planX = drag.startProduct.planX + delta.x;
+    product.planY = drag.startProduct.planY + delta.y;
+    product.elevationMeters = drag.startProduct.elevationMeters;
+  } else if (drag.axis === "y") {
+    product.planX = drag.startProduct.planX;
+    product.planY = drag.startProduct.planY;
+    product.elevationMeters = clamp(drag.startProduct.elevationMeters + verticalDelta, 0, 12);
+  } else {
+    product.planX = drag.startProduct.planX + freeDelta.x;
+    product.planY = drag.startProduct.planY + freeDelta.y;
+    product.elevationMeters = drag.startProduct.elevationMeters;
+  }
+  if (state.analysisCanvas) {
+    product.planX = clamp(product.planX, 0, state.analysisCanvas.width);
+    product.planY = clamp(product.planY, 0, state.analysisCanvas.height);
+  }
+  drag.moved = true;
+  updateProductModelTransforms(unit, state.three.planBounds || getPlanBounds(state.lines));
+  updateSelectedComponentInfo();
+  renderPreview();
+  renderThreeScene();
+}
+
+function finishThreeProductMove(event) {
+  const drag = state.three.productMoveDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return false;
+  const moved = drag.moved;
+  state.three.productMoveDrag = null;
+  elements.threeViewport.classList.remove("is-moving-product");
+  if (elements.threeViewport.hasPointerCapture(event.pointerId)) {
+    elements.threeViewport.releasePointerCapture(event.pointerId);
+  }
+  if (moved) {
+    updateThreeModel(false);
+    setStatus("产品模型位置已移动");
+  } else {
+    setStatus("已选择产品模型");
+  }
+  return true;
+}
+
+function productLocalOffsetToPlanDelta(localOffset, rotationDegrees, unit) {
+  const angle = ((Number(rotationDegrees) || 0) * Math.PI) / 180;
+  return {
+    x: (localOffset.x * Math.cos(angle) - localOffset.z * Math.sin(angle)) / Math.max(0.001, unit),
+    y: (localOffset.x * Math.sin(angle) + localOffset.z * Math.cos(angle)) / Math.max(0.001, unit),
+  };
+}
+
+function updateThreeProductResize(event) {
+  const drag = state.three.resizeDrag;
+  const product = drag ? state.productModels.find((item) => item.id === drag.productId) : null;
+  const point = product ? threeGroundPointFromEvent(event) : null;
+  if (!drag || !product || !point) return;
+  if (!drag.pushedUndo) {
+    pushUndoSnapshot("resize-product-3d");
+    drag.pushedUndo = true;
+  }
+
+  const unit = state.three.unit || 1;
+  const localPoint = point.clone().applyMatrix4(drag.inverseWorldMatrix);
+  const startWidth = Math.max(0.05, drag.dimensions.width);
+  const startDepth = Math.max(0.05, drag.dimensions.depth);
+  const startHeight = Math.max(0.05, drag.dimensions.height);
+  const oppositeX = drag.sign > 0 ? -startWidth / 2 : startWidth / 2;
+  const oppositeZ = drag.sign > 0 ? -startDepth / 2 : startDepth / 2;
+  const nextWidth = drag.axis === "x" ? clamp(Math.abs(localPoint.x - oppositeX), 0.08, 80) : startWidth;
+  const nextDepth = drag.axis === "z" ? clamp(Math.abs(localPoint.z - oppositeZ), 0.08, 80) : startDepth;
+  const nextHeight = drag.axis === "y" ? clamp(startHeight + (drag.startClientY - event.clientY) * 0.012 * drag.sign, 0.08, 12) : startHeight;
+  const widthRatio = nextWidth / startWidth;
+  const depthRatio = nextDepth / startDepth;
+  const heightRatio = nextHeight / startHeight;
+
+  product.widthMillimeters = Math.max(50, Math.round((drag.startProduct.widthMillimeters || productDefaultSizeMeters(product.category, product.productSubtype) * 1000) * widthRatio));
+  product.depthMillimeters = Math.max(50, Math.round((drag.startProduct.depthMillimeters || productDefaultDepthMeters(product.category, product.productSubtype) * 1000) * depthRatio));
+  product.heightMillimeters = Math.max(50, Math.round((drag.startProduct.heightMillimeters || productDefaultHeightMeters(product.category, product.productSubtype) * 1000) * heightRatio));
+  if (drag.axis === "x") {
+    const centerLocal = { x: (oppositeX + localPoint.x) / 2, z: 0 };
+    const delta = productLocalOffsetToPlanDelta(centerLocal, drag.startProduct.rotationDegrees, unit);
+    product.planX = drag.startProduct.planX + delta.x;
+    product.planY = drag.startProduct.planY + delta.y;
+  } else if (drag.axis === "z") {
+    const centerLocal = { x: 0, z: (oppositeZ + localPoint.z) / 2 };
+    const delta = productLocalOffsetToPlanDelta(centerLocal, drag.startProduct.rotationDegrees, unit);
+    product.planX = drag.startProduct.planX + delta.x;
+    product.planY = drag.startProduct.planY + delta.y;
+  } else {
+    product.planX = drag.startProduct.planX;
+    product.planY = drag.startProduct.planY;
+  }
+  if (state.analysisCanvas) {
+    product.planX = clamp(product.planX, 0, state.analysisCanvas.width);
+    product.planY = clamp(product.planY, 0, state.analysisCanvas.height);
+  }
+
+  syncProductObjectScale(product);
+  updateProductModelTransforms(unit, state.three.planBounds || getPlanBounds(state.lines));
+  updateSelectedComponentInfo();
+  renderPreview();
+  renderThreeScene();
+}
+
+function finishThreeProductResize(event) {
+  const drag = state.three.resizeDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return false;
+  state.three.resizeDrag = null;
+  if (elements.threeViewport.hasPointerCapture(event.pointerId)) {
+    elements.threeViewport.releasePointerCapture(event.pointerId);
+  }
+  updateThreeModel(false);
+  setStatus("产品尺寸已调整");
+  return true;
+}
+
 function handleThreePointerDown(event) {
   if (!state.three.renderer) return;
   elements.threeViewport.focus({ preventScroll: true });
+  const resizeHit = threeResizeHandleHit(event);
+  if (resizeHit && beginThreeProductResize(event, resizeHit)) {
+    event.preventDefault();
+    return;
+  }
+  const moveHit = threeMoveHandleHit(event);
+  if (moveHit && beginThreeProductMove(event, moveHit)) {
+    event.preventDefault();
+    return;
+  }
+  const productHit = threeProductHit(event);
+  if (productHit && beginThreeProductMove(event, productHit)) {
+    event.preventDefault();
+    return;
+  }
   state.three.dragging = true;
   state.three.dragDistance = 0;
   state.three.lastX = event.clientX;
@@ -3550,6 +4511,14 @@ function handleThreePointerDown(event) {
 }
 
 function handleThreePointerMove(event) {
+  if (state.three.resizeDrag) {
+    updateThreeProductResize(event);
+    return;
+  }
+  if (state.three.productMoveDrag) {
+    updateThreeProductMove(event);
+    return;
+  }
   if (!state.three.dragging) return;
   const dx = event.clientX - state.three.lastX;
   const dy = event.clientY - state.three.lastY;
@@ -3568,6 +4537,8 @@ function handleThreePointerMove(event) {
 }
 
 function handleThreePointerUp(event) {
+  if (finishThreeProductResize(event)) return;
+  if (finishThreeProductMove(event)) return;
   if (!state.three.dragging) return;
   const wasClick = state.three.dragDistance < 5;
   state.three.dragging = false;
@@ -3575,6 +4546,29 @@ function handleThreePointerUp(event) {
     elements.threeViewport.releasePointerCapture(event.pointerId);
   }
   if (wasClick) selectThreeWallAt(event);
+}
+
+function handleThreeDoubleClick(event) {
+  if (!state.three.renderer || state.three.mode === "roam") return;
+  const productHit = threeProductHit(event);
+  if (!productHit) return;
+  const productId = productHit.productId;
+  if (!productId) return;
+  state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
+  state.selectedProductId = productId;
+  state.three.productTransformMode = "resize";
+  state.three.cardX = event.clientX - state.three.renderer.domElement.getBoundingClientRect().left;
+  state.three.cardY = event.clientY - state.three.renderer.domElement.getBoundingClientRect().top;
+  elements.threeComponentCard.hidden = false;
+  updateSelectedComponentInfo();
+  renderPreview();
+  renderThreeProductResizeHandles();
+  renderThreeScene();
+  setStatus("已进入产品尺寸编辑");
+  event.preventDefault();
 }
 
 function handleThreeWheel(event) {
@@ -3623,9 +4617,7 @@ function selectThreeWallAt(event) {
   const { renderer, camera, wallsGroup, productsGroup, raycaster, pointer } = state.three;
   if (!renderer || !camera || !wallsGroup || !raycaster || !pointer) return;
   const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
+  if (!updateThreeRaycasterFromEvent(event)) return;
   const productHits = productsGroup ? raycaster.intersectObjects(productsGroup.children, true) : [];
   const productHit = productHits.find((candidate) => findThreeProductId(candidate.object));
   if (productHit) {
@@ -3639,6 +4631,7 @@ function selectThreeWallAt(event) {
     state.selectedOpeningId = null;
     state.selectedRailingId = null;
     state.selectedProductId = productId;
+    state.three.productTransformMode = "move";
     state.hoveredEndpoint = null;
     elements.threeComponentCard.hidden = false;
     updateStats();
@@ -3815,6 +4808,8 @@ function setTool(tool) {
   state.draggedOpening = null;
   state.draggedRailing = null;
   state.draggedProduct = null;
+  state.draggedProductResize = null;
+  state.three.productMoveDrag = null;
   state.hoveredEndpoint = null;
   elements.drawWallButton.classList.toggle("active", tool === "draw-wall");
   elements.drawDoorButton.classList.toggle("active", tool === "draw-door");
@@ -4207,6 +5202,40 @@ function findSelectedProductRotationHandle(point) {
   return distance(point, handle) <= editableHitRadius() ? product.id : null;
 }
 
+function findSelectedProductResizeHandle(point) {
+  const product = selectedProduct();
+  if (!product) return null;
+  const settings = getSettings();
+  const { width, depth } = productFootprintPixels(product, settings);
+  const local = pointToProductLocal(point, product);
+  const radius = editableHitRadius();
+  let nearest = null;
+  for (const handle of productResizeHandleDefinitions(width, depth)) {
+    const hitDistance = distance({ x: local.x, y: local.y }, handle);
+    if (hitDistance > radius) continue;
+    if (!nearest || hitDistance < nearest.distance) nearest = { ...handle, productId: product.id, distance: hitDistance };
+  }
+  return nearest;
+}
+
+function pointToProductLocal(point, product) {
+  const angle = -((Number(product.rotationDegrees) || 0) * Math.PI) / 180;
+  const dx = point.x - product.planX;
+  const dy = point.y - product.planY;
+  return {
+    x: dx * Math.cos(angle) - dy * Math.sin(angle),
+    y: dx * Math.sin(angle) + dy * Math.cos(angle),
+  };
+}
+
+function productLocalToWorld(local, product) {
+  const angle = ((Number(product.rotationDegrees) || 0) * Math.PI) / 180;
+  return {
+    x: product.planX + local.x * Math.cos(angle) - local.y * Math.sin(angle),
+    y: product.planY + local.x * Math.sin(angle) + local.y * Math.cos(angle),
+  };
+}
+
 function lineHitRadius() {
   const rect = elements.previewCanvas.getBoundingClientRect();
   const scale = Math.max(0.2, Math.min(rect.width / elements.previewCanvas.width, rect.height / elements.previewCanvas.height));
@@ -4355,6 +5384,33 @@ function beginSelectedProductDrag(id, point) {
   };
 }
 
+function beginSelectedProductResizeDrag(handle, point) {
+  const product = selectedProduct();
+  if (!product || !handle) return;
+  const settings = getSettings();
+  const { width, depth } = productFootprintPixels(product, settings);
+  state.draggedProductResize = {
+    id: product.id,
+    start: { ...point },
+    sideX: handle.sideX,
+    sideY: handle.sideY,
+    oppositeLocal: {
+      x: -handle.sideX * width / 2,
+      y: -handle.sideY * depth / 2,
+    },
+    original: {
+      planX: product.planX,
+      planY: product.planY,
+      widthMillimeters: product.widthMillimeters,
+      depthMillimeters: product.depthMillimeters,
+      heightMillimeters: product.heightMillimeters,
+      rotationDegrees: product.rotationDegrees,
+    },
+    moved: false,
+    snapshotPushed: false,
+  };
+}
+
 function moveSelectedProduct(selection, point) {
   if (!selection) return;
   const product = state.productModels.find((item) => item.id === selection.id);
@@ -4368,6 +5424,42 @@ function moveSelectedProduct(selection, point) {
   if (!selection.snapshotPushed) return;
   product.planX = selection.original.planX + dx;
   product.planY = selection.original.planY + dy;
+  if (state.analysisCanvas) {
+    product.planX = clamp(product.planX, 0, state.analysisCanvas.width);
+    product.planY = clamp(product.planY, 0, state.analysisCanvas.height);
+  }
+  selection.moved = true;
+}
+
+function resizeSelectedProduct(selection, point) {
+  if (!selection) return;
+  const product = state.productModels.find((item) => item.id === selection.id);
+  if (!product) return;
+  const dx = point.x - selection.start.x;
+  const dy = point.y - selection.start.y;
+  if (!selection.snapshotPushed && Math.hypot(dx, dy) > 1.5) {
+    pushUndoSnapshot("resize-product-2d");
+    selection.snapshotPushed = true;
+  }
+  if (!selection.snapshotPushed) return;
+
+  product.planX = selection.original.planX;
+  product.planY = selection.original.planY;
+  product.rotationDegrees = selection.original.rotationDegrees;
+  const local = pointToProductLocal(point, product);
+  const minPixels = millimetersToPixels(120, getSettings());
+  const widthPixels = Math.max(minPixels, Math.abs(local.x - selection.oppositeLocal.x));
+  const depthPixels = Math.max(minPixels, Math.abs(local.y - selection.oppositeLocal.y));
+  const centerLocal = {
+    x: (local.x + selection.oppositeLocal.x) / 2,
+    y: (local.y + selection.oppositeLocal.y) / 2,
+  };
+  const centerWorld = productLocalToWorld(centerLocal, product);
+  product.widthMillimeters = Math.max(50, Math.round(pxToMillimeters(widthPixels, getSettings())));
+  product.depthMillimeters = Math.max(50, Math.round(pxToMillimeters(depthPixels, getSettings())));
+  product.heightMillimeters = selection.original.heightMillimeters;
+  product.planX = centerWorld.x;
+  product.planY = centerWorld.y;
   if (state.analysisCanvas) {
     product.planX = clamp(product.planX, 0, state.analysisCanvas.width);
     product.planY = clamp(product.planY, 0, state.analysisCanvas.height);
@@ -4547,6 +5639,149 @@ function deleteSelectedComponent() {
   if (selectedOpening()) return deleteSelectedOpening();
   if (selectedLine()) return deleteSelectedLine();
   return false;
+}
+
+function selectedClipboardPayload() {
+  const product = selectedProduct();
+  if (product) return { type: "product", data: cloneProductMeta(product) };
+  const railing = selectedRailing();
+  if (railing) return { type: "railing", data: cloneRailing(railing) };
+  const opening = selectedOpening();
+  if (opening && isConstructibleOpening(opening)) return { type: "opening", data: cloneOpening(opening) };
+  const line = selectedLine();
+  if (line) return { type: "line", data: cloneLine(line) };
+  return null;
+}
+
+function copySelectedComponent() {
+  const payload = selectedClipboardPayload();
+  if (!payload) {
+    setStatus("没有选中可复制构件");
+    return false;
+  }
+  state.clipboard = payload;
+  setStatus("已复制构件");
+  return true;
+}
+
+function pasteCopiedComponent() {
+  if (!state.clipboard || !state.clipboard.data) {
+    setStatus("剪贴板为空");
+    return false;
+  }
+  if (!state.analysisCanvas && state.clipboard.type !== "product") {
+    setStatus("请先上传或加载平面图");
+    return false;
+  }
+  pushUndoSnapshot("paste-component");
+  const pasted = createPastedComponent(state.clipboard);
+  if (!pasted) {
+    state.undoStack.pop();
+    setStatus("无法粘贴构件");
+    return false;
+  }
+  selectPastedComponent(pasted);
+  refreshAfterPaste();
+  setStatus("已粘贴构件");
+  return true;
+}
+
+function createPastedComponent(payload) {
+  const offset = pasteOffsetPixels();
+  if (payload.type === "line") return pasteLine(payload.data, offset);
+  if (payload.type === "opening") return pasteOpening(payload.data, offset);
+  if (payload.type === "railing") return pasteRailing(payload.data, offset);
+  if (payload.type === "product") return pasteProduct(payload.data, offset);
+  return null;
+}
+
+function pasteOffsetPixels() {
+  const settings = getSettings();
+  return Math.max(18, millimetersToPixels(300, settings));
+}
+
+function offsetSegmentCopy(source, offset) {
+  return {
+    ...source,
+    x1: source.x1 + offset,
+    y1: source.y1 + offset,
+    x2: source.x2 + offset,
+    y2: source.y2 + offset,
+  };
+}
+
+function pasteLine(source, offset) {
+  const line = offsetSegmentCopy(source, offset);
+  line.id = `wall-${Date.now()}-${state.lines.length + 1}`;
+  normalizeEditedLine(line);
+  line.thickness = Math.max(1, Number(line.thickness) || getSettings().maxThickness);
+  state.lines.push(line);
+  return { type: "line", index: state.lines.length - 1 };
+}
+
+function pasteOpening(source, offset) {
+  const opening = offsetSegmentCopy(source, offset);
+  opening.id = `manual-opening-${Date.now()}-${state.manualOpenings.length + 1}`;
+  opening.manual = true;
+  delete opening.sourceOpeningKey;
+  normalizeOpeningComponent(opening);
+  state.manualOpenings.push(opening);
+  return { type: "opening", id: opening.id };
+}
+
+function pasteRailing(source, offset) {
+  const railing = offsetSegmentCopy(source, offset);
+  railing.id = `manual-railing-${Date.now()}-${state.manualRailings.length + 1}`;
+  normalizeRailing(railing);
+  state.manualRailings.push(railing);
+  return { type: "railing", id: railing.id };
+}
+
+function pasteProduct(source, offset) {
+  if (!state.analysisCanvas) {
+    ensureDrawingCanvas();
+  }
+  normalizeProductMetadata(source);
+  const product = {
+    ...cloneProductMeta(source),
+    id: `product-${Date.now()}-${state.productModels.length + 1}`,
+    name: `${source.name || productCategoryLabel(source.category)} 副本`,
+    planX: (Number(source.planX) || 0) + offset,
+    planY: (Number(source.planY) || 0) + offset,
+    object: null,
+  };
+  if (state.analysisCanvas) {
+    product.planX = clamp(product.planX, 0, state.analysisCanvas.width);
+    product.planY = clamp(product.planY, 0, state.analysisCanvas.height);
+  }
+  state.productModels.push(product);
+  return { type: "product", id: product.id };
+}
+
+function selectPastedComponent(pasted) {
+  state.selectedLineIndex = null;
+  state.selectedOpeningIndex = null;
+  state.selectedOpeningId = null;
+  state.selectedRailingId = null;
+  state.selectedProductId = null;
+  state.hoveredEndpoint = null;
+  if (pasted.type === "line") state.selectedLineIndex = pasted.index;
+  if (pasted.type === "opening") state.selectedOpeningId = pasted.id;
+  if (pasted.type === "railing") state.selectedRailingId = pasted.id;
+  if (pasted.type === "product") state.selectedProductId = pasted.id;
+}
+
+function refreshAfterPaste() {
+  if (state.lines.length) {
+    refreshAfterEdit({ skipSelected: true });
+  } else {
+    updateStats();
+    renderPreview();
+    updateThreeModel(false);
+  }
+  updateSelectedComponentInfo();
+  elements.exportJsonButton.disabled = !hasExportableContent();
+  elements.processButton.disabled = !state.analysisCanvas;
 }
 
 function normalizeEditedLine(line) {
@@ -4780,6 +6015,15 @@ function handleCanvasPointerDown(event) {
 
   if (!state.lines.length && !state.manualRailings.length && !state.productModels.length) return;
   const point = canvasPointFromEvent(event);
+  const productResizeHandle = findSelectedProductResizeHandle(point);
+  if (productResizeHandle) {
+    beginSelectedProductResizeDrag(productResizeHandle, point);
+    elements.previewCanvas.setPointerCapture(event.pointerId);
+    elements.previewCanvas.style.cursor = "nwse-resize";
+    event.preventDefault();
+    return;
+  }
+
   const rotateProductId = findSelectedProductRotationHandle(point);
   if (rotateProductId) {
     rotateSelectedProductByStep();
@@ -4966,8 +6210,21 @@ function handleCanvasPointerMove(event) {
     return;
   }
 
+  if (state.draggedProductResize) {
+    resizeSelectedProduct(state.draggedProductResize, point);
+    if (state.draggedProductResize.snapshotPushed) {
+      renderPreview();
+      updateSelectedComponentInfo();
+      updateThreeModel(false);
+    }
+    event.preventDefault();
+    return;
+  }
+
   state.hoveredEndpoint = findNearestSelectedEndpoint(point);
-  if (findSelectedProductRotationHandle(point)) {
+  if (findSelectedProductResizeHandle(point)) {
+    elements.previewCanvas.style.cursor = "nwse-resize";
+  } else if (findSelectedProductRotationHandle(point)) {
     elements.previewCanvas.style.cursor = "grab";
   } else if (state.hoveredEndpoint) {
     elements.previewCanvas.style.cursor = "grab";
@@ -4978,12 +6235,13 @@ function handleCanvasPointerMove(event) {
 }
 
 function handleCanvasPointerUp(event) {
-  if (!state.draggedEndpoint && !state.draggedLine && !state.draggedOpening && !state.draggedRailing && !state.draggedProduct) return;
+  if (!state.draggedEndpoint && !state.draggedLine && !state.draggedOpening && !state.draggedRailing && !state.draggedProduct && !state.draggedProductResize) return;
   const hadEndpointDrag = Boolean(state.draggedEndpoint);
   const hadLineMove = Boolean(state.draggedLine && state.draggedLine.moved);
   const hadOpeningMove = Boolean(state.draggedOpening && state.draggedOpening.moved);
   const hadRailingMove = Boolean(state.draggedRailing && state.draggedRailing.moved);
   const hadProductMove = Boolean(state.draggedProduct && state.draggedProduct.moved);
+  const hadProductResize = Boolean(state.draggedProductResize && state.draggedProductResize.moved);
   if (state.draggedEndpoint) snapDraggedEndpointToNearbyWall(state.draggedEndpoint);
   if (state.draggedRailing && state.draggedRailing.moved) {
     const railing = state.manualRailings.find((item) => item.id === state.draggedRailing.id);
@@ -4994,13 +6252,14 @@ function handleCanvasPointerUp(event) {
   state.draggedOpening = null;
   state.draggedRailing = null;
   state.draggedProduct = null;
+  state.draggedProductResize = null;
   state.hoveredEndpoint = null;
   if (elements.previewCanvas.hasPointerCapture(event.pointerId)) {
     elements.previewCanvas.releasePointerCapture(event.pointerId);
   }
   elements.previewCanvas.style.cursor = state.selectedLineIndex === null && !state.selectedRailingId && !state.selectedProductId ? "default" : "pointer";
   if (hadEndpointDrag || hadLineMove || hadOpeningMove || hadRailingMove) refreshAfterEdit();
-  else if (hadProductMove) {
+  else if (hadProductMove || hadProductResize) {
     renderPreview();
     updateSelectedComponentInfo();
     updateThreeModel(false);
@@ -5200,7 +6459,7 @@ async function restoreProjectArchive(archive) {
   state.manualOpenings = Array.isArray(archive.manualOpenings) ? archive.manualOpenings.map(cloneOpening) : [];
   state.manualRailings = Array.isArray(archive.manualRailings) ? archive.manualRailings.map(cloneRailing).map(normalizeRailing) : [];
   clearProductModels();
-  state.productModels = Array.isArray(archive.products) ? archive.products.map((product) => ({ ...product, object: null })) : [];
+  state.productModels = Array.isArray(archive.products) ? archive.products.map((product) => normalizeProductMetadata({ ...product, object: null })) : [];
   state.hiddenOpeningKeys = Array.isArray(archive.hiddenOpeningKeys) ? [...archive.hiddenOpeningKeys] : [];
   state.selectedLineIndex = Number.isInteger(archive.selectedLineIndex) ? archive.selectedLineIndex : null;
   if (state.selectedLineIndex !== null && !state.lines[state.selectedLineIndex]) state.selectedLineIndex = null;
@@ -5236,6 +6495,7 @@ async function restoreProjectArchive(archive) {
   syncControlLabels();
   updateStats();
   renderPreview();
+  await restoreStoredProductModelObjects();
   updateThreeModel(true);
   elements.processButton.disabled = false;
   elements.saveProjectButton.disabled = false;
@@ -5329,6 +6589,14 @@ function handleDocumentKeyDown(event) {
     handleThreeKeyDown(event);
     if (event.defaultPrevented) return;
   }
+  if ((event.ctrlKey || event.metaKey) && !isEditableTarget(event.target) && event.key.toLowerCase() === "c") {
+    if (copySelectedComponent()) event.preventDefault();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && !isEditableTarget(event.target) && event.key.toLowerCase() === "v") {
+    if (pasteCopiedComponent()) event.preventDefault();
+    return;
+  }
   if ((event.key === "Delete" || event.key === "Backspace") && deleteSelectedComponent()) {
     event.preventDefault();
     return;
@@ -5398,7 +6666,7 @@ elements.openProjectButton.addEventListener("click", openProjectArchive);
 elements.exportJsonButton.addEventListener("click", exportJson);
 elements.drawWallButton.addEventListener("click", toggleDrawWallTool);
 elements.drawDoorButton.addEventListener("click", toggleDrawDoorTool);
-elements.drawWindowButton.addEventListener("click", toggleDrawWindowTool);
+elements.drawWindowButton.addEventListener("click", openWindowModelPicker);
 elements.drawRailingButton.addEventListener("click", toggleDrawRailingTool);
 elements.importFurnitureButton.addEventListener("click", () => openProductModelPicker("furniture"));
 elements.importSanitaryButton.addEventListener("click", () => openProductModelPicker("sanitary"));
@@ -5470,3 +6738,5 @@ document.addEventListener("keydown", handleDocumentKeyDown);
 
 syncControlLabels();
 initThreeViewer();
+
+

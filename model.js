@@ -33,6 +33,7 @@ const copyComponentButton = document.querySelector("#copyComponent");
 const pasteComponentButton = document.querySelector("#pasteComponent");
 const saveProjectButton = document.querySelector("#saveProject");
 const clearOriginalModelButton = document.querySelector("#clearOriginalModel");
+const planUploadButton = document.querySelector('label[for="planFileInput"]');
 const planFileInput = document.querySelector("#planFileInput");
 const planStatus = document.querySelector("#planStatus");
 const planMeta = document.querySelector("#planMeta");
@@ -58,6 +59,7 @@ const recognitionStatus = document.querySelector("#recognitionStatus");
 const wallHeightInput = document.querySelector("#wallHeightInput");
 const build3DModelButton = document.querySelector("#build3DModel");
 const clear3DModelButton = document.querySelector("#clear3DModel");
+const sitePhotoUploadButton = document.querySelector('label[for="sitePhotoInput"]');
 const sitePhotoInput = document.querySelector("#sitePhotoInput");
 const sitePhotoStatus = document.querySelector("#sitePhotoStatus");
 const sitePhotoMeta = document.querySelector("#sitePhotoMeta");
@@ -82,6 +84,11 @@ const optDoorWindowSymbolsInput = document.querySelector("#optDoorWindowSymbols"
 const optShowRoomsInput = document.querySelector("#optShowRooms");
 const optLengthLabelsInput = document.querySelector("#optLengthLabels");
 const optMinWallLengthInput = document.querySelector("#optMinWallLength");
+const trainWallRecognitionButton = document.querySelector("#trainWallRecognition");
+const rerunTrainedRecognitionButton = document.querySelector("#rerunTrainedRecognition");
+const exportWallTrainingButton = document.querySelector("#exportWallTraining");
+const clearWallTrainingButton = document.querySelector("#clearWallTraining");
+const wallTrainingStatus = document.querySelector("#wallTrainingStatus");
 const linearPlanSummary = document.querySelector("#linearPlanSummary");
 const linearPlanList = document.querySelector("#linearPlanList");
 const addLinearWallButton = document.querySelector("#addLinearWall");
@@ -244,8 +251,11 @@ let dragPointerId = null;
 let dragOffset = new THREE.Vector3();
 let isDraggingModelResizeHandle = false;
 let modelResizePointerId = null;
-let modelResizeStartScale = 1;
-let modelResizeStartDistance = 1;
+let modelResizeStartScale = new THREE.Vector3(1, 1, 1);
+let modelResizeStartPosition = new THREE.Vector3();
+let modelResizeStartBounds = null;
+let modelResizeHandleData = null;
+let modelResizeStartClientY = 0;
 let isDraggingDetectedWall = false;
 let detectedWallDragPointerId = null;
 let detectedWallDragIndex = null;
@@ -279,6 +289,7 @@ let manualWallInsertCount = 0;
 let isWallLineDrawMode = false;
 let wallLineDraftPixel = null;
 let isDoorOpeningPlaceMode = false;
+let wallRecognitionTrainingSamples = [];
 const planUndoStack = [];
 const maxPlanUndoSteps = 40;
 let isRestoringPlanUndo = false;
@@ -326,6 +337,8 @@ const planOptimizerDefaults = {
   minWallLength: 0.6,
 };
 const savedProjectStorageKey = "gewuzhizao-design-platform-project";
+const wallRecognitionTrainingStorageKey = "gewuzhizao-wall-recognition-training";
+const maxWallRecognitionTrainingSamples = 36;
 const floorPlanReadingProfiles = {
   luxuryFlat: {
     label: "大平层深度读图",
@@ -363,9 +376,233 @@ function planOptimizerSettings() {
   };
 }
 
+function clampTrainingValue(value, min, max, fallback) {
+  return Number.isFinite(value) ? THREE.MathUtils.clamp(value, min, max) : fallback;
+}
+
+function percentile(values, ratio) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const index = THREE.MathUtils.clamp(Math.round((sorted.length - 1) * ratio), 0, sorted.length - 1);
+  return sorted[index];
+}
+
+function loadWallRecognitionTrainingSamples() {
+  try {
+    const raw = localStorage.getItem(wallRecognitionTrainingStorageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    wallRecognitionTrainingSamples = Array.isArray(parsed) ? parsed.slice(-maxWallRecognitionTrainingSamples) : [];
+  } catch (error) {
+    console.warn("Wall recognition training restore failed.", error);
+    wallRecognitionTrainingSamples = [];
+  }
+}
+
+function saveWallRecognitionTrainingSamples() {
+  try {
+    localStorage.setItem(wallRecognitionTrainingStorageKey, JSON.stringify(wallRecognitionTrainingSamples));
+  } catch (error) {
+    console.warn("Wall recognition training save failed.", error);
+  }
+}
+
+function summarizeWallRecognitionTraining(samples = wallRecognitionTrainingSamples) {
+  const walls = samples.flatMap((sample) => sample.walls ?? []);
+  const lengths = walls.map((wall) => wall.lengthMeters).filter((value) => value >= 0.05);
+  const thicknesses = walls.map((wall) => wall.thicknessMeters).filter((value) => value >= 0.03);
+  const horizontalThicknesses = walls
+    .filter((wall) => wall.orientation === "horizontal")
+    .map((wall) => wall.thicknessMeters)
+    .filter((value) => value >= 0.03);
+  const verticalThicknesses = walls
+    .filter((wall) => wall.orientation === "vertical")
+    .map((wall) => wall.thicknessMeters)
+    .filter((value) => value >= 0.03);
+  const manualWallCount = walls.filter((wall) => wall.manual).length;
+  const deletedWallCount = samples.reduce((sum, sample) => sum + (sample.deletedWallCount ?? 0), 0);
+  const wallCount = Math.max(1, walls.length);
+  const manualRatio = manualWallCount / wallCount;
+  const deletedRatio = deletedWallCount / wallCount;
+  const preferredLengthRatio = manualRatio > 0.16 ? 0.1 : deletedRatio > 0.16 ? 0.32 : 0.18;
+  const minWallLength = clampTrainingValue(percentile(lengths, preferredLengthRatio), 0.18, 1.8, null);
+  const medianThickness = clampTrainingValue(percentile(thicknesses, 0.5), 0.06, 0.45, null);
+  const horizontalThickness = clampTrainingValue(percentile(horizontalThicknesses, 0.5), 0.06, 0.45, medianThickness);
+  const verticalThickness = clampTrainingValue(percentile(verticalThicknesses, 0.5), 0.06, 0.45, medianThickness);
+  const planTypes = samples.reduce((acc, sample) => {
+    const type = sample.plan?.visual?.planType;
+    if (type) acc[type] = (acc[type] ?? 0) + 1;
+    return acc;
+  }, {});
+  const dominantPlanType = Object.entries(planTypes).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+  return {
+    sampleCount: samples.length,
+    wallCount: walls.length,
+    manualWallCount,
+    deletedWallCount,
+    manualRatio,
+    deletedRatio,
+    minWallLength,
+    medianThickness,
+    horizontalThickness,
+    verticalThickness,
+    dominantPlanType,
+  };
+}
+
+function wallRecognitionTrainingLabel(profile = summarizeWallRecognitionTraining()) {
+  if (!profile.sampleCount) return "未训练";
+  const parts = [`${profile.sampleCount} 组样本`, `${profile.wallCount} 段墙`];
+  if (profile.minWallLength) parts.push(`短墙 ${profile.minWallLength.toFixed(2)}m`);
+  if (profile.medianThickness) parts.push(`墙厚 ${profile.medianThickness.toFixed(2)}m`);
+  if (profile.manualWallCount > 0) parts.push(`补墙 ${profile.manualWallCount}`);
+  if (profile.deletedWallCount > 0) parts.push(`删错 ${profile.deletedWallCount}`);
+  return parts.join(" · ");
+}
+
+function updateWallRecognitionTrainingStatus() {
+  if (wallTrainingStatus) {
+    wallTrainingStatus.textContent = wallRecognitionTrainingLabel();
+  }
+  updatePlanOptimizerStatus();
+}
+
+function wallRecognitionOptimizerSettings() {
+  const base = planOptimizerSettings();
+  const profile = summarizeWallRecognitionTraining();
+  if (!profile.sampleCount || !profile.minWallLength) return base;
+  const trainedMinWallLength =
+    profile.deletedRatio > 0.16
+      ? Math.max(base.minWallLength, profile.minWallLength)
+      : Math.min(base.minWallLength, profile.minWallLength);
+
+  return {
+    ...base,
+    minWallLength: THREE.MathUtils.clamp(trainedMinWallLength, 0.1, 3),
+    trainingSampleCount: profile.sampleCount,
+    trainedWallThickness: {
+      horizontal: profile.horizontalThickness,
+      vertical: profile.verticalThickness,
+      median: profile.medianThickness,
+    },
+  };
+}
+
+function applyWallRecognitionTrainingToSegments(segments, map, options = {}) {
+  const profile = summarizeWallRecognitionTraining();
+  if (!profile.sampleCount || !profile.medianThickness) return segments;
+
+  return segments.map((segment) => {
+    if (segment.manualLock || segment.source?.startsWith("manual")) return segment;
+    const thicknessMeters =
+      segment.orientation === "horizontal"
+        ? profile.horizontalThickness ?? profile.medianThickness
+        : profile.verticalThickness ?? profile.medianThickness;
+    if (!thicknessMeters) return segment;
+    const axis = segment.orientation === "horizontal" ? "y" : "x";
+    const trainedThicknessPx = detectionPixelsForWorldLength(thicknessMeters, map.width, map.height, axis, options.sourceRect);
+    return {
+      ...segment,
+      thicknessPx: THREE.MathUtils.clamp(segment.thicknessPx * 0.45 + trainedThicknessPx * 0.55, 2, 120),
+      confidence: Math.min(1, (segment.confidence ?? 0.5) + 0.04),
+      trainedWallRecognition: true,
+    };
+  });
+}
+
+function wallTrainingFeatureSnapshot(segment, result) {
+  return {
+    orientation: segment.orientation,
+    lengthMeters: worldLengthForSegment(segment, result),
+    thicknessMeters: worldThicknessForFeature(segment, result, 0.1),
+    source: segment.source ?? "wall",
+    confidence: segment.confidence ?? null,
+    manual: Boolean(segment.manualLock || segment.source?.startsWith("manual")),
+  };
+}
+
+function currentWallRecognitionTrainingSample() {
+  if (!detectedWallResult?.segments?.length) return null;
+  const visual = detectedWallResult.inkMap?.visual ?? {};
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    sourceLabel: detectedWallResult.sourceLabel ?? null,
+    plan: {
+      width: detectedWallResult.width,
+      height: detectedWallResult.height,
+      sourceRect: detectedWallResult.sourceRect ?? null,
+      visual: {
+        planType: visual.planType ?? null,
+        darkBackground: Boolean(visual.darkBackground),
+        darkRatio: visual.darkRatio ?? null,
+        brightRatio: visual.brightRatio ?? null,
+        colorRatio: visual.colorRatio ?? null,
+        annotationRatio: visual.annotationRatio ?? null,
+      },
+    },
+    optimizer: detectedWallResult.optimizer ?? planOptimizerSettings(),
+    walls: detectedWallResult.segments.map((segment) => wallTrainingFeatureSnapshot(segment, detectedWallResult)),
+    openings: {
+      doors: detectedWallResult.doors?.length ?? 0,
+      windows: detectedWallResult.windows?.length ?? 0,
+    },
+    deletedWallCount: detectedWallResult.deletedWalls?.length ?? 0,
+    deletedOpeningCount:
+      (detectedWallResult.deletedOpenings?.door?.length ?? 0) + (detectedWallResult.deletedOpenings?.window?.length ?? 0),
+  };
+}
+
+function rememberCurrentWallRecognitionTraining() {
+  const sample = currentWallRecognitionTrainingSample();
+  if (!sample) {
+    setRecognitionStatus("先识别并修正墙体，再训练识别能力");
+    return;
+  }
+  wallRecognitionTrainingSamples = [...wallRecognitionTrainingSamples, sample].slice(-maxWallRecognitionTrainingSamples);
+  saveWallRecognitionTrainingSamples();
+  updateWallRecognitionTrainingStatus();
+  setRecognitionStatus(`已学习当前修正 · ${wallRecognitionTrainingLabel()}`);
+}
+
+function exportWallRecognitionTrainingSet() {
+  if (!wallRecognitionTrainingSamples.length) {
+    setRecognitionStatus("暂无可导出的墙体训练样本");
+    return;
+  }
+  const dataset = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    summary: summarizeWallRecognitionTraining(),
+    samples: wallRecognitionTrainingSamples,
+  };
+  const blob = new Blob([JSON.stringify(dataset, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `wall-recognition-training-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  setRecognitionStatus(`已导出墙体训练集 · ${wallRecognitionTrainingLabel()}`);
+}
+
+function clearWallRecognitionTraining() {
+  wallRecognitionTrainingSamples = [];
+  try {
+    localStorage.removeItem(wallRecognitionTrainingStorageKey);
+  } catch (error) {
+    console.warn("Wall recognition training clear failed.", error);
+  }
+  updateWallRecognitionTrainingStatus();
+  setRecognitionStatus("已清空墙体识别训练样本");
+}
+
 function updatePlanOptimizerStatus() {
   if (!planOptimizerStatus) return;
   const settings = planOptimizerSettings();
+  const profile = summarizeWallRecognitionTraining();
   const enabled = [
     settings.collapseWalls,
     settings.extendCorners,
@@ -374,6 +611,9 @@ function updatePlanOptimizerStatus() {
     settings.lengthLabels,
   ].filter(Boolean).length;
   planOptimizerStatus.textContent = `已启用 ${enabled}/5 项增强 · 短墙过滤 ${settings.minWallLength.toFixed(1)}m`;
+  if (profile.sampleCount) {
+    planOptimizerStatus.textContent += ` · 训练 ${profile.sampleCount} 组`;
+  }
 }
 
 function applyPlanOptimizerDisplayOnly() {
@@ -1074,7 +1314,7 @@ function updateWorkflowBoard() {
   if (!hasPlan && sitePhotoCanvases.length === 0) {
     workflowSummary.textContent = "先导入户型图或现场图片，系统会按步骤推进。";
   } else if (!hasLinearPlan) {
-    workflowSummary.textContent = "已导入资料，下一步识别墙线生成可编辑 2D 线性平面图。";
+    workflowSummary.textContent = "已导入资料，可在读图工具中识别墙线，也可用划线墙或补墙手动生成 2D 线性平面图。";
   } else if (!generated3DActive) {
     workflowSummary.textContent = "线性平面图已生成，可补门窗/梁柱后生成 3D 户型。";
   } else if (!hasReality && sitePhotoCanvases.length === 0) {
@@ -1113,28 +1353,34 @@ function renderSelectedModelResizeHandles() {
   if (!bounds || currentView === "top") return;
 
   const center = bounds.getCenter(new THREE.Vector3());
-  const y = bounds.max.y + 0.08;
   const corners = [
-    new THREE.Vector3(bounds.min.x, y, bounds.min.z),
-    new THREE.Vector3(bounds.max.x, y, bounds.min.z),
-    new THREE.Vector3(bounds.max.x, y, bounds.max.z),
-    new THREE.Vector3(bounds.min.x, y, bounds.max.z),
+    { position: new THREE.Vector3(bounds.min.x, bounds.min.y + 0.08, bounds.min.z), sideX: -1, sideZ: -1, sideY: 0 },
+    { position: new THREE.Vector3(bounds.max.x, bounds.min.y + 0.08, bounds.min.z), sideX: 1, sideZ: -1, sideY: 0 },
+    { position: new THREE.Vector3(bounds.max.x, bounds.min.y + 0.08, bounds.max.z), sideX: 1, sideZ: 1, sideY: 0 },
+    { position: new THREE.Vector3(bounds.min.x, bounds.min.y + 0.08, bounds.max.z), sideX: -1, sideZ: 1, sideY: 0 },
+    { position: new THREE.Vector3(bounds.min.x, bounds.max.y + 0.08, bounds.min.z), sideX: -1, sideZ: -1, sideY: 1 },
+    { position: new THREE.Vector3(bounds.max.x, bounds.max.y + 0.08, bounds.min.z), sideX: 1, sideZ: -1, sideY: 1 },
+    { position: new THREE.Vector3(bounds.max.x, bounds.max.y + 0.08, bounds.max.z), sideX: 1, sideZ: 1, sideY: 1 },
+    { position: new THREE.Vector3(bounds.min.x, bounds.max.y + 0.08, bounds.max.z), sideX: -1, sideZ: 1, sideY: 1 },
   ];
 
   selectedModelResizeHandleGroup = new THREE.Group();
   selectedModelResizeHandleGroup.userData.featureKind = "model-resize-handles";
-  corners.forEach((position, index) => {
-    const handle = box(0.14, 0.14, 0.14, colors.gold, {
+  corners.forEach((corner, index) => {
+    const handle = box(corner.sideY ? 0.16 : 0.13, corner.sideY ? 0.16 : 0.13, corner.sideY ? 0.16 : 0.13, corner.sideY ? colors.coral : colors.gold, {
       castShadow: false,
       receiveShadow: false,
       transparent: true,
       opacity: 0.96,
     });
-    handle.position.copy(position);
+    handle.position.copy(corner.position);
     handle.userData.featureKind = "model-resize-handle";
     handle.userData.handleIndex = index;
     handle.userData.centerX = center.x;
     handle.userData.centerZ = center.z;
+    handle.userData.sideX = corner.sideX;
+    handle.userData.sideY = corner.sideY;
+    handle.userData.sideZ = corner.sideZ;
     handle.userData.selectName = "Model resize handle";
     selectedModelResizeHandleGroup.add(handle);
   });
@@ -1629,7 +1875,7 @@ function clearPlanRegion({ clearRecognition = true } = {}) {
 
   if (clearRecognition && hadRegion) {
     clearDetectedWalls();
-    setRecognitionStatus(planCanvas ? "已取消框选，可识别全图" : "等待识别");
+    setRecognitionStatus(planCanvas ? "已取消框选，可在读图工具中识别全图" : "等待识别");
   }
 }
 
@@ -1727,7 +1973,7 @@ function finishPlanRegionDraw(event) {
   clearDetectedWalls();
   renderPlanRegionOverlay(planRegion);
   updatePlanRegionControls();
-  setRecognitionStatus(`${planRegionSummary(planRegion)} · 可识别墙线`);
+  setRecognitionStatus(`${planRegionSummary(planRegion)} · 可在读图工具中识别`);
   event.preventDefault();
   return true;
 }
@@ -2039,7 +2285,7 @@ function keepOnlyPlanRegion() {
   resetScaleCalibrationState();
   updatePlanMesh();
   setPlanStatus("Selected plan region kept", `${planCanvas.width} x ${planCanvas.height} px`);
-  setRecognitionStatus("只保留了框选区域，可重新识别墙线");
+  setRecognitionStatus("只保留了框选区域，可在读图工具中识别");
   setView("top");
 }
 
@@ -2179,6 +2425,14 @@ function cloneCanvas(sourceCanvas) {
   output.width = sourceCanvas.width;
   output.height = sourceCanvas.height;
   output.getContext("2d").drawImage(sourceCanvas, 0, 0);
+  return output;
+}
+
+function resizeCanvasToDimensions(sourceCanvas, width, height) {
+  const output = document.createElement("canvas");
+  output.width = Math.max(1, Math.round(width));
+  output.height = Math.max(1, Math.round(height));
+  output.getContext("2d").drawImage(sourceCanvas, 0, 0, output.width, output.height);
   return output;
 }
 
@@ -2534,7 +2788,7 @@ async function importPlanFile(file) {
     updatePlanMesh();
     setPlanStatus(file.name, result.meta);
     renderPlanPhotoQuality(analyzePlanPhotoQuality(planCanvas));
-    setRecognitionStatus("可识别墙线");
+    setRecognitionStatus("图纸已导入，可在读图工具中识别墙线");
     setView("top");
   } catch (error) {
     console.error(error);
@@ -2932,12 +3186,29 @@ function isLikelySheetBorder(segment, width, height) {
   return nearEdge && segmentLength(segment) >= innerLimit * 0.55;
 }
 
+function isCodexFloorPlanSegment(segment) {
+  return Boolean(segment?.codexFloorPlanPrimary || segment?.source?.includes("codex-floorplan"));
+}
+
+function wallCandidatePriority(segment) {
+  if (segment?.manualLock || segment?.source?.startsWith("manual")) return 5;
+  if (isCodexFloorPlanSegment(segment)) return 4;
+  if (segment?.source?.includes("paired") || segment?.source?.includes("solid")) return 3;
+  if (segment?.source?.includes("outline") || segment?.source?.includes("closed")) return 2;
+  if (segment?.source?.includes("local-return")) return 1;
+  return 0;
+}
+
 function mergeWallCandidates(candidates) {
   const merged = [];
 
   candidates
     .sort((a, b) => {
       if (a.orientation !== b.orientation) return a.orientation.localeCompare(b.orientation);
+      const priorityDiff = wallCandidatePriority(b) - wallCandidatePriority(a);
+      if (priorityDiff !== 0) return priorityDiff;
+      const confidenceDiff = (b.confidence ?? 0) - (a.confidence ?? 0);
+      if (Math.abs(confidenceDiff) > 0.001) return confidenceDiff;
       if (a.axisCenter !== b.axisCenter) return a.axisCenter - b.axisCenter;
       return a.start - b.start;
     })
@@ -2954,19 +3225,310 @@ function mergeWallCandidates(candidates) {
         return;
       }
 
+      const existingPriority = wallCandidatePriority(existing);
+      const candidatePriority = wallCandidatePriority(candidate);
       existing.start = Math.min(existing.start, candidate.start);
       existing.end = Math.max(existing.end, candidate.end);
-      existing.axisCenter = (existing.axisCenter + candidate.axisCenter) / 2;
-      existing.thicknessPx = Math.max(existing.thicknessPx, candidate.thicknessPx);
+      if (candidatePriority > existingPriority) {
+        existing.axisCenter = candidate.axisCenter;
+        existing.thicknessPx = candidate.thicknessPx;
+      } else if (candidatePriority === existingPriority) {
+        existing.axisCenter = (existing.axisCenter + candidate.axisCenter) / 2;
+        existing.thicknessPx = Math.max(existing.thicknessPx, candidate.thicknessPx);
+      }
       existing.confidence = Math.max(existing.confidence, candidate.confidence);
+      existing.codexFloorPlanPrimary = existing.codexFloorPlanPrimary || candidate.codexFloorPlanPrimary;
       existing.segmentedOutline = existing.segmentedOutline || candidate.segmentedOutline;
       existing.localReturn = existing.localReturn || candidate.localReturn;
       existing.returnRunCount = Math.max(existing.returnRunCount ?? 0, candidate.returnRunCount ?? 0);
       existing.returnSupportCount = Math.max(existing.returnSupportCount ?? 0, candidate.returnSupportCount ?? 0);
-      existing.source = existing.source === candidate.source ? existing.source : "mixed";
+      if (existing.source !== candidate.source) {
+        existing.source =
+          wallCandidatePriority(existing) >= wallCandidatePriority(candidate)
+            ? `${existing.source ?? "wall"}+supplement`
+            : `${candidate.source ?? "wall"}+supplement`;
+      }
     });
 
   return merged;
+}
+
+function codexFloorPlanSettings(width, height, options = {}) {
+  const maxDimension = Math.max(width, height);
+  const optimizer = options.optimizer ?? planOptimizerSettings();
+  const minLengthByScale = Math.max(
+    detectionPixelsForWorldLength(optimizer.minWallLength, width, height, "x", options.sourceRect),
+    detectionPixelsForWorldLength(optimizer.minWallLength, width, height, "y", options.sourceRect),
+  );
+  return {
+    minLength: THREE.MathUtils.clamp(Math.round(Math.max(minLengthByScale, maxDimension * 0.052)), 20, 180),
+    mergeGap: THREE.MathUtils.clamp(Math.round(maxDimension * 0.009), 4, 22),
+    maxThickness: THREE.MathUtils.clamp(Math.round(maxDimension * 0.035), 8, 58),
+    minWallThickness: THREE.MathUtils.clamp(Math.round(maxDimension * 0.0035), 2, 12),
+    minNoiseArea: THREE.MathUtils.clamp(Math.round(maxDimension * 0.085), 32, 180),
+  };
+}
+
+function codexFloorPlanMaskFromMap(map) {
+  const source = map.wallInk ?? map.ink;
+  return {
+    width: map.width,
+    height: map.height,
+    mask: source instanceof Uint8Array ? source : new Uint8Array(source),
+  };
+}
+
+function codexFloorPlanDenoiseMask(source, settings) {
+  const { width, height, mask } = source;
+  const size = width * height;
+  const filtered = mask.slice();
+  const visited = new Uint8Array(size);
+  const stack = new Int32Array(size);
+
+  for (let startIndex = 0; startIndex < size; startIndex += 1) {
+    if (!mask[startIndex] || visited[startIndex]) continue;
+
+    let top = 0;
+    let area = 0;
+    let minX = width;
+    let maxX = 0;
+    let minY = height;
+    let maxY = 0;
+    const pixels = [];
+
+    stack[top] = startIndex;
+    top += 1;
+    visited[startIndex] = 1;
+
+    while (top > 0) {
+      top -= 1;
+      const index = stack[top];
+      const x = index % width;
+      const y = Math.floor(index / width);
+      pixels.push(index);
+      area += 1;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+
+      const neighbors = [
+        [index - 1, x > 0],
+        [index + 1, x < width - 1],
+        [index - width, y > 0],
+        [index + width, y < height - 1],
+      ];
+      neighbors.forEach(([next, allowed]) => {
+        if (!allowed || visited[next] || !mask[next]) return;
+        visited[next] = 1;
+        stack[top] = next;
+        top += 1;
+      });
+    }
+
+    const componentWidth = maxX - minX + 1;
+    const componentHeight = maxY - minY + 1;
+    const longest = Math.max(componentWidth, componentHeight);
+    const shortest = Math.min(componentWidth, componentHeight);
+    const fillRatio = area / Math.max(1, componentWidth * componentHeight);
+    const shortObject = longest < settings.minLength * 0.9 && area < settings.minNoiseArea * 8;
+    const thinShortLine = shortest <= Math.max(2, settings.minWallThickness - 1) && longest < settings.minLength * 2.4;
+    const sparseSmallMark = fillRatio < 0.22 && area < settings.minNoiseArea * 16 && longest < settings.minLength * 1.8;
+    if (area >= settings.minNoiseArea && !shortObject && !thinShortLine && !sparseSmallMark) continue;
+    pixels.forEach((pixel) => {
+      filtered[pixel] = 0;
+    });
+  }
+
+  return { width, height, mask: filtered };
+}
+
+function codexFloorPlanDetectHorizontalWalls(source, settings) {
+  const groups = [];
+  const { width, height, mask } = source;
+  for (let y = 0; y < height; y += 1) {
+    let x = 0;
+    while (x < width) {
+      while (x < width && !mask[y * width + x]) x += 1;
+      const start = x;
+      while (x < width && mask[y * width + x]) x += 1;
+      const end = x - 1;
+      if (end - start + 1 >= settings.minLength) codexFloorPlanAddHorizontalRun(groups, { x1: start, x2: end, y }, settings);
+    }
+  }
+  return codexFloorPlanFinalizeHorizontalGroups(groups, settings);
+}
+
+function codexFloorPlanAddHorizontalRun(groups, run, settings) {
+  let best = null;
+  let bestScore = 0;
+  for (const group of groups) {
+    if (run.y - group.y2 > settings.maxThickness) continue;
+    const overlap = Math.min(run.x2, group.x2) - Math.max(run.x1, group.x1);
+    const span = Math.min(run.x2 - run.x1, group.x2 - group.x1);
+    const score = overlap / Math.max(1, span);
+    if (score > bestScore && score > 0.35) {
+      best = group;
+      bestScore = score;
+    }
+  }
+  if (!best) {
+    groups.push({ x1: run.x1, x2: run.x2, y1: run.y, y2: run.y, count: 1 });
+    return;
+  }
+  best.x1 = Math.min(best.x1, run.x1);
+  best.x2 = Math.max(best.x2, run.x2);
+  best.y2 = run.y;
+  best.count += 1;
+}
+
+function codexFloorPlanFinalizeHorizontalGroups(groups, settings) {
+  return groups
+    .map((group) => {
+      const thickness = group.y2 - group.y1 + 1;
+      const center = Math.round((group.y1 + group.y2) / 2);
+      return {
+        orientation: "horizontal",
+        x1: group.x1,
+        y1: center,
+        x2: group.x2,
+        y2: center,
+        thickness,
+        length: group.x2 - group.x1,
+      };
+    })
+    .filter((line) => line.thickness <= settings.maxThickness && line.thickness >= settings.minWallThickness);
+}
+
+function codexFloorPlanDetectVerticalWalls(source, settings) {
+  const groups = [];
+  const { width, height, mask } = source;
+  for (let x = 0; x < width; x += 1) {
+    let y = 0;
+    while (y < height) {
+      while (y < height && !mask[y * width + x]) y += 1;
+      const start = y;
+      while (y < height && mask[y * width + x]) y += 1;
+      const end = y - 1;
+      if (end - start + 1 >= settings.minLength) codexFloorPlanAddVerticalRun(groups, { y1: start, y2: end, x }, settings);
+    }
+  }
+  return codexFloorPlanFinalizeVerticalGroups(groups, settings);
+}
+
+function codexFloorPlanAddVerticalRun(groups, run, settings) {
+  let best = null;
+  let bestScore = 0;
+  for (const group of groups) {
+    if (run.x - group.x2 > settings.maxThickness) continue;
+    const overlap = Math.min(run.y2, group.y2) - Math.max(run.y1, group.y1);
+    const span = Math.min(run.y2 - run.y1, group.y2 - group.y1);
+    const score = overlap / Math.max(1, span);
+    if (score > bestScore && score > 0.35) {
+      best = group;
+      bestScore = score;
+    }
+  }
+  if (!best) {
+    groups.push({ y1: run.y1, y2: run.y2, x1: run.x, x2: run.x, count: 1 });
+    return;
+  }
+  best.y1 = Math.min(best.y1, run.y1);
+  best.y2 = Math.max(best.y2, run.y2);
+  best.x2 = run.x;
+  best.count += 1;
+}
+
+function codexFloorPlanFinalizeVerticalGroups(groups, settings) {
+  return groups
+    .map((group) => {
+      const thickness = group.x2 - group.x1 + 1;
+      const center = Math.round((group.x1 + group.x2) / 2);
+      return {
+        orientation: "vertical",
+        x1: center,
+        y1: group.y1,
+        x2: center,
+        y2: group.y2,
+        thickness,
+        length: group.y2 - group.y1,
+      };
+    })
+    .filter((line) => line.thickness <= settings.maxThickness && line.thickness >= settings.minWallThickness);
+}
+
+function codexFloorPlanCanMergeLine(a, b, orientation, gap) {
+  if (orientation === "horizontal") return Math.abs(a.y1 - b.y1) <= gap && b.x1 <= a.x2 + gap;
+  return Math.abs(a.x1 - b.x1) <= gap && b.y1 <= a.y2 + gap;
+}
+
+function codexFloorPlanMergeCollinear(lines, orientation, gap) {
+  const sorted = [...lines].sort((a, b) => {
+    const primary = orientation === "horizontal" ? a.y1 - b.y1 : a.x1 - b.x1;
+    if (primary !== 0) return primary;
+    return orientation === "horizontal" ? a.x1 - b.x1 : a.y1 - b.y1;
+  });
+  const merged = [];
+
+  sorted.forEach((line) => {
+    const previous = merged[merged.length - 1];
+    if (!previous || !codexFloorPlanCanMergeLine(previous, line, orientation, gap)) {
+      merged.push({ ...line });
+      return;
+    }
+    if (orientation === "horizontal") {
+      previous.x1 = Math.min(previous.x1, line.x1);
+      previous.x2 = Math.max(previous.x2, line.x2);
+      previous.y1 = Math.round((previous.y1 + line.y1) / 2);
+      previous.y2 = previous.y1;
+      previous.length = previous.x2 - previous.x1;
+    } else {
+      previous.y1 = Math.min(previous.y1, line.y1);
+      previous.y2 = Math.max(previous.y2, line.y2);
+      previous.x1 = Math.round((previous.x1 + line.x1) / 2);
+      previous.x2 = previous.x1;
+      previous.length = previous.y2 - previous.y1;
+    }
+    previous.thickness = Math.round((previous.thickness + line.thickness) / 2);
+  });
+
+  return merged;
+}
+
+function codexFloorPlanLineToSegment(line) {
+  if (line.orientation === "horizontal") {
+    return {
+      orientation: "horizontal",
+      start: Math.min(line.x1, line.x2),
+      end: Math.max(line.x1, line.x2),
+      axisCenter: line.y1,
+      thicknessPx: Math.max(3, line.thickness),
+      confidence: 0.86,
+      source: "codex-floorplan-browser",
+      codexFloorPlanPrimary: true,
+    };
+  }
+  return {
+    orientation: "vertical",
+    start: Math.min(line.y1, line.y2),
+    end: Math.max(line.y1, line.y2),
+    axisCenter: line.x1,
+    thicknessPx: Math.max(3, line.thickness),
+    confidence: 0.86,
+    source: "codex-floorplan-browser",
+    codexFloorPlanPrimary: true,
+  };
+}
+
+function buildCodexFloorPlanWallCandidates(map, options = {}) {
+  const settings = codexFloorPlanSettings(map.width, map.height, options);
+  const mask = codexFloorPlanDenoiseMask(codexFloorPlanMaskFromMap(map), settings);
+  const horizontal = codexFloorPlanMergeCollinear(codexFloorPlanDetectHorizontalWalls(mask, settings), "horizontal", settings.mergeGap);
+  const vertical = codexFloorPlanMergeCollinear(codexFloorPlanDetectVerticalWalls(mask, settings), "vertical", settings.mergeGap);
+  const lines = [...horizontal, ...vertical].filter((line) => line.length >= settings.minLength);
+  return lines
+    .map(codexFloorPlanLineToSegment)
+    .filter((segment) => !isLikelySheetBorder(segment, map.width, map.height));
 }
 
 function snapParallelWallAxes(segments, tolerance = 7) {
@@ -3602,6 +4164,7 @@ function shouldKeepShortBranchWall(segment, segments, width, height, minLength, 
   if (!hasPerpendicularWallSupport(segment, segments, width, height)) return false;
 
   const strongWallSignal =
+    isCodexFloorPlanSegment(segment) ||
     segment.source?.includes("solid") ||
     segment.source?.includes("paired") ||
     segment.source?.includes("outline") ||
@@ -4678,9 +5241,20 @@ function applyFloorPlanSpatialLogic(result, map) {
   };
 }
 
-function estimateWallSegments(sourceCanvas, options = {}) {
-  const optimizer = planOptimizerSettings();
-  const map = buildInkMap(sourceCanvas);
+function fallbackSegmentsFromWallRuns(wallRuns) {
+  return wallRuns.map((segment) => ({
+    orientation: segment.orientation,
+    start: segment.start,
+    end: segment.end,
+    axisCenter: segment.axisCenter,
+    thicknessPx: Math.max(4, segment.maxAxis - segment.minAxis + 1),
+    confidence: Math.min(1, segment.samples / 10),
+    source: "fallback",
+  }));
+}
+
+function buildWallRecognitionResultFromPrimaryWalls(map, options = {}, primaryWalls = [], sourceQuality = {}) {
+  const optimizer = wallRecognitionOptimizerSettings();
   const wallRuns = mergeRuns([...scanRuns(map, "horizontal", "wallInk"), ...scanRuns(map, "vertical", "wallInk")]);
   const detailWallRuns = mergeRuns([
     ...scanRuns(map, "horizontal", "wallInk", { minLengthPx: 5, minLengthRatio: 0.006, supportThreshold: 0.12 }),
@@ -4688,15 +5262,22 @@ function estimateWallSegments(sourceCanvas, options = {}) {
   ]);
   const symbolRuns = mergeRuns([...scanRuns(map, "horizontal"), ...scanRuns(map, "vertical")]);
   const pairedWalls = buildPairedWallCandidates(wallRuns, map.width, map.height, options);
+  const codexFloorPlanWalls = buildCodexFloorPlanWallCandidates(map, { ...options, optimizer });
   const outlineWalls = buildSegmentedOutlineWallCandidates(wallRuns, map.width, map.height, options);
   const localReturnWalls = buildLocalReturnWallCandidates(detailWallRuns, wallRuns, map.width, map.height, options);
   const solidWalls = buildSolidWallCandidates(wallRuns, map.width, map.height);
+  const defaultFloorPlanWalls = mergeWallCandidates([...primaryWalls, ...codexFloorPlanWalls]);
   const ruleBasedSegments = keepDominantWallRegion(
     cleanWallSegments(
-      pruneTinyWallSegments(mergeWallCandidates([...pairedWalls, ...outlineWalls, ...localReturnWalls, ...solidWalls]), map.width, map.height, {
-        optimizer,
-        sourceRect: options.sourceRect,
-      }),
+      pruneTinyWallSegments(
+        mergeWallCandidates([...defaultFloorPlanWalls, ...pairedWalls, ...outlineWalls, ...solidWalls, ...localReturnWalls]),
+        map.width,
+        map.height,
+        {
+          optimizer,
+          sourceRect: options.sourceRect,
+        },
+      ),
       map.width,
       map.height,
       { optimizer, sourceRect: options.sourceRect },
@@ -4706,15 +5287,7 @@ function estimateWallSegments(sourceCanvas, options = {}) {
   );
   const fallbackSegments = cleanWallSegments(
     pruneTinyWallSegments(
-      wallRuns.map((segment) => ({
-        orientation: segment.orientation,
-        start: segment.start,
-        end: segment.end,
-        axisCenter: segment.axisCenter,
-        thicknessPx: Math.max(4, segment.maxAxis - segment.minAxis + 1),
-        confidence: Math.min(1, segment.samples / 10),
-        source: "fallback",
-        })),
+      fallbackSegmentsFromWallRuns(wallRuns),
       map.width,
       map.height,
       { optimizer, sourceRect: options.sourceRect },
@@ -4723,13 +5296,17 @@ function estimateWallSegments(sourceCanvas, options = {}) {
     map.height,
     { optimizer, sourceRect: options.sourceRect },
   );
-  const segments = (ruleBasedSegments.length >= 4 ? ruleBasedSegments : fallbackSegments).map((segment) => ({
-    ...segment,
-    baseStart: segment.start,
-    baseEnd: segment.end,
-    startCorrectionMeters: 0,
-    endCorrectionMeters: 0,
-  }));
+  const segments = applyWallRecognitionTrainingToSegments(
+    (ruleBasedSegments.length >= 4 ? ruleBasedSegments : fallbackSegments).map((segment) => ({
+      ...segment,
+      baseStart: segment.start,
+      baseEnd: segment.end,
+      startCorrectionMeters: 0,
+      endCorrectionMeters: 0,
+    })),
+    map,
+    options,
+  );
   const gapDoors = estimateDoorOpenings(map, segments);
   const symbolDoors = optimizer.doorWindowSymbols ? estimateSymbolDoors(map, segments, symbolRuns, gapDoors) : [];
   const rawDoors = dedupeOpenings([...gapDoors, ...symbolDoors]);
@@ -4751,6 +5328,9 @@ function estimateWallSegments(sourceCanvas, options = {}) {
   const quality = {
     ...recognitionQualityForResult(segments, doors, windows, map, ruleBasedSegments.length >= 4),
     ...architectural.quality,
+    ...sourceQuality,
+    codexDefaultPrimaryWalls: primaryWalls.length,
+    codexFloorPlanWalls: codexFloorPlanWalls.length,
     layoutLogicSignals: layoutLogic.fixedFeatureSignals,
   };
 
@@ -4770,6 +5350,115 @@ function estimateWallSegments(sourceCanvas, options = {}) {
     optimizer,
     inkMap: map,
   };
+}
+
+function estimateWallSegments(sourceCanvas, options = {}) {
+  const map = buildInkMap(sourceCanvas);
+  return buildWallRecognitionResultFromPrimaryWalls(map, options);
+}
+
+function codexDefaultBackendSettings(width, height, options = {}) {
+  const optimizer = wallRecognitionOptimizerSettings();
+  const settings = codexFloorPlanSettings(width, height, { ...options, optimizer });
+  return {
+    minLength: settings.minLength,
+    mergeGap: settings.mergeGap,
+    maxThickness: settings.maxThickness,
+    minNoiseArea: settings.minNoiseArea,
+    minWallThickness: settings.minWallThickness,
+    recognitionMode: "ai-cv",
+  };
+}
+
+function codexDefaultBackendLineToSegment(line, mode = "api") {
+  const orientation = line.orientation === "vertical" ? "vertical" : "horizontal";
+  const x1 = Number(line.x1);
+  const y1 = Number(line.y1);
+  const x2 = Number(line.x2);
+  const y2 = Number(line.y2);
+  const thickness = Math.max(3, Number(line.thickness) || Number(line.bounds?.height) || Number(line.bounds?.width) || 4);
+  if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+
+  if (orientation === "horizontal") {
+    return {
+      orientation,
+      start: Math.min(x1, x2),
+      end: Math.max(x1, x2),
+      axisCenter: (y1 + y2) / 2,
+      thicknessPx: thickness,
+      confidence: 0.94,
+      source: `codex-default-${mode}`,
+      codexFloorPlanPrimary: true,
+    };
+  }
+
+  return {
+    orientation,
+    start: Math.min(y1, y2),
+    end: Math.max(y1, y2),
+    axisCenter: (x1 + x2) / 2,
+    thicknessPx: thickness,
+    confidence: 0.94,
+    source: `codex-default-${mode}`,
+    codexFloorPlanPrimary: true,
+  };
+}
+
+async function requestCodexDefaultWallSegmentation(sourceCanvas, options = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch("/api/segment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: sourceCanvas.toDataURL("image/png"),
+        settings: codexDefaultBackendSettings(sourceCanvas.width, sourceCanvas.height, options),
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`CODEX 默认读图服务返回 ${response.status}`);
+    const payload = await response.json();
+    if (payload.error) throw new Error(payload.error);
+    return payload;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function buildWallRecognitionResultFromCodexDefaultPayload(sourceCanvas, payload, options = {}) {
+  const width = payload?.image?.width ?? sourceCanvas.width;
+  const height = payload?.image?.height ?? sourceCanvas.height;
+  const analysisCanvas =
+    Math.round(width) === sourceCanvas.width && Math.round(height) === sourceCanvas.height
+      ? sourceCanvas
+      : resizeCanvasToDimensions(sourceCanvas, width, height);
+  const map = buildInkMap(analysisCanvas);
+  const mode = payload?.mode ?? "api";
+  const primaryWalls = (payload?.walls ?? [])
+    .map((line) => codexDefaultBackendLineToSegment(line, mode))
+    .filter(Boolean)
+    .filter((segment) => !isLikelySheetBorder(segment, map.width, map.height));
+  return buildWallRecognitionResultFromPrimaryWalls(map, options, primaryWalls, {
+    codexDefaultBackendMode: mode,
+    codexDefaultBackendWalls: primaryWalls.length,
+  });
+}
+
+async function estimateWallSegmentsWithCodexDefault(sourceCanvas, options = {}) {
+  try {
+    const payload = await requestCodexDefaultWallSegmentation(sourceCanvas, options);
+    const result = buildWallRecognitionResultFromCodexDefaultPayload(sourceCanvas, payload, options);
+    result.codexDefaultBackend = true;
+    return result;
+  } catch (error) {
+    console.warn("CODEX default floor-plan recognition unavailable, using browser fallback.", error);
+    const result = estimateWallSegments(sourceCanvas, options);
+    result.codexDefaultBackend = false;
+    result.codexDefaultBackendError = error?.message ?? String(error);
+    result.quality.codexDefaultBackendMode = "browser-fallback";
+    return result;
+  }
 }
 
 function worldPositionForPixel(x, y, width, height, result = null) {
@@ -5486,11 +6175,58 @@ function openingsForWallSegment(wall, result) {
   return openings.sort((a, b) => a.start - b.start || a.end - b.end);
 }
 
-function addGeneratedWallPiece(group, segment, result, height, thickness, centerY, wallIndex = null) {
+function wallPieceWithRectangularJointCaps(segment, result, options = {}) {
+  if (!options.closeStart && !options.closeEnd) return segment;
+  const sourceWall = options.sourceWall ?? segment;
+  const adjusted = { ...segment };
+  const tolerance = topologyJunctionTolerance(result.width, result.height, sourceWall);
+  const ownHalfPixels = pixelLengthForWorldLength(
+    worldThicknessForFeature(sourceWall, result, 0.08) / 2,
+    result,
+    sourceWall.orientation,
+  );
+  const perpendiculars = result.segments.filter((wall) => wall.orientation !== sourceWall.orientation);
+
+  const jointCapForEndpoint = (endpoint) => {
+    const endpointValue = sourceWall[endpoint];
+    return perpendiculars
+      .filter((wall) => {
+        const endpointNearAxis = Math.abs(wall.axisCenter - endpointValue) <= tolerance;
+        const crossesAxis = sourceWall.axisCenter >= wall.start - tolerance && sourceWall.axisCenter <= wall.end + tolerance;
+        return endpointNearAxis && crossesAxis;
+      })
+      .sort((a, b) => Math.abs(a.axisCenter - endpointValue) - Math.abs(b.axisCenter - endpointValue))[0];
+  };
+
+  if (options.closeStart) {
+    const joint = jointCapForEndpoint("start");
+    if (joint) {
+      const jointHalfPixels = pixelLengthForWorldLength(worldThicknessForFeature(joint, result, 0.08) / 2, result, sourceWall.orientation);
+      adjusted.start = Math.min(adjusted.start, joint.axisCenter - Math.max(0, jointHalfPixels - ownHalfPixels));
+    }
+  }
+
+  if (options.closeEnd) {
+    const joint = jointCapForEndpoint("end");
+    if (joint) {
+      const jointHalfPixels = pixelLengthForWorldLength(worldThicknessForFeature(joint, result, 0.08) / 2, result, sourceWall.orientation);
+      adjusted.end = Math.max(adjusted.end, joint.axisCenter + Math.max(0, jointHalfPixels - ownHalfPixels));
+    }
+  }
+
+  return {
+    ...adjusted,
+    start: THREE.MathUtils.clamp(adjusted.start, 0, wallAxisLimit(sourceWall, result)),
+    end: THREE.MathUtils.clamp(adjusted.end, 0, wallAxisLimit(sourceWall, result)),
+  };
+}
+
+function addGeneratedWallPiece(group, segment, result, height, thickness, centerY, wallIndex = null, jointOptions = {}) {
   const actualHeight = Math.max(0.03, segment.heightMeters ?? height);
   const actualCenterY = segment.heightMeters ? actualHeight / 2 : centerY;
   if (segment.end - segment.start < 1 || actualHeight <= 0.03) return null;
-  const mesh = makeWallMeshFromSegment(segment, result, actualHeight, thickness, wallFinishes[activeWallFinish], actualCenterY);
+  const renderSegment = wallPieceWithRectangularJointCaps(segment, result, jointOptions);
+  const mesh = makeWallMeshFromSegment(renderSegment, result, actualHeight, thickness, wallFinishes[activeWallFinish], actualCenterY);
   mesh.userData.collider = "solid-wall";
   if (Number.isInteger(wallIndex)) {
     mesh.userData.featureKind = "generated-wall";
@@ -5506,6 +6242,7 @@ function addGeneratedWallPiece(group, segment, result, height, thickness, center
 function addSolidWallSpansAroundOpenings(group, wall, openings, result, wallHeight, wallThickness, wallIndex = null) {
   let cursor = wall.start;
   const actualWallHeight = wall.heightMeters ?? wallHeight;
+  let addedSolidSpan = false;
   openings.forEach((opening) => {
     if (opening.start > cursor + 1) {
       addGeneratedWallPiece(
@@ -5516,7 +6253,9 @@ function addSolidWallSpansAroundOpenings(group, wall, openings, result, wallHeig
         wallThickness,
         actualWallHeight / 2,
         wallIndex,
+        { sourceWall: wall, closeStart: Math.abs(cursor - wall.start) < 0.5, closeEnd: false },
       );
+      addedSolidSpan = true;
     }
     cursor = Math.max(cursor, opening.end);
   });
@@ -5530,8 +6269,107 @@ function addSolidWallSpansAroundOpenings(group, wall, openings, result, wallHeig
       wallThickness,
       actualWallHeight / 2,
       wallIndex,
+      { sourceWall: wall, closeStart: !addedSolidSpan && Math.abs(cursor - wall.start) < 0.5, closeEnd: true },
     );
   }
+}
+
+function wallIntersectionPixel(horizontal, vertical, tolerance) {
+  const x = vertical.axisCenter;
+  const y = horizontal.axisCenter;
+  const horizontalTouches = x >= horizontal.start - tolerance && x <= horizontal.end + tolerance;
+  const verticalTouches = y >= vertical.start - tolerance && y <= vertical.end + tolerance;
+  if (!horizontalTouches || !verticalTouches) return null;
+  return { x, y };
+}
+
+function addWallJointFillers(group, result, wallHeight) {
+  const horizontals = result.segments.filter((wall) => wall.orientation === "horizontal");
+  const verticals = result.segments.filter((wall) => wall.orientation === "vertical");
+  const created = new Set();
+
+  horizontals.forEach((horizontal) => {
+    verticals.forEach((vertical) => {
+      const tolerance = Math.max(
+        topologyJunctionTolerance(result.width, result.height, horizontal),
+        horizontal.thicknessPx ?? 4,
+        vertical.thicknessPx ?? 4,
+      );
+      const joint = wallIntersectionPixel(horizontal, vertical, tolerance);
+      if (!joint) return;
+
+      const key = `${Math.round(joint.x)}:${Math.round(joint.y)}`;
+      if (created.has(key)) return;
+      created.add(key);
+
+      const center = worldPositionForPixel(joint.x, joint.y, result.width, result.height, result);
+      const horizontalThickness = worldThicknessForFeature(horizontal, result, 0.1);
+      const verticalThickness = worldThicknessForFeature(vertical, result, 0.1);
+      const filler = box(
+        Math.max(verticalThickness, horizontalThickness * 1.04),
+        wallHeight,
+        Math.max(horizontalThickness, verticalThickness * 1.04),
+        wallFinishes[activeWallFinish],
+        { castShadow: true },
+      );
+      filler.position.set(center.x, wallHeight / 2, center.z);
+      filler.userData.collider = "solid-wall";
+      filler.userData.featureKind = "generated-wall-joint";
+      filler.userData.selectName = "3D wall joint";
+      generatedWallMeshes.push(filler);
+      group.add(filler);
+    });
+  });
+}
+
+function nearestPerpendicularAtWallEndpoint(wall, endpointValue, result) {
+  const tolerance = topologyJunctionTolerance(result.width, result.height, wall);
+  return result.segments
+    .filter((candidate) => candidate.orientation !== wall.orientation)
+    .filter((candidate) => {
+      const endpointNearAxis = Math.abs(candidate.axisCenter - endpointValue) <= tolerance;
+      const wallAxisCrossesCandidate = wall.axisCenter >= candidate.start - tolerance && wall.axisCenter <= candidate.end + tolerance;
+      return endpointNearAxis && wallAxisCrossesCandidate;
+    })
+    .sort((a, b) => Math.abs(a.axisCenter - endpointValue) - Math.abs(b.axisCenter - endpointValue))[0];
+}
+
+function makeWallEndpointCap(wall, endpoint, result, wallHeight) {
+  const endpointValue = wall[endpoint];
+  const perpendicular = nearestPerpendicularAtWallEndpoint(wall, endpointValue, result);
+  if (!perpendicular) return null;
+
+  const point =
+    wall.orientation === "horizontal"
+      ? worldPositionForPixel(endpointValue, wall.axisCenter, result.width, result.height, result)
+      : worldPositionForPixel(wall.axisCenter, endpointValue, result.width, result.height, result);
+  const wallThickness = worldThicknessForFeature(wall, result, 0.1);
+  const jointThickness = worldThicknessForFeature(perpendicular, result, 0.1);
+  const capSize = Math.max(wallThickness, jointThickness) * 1.08;
+  const cap = box(capSize, wallHeight, capSize, wallFinishes[activeWallFinish], { castShadow: true });
+  cap.position.set(point.x, wallHeight / 2, point.z);
+  cap.userData.collider = "solid-wall";
+  cap.userData.featureKind = "generated-wall-joint";
+  cap.userData.selectName = "3D wall joint";
+  return cap;
+}
+
+function addWallEndpointCaps(group, result, wallHeight) {
+  const created = new Set();
+  result.segments.forEach((wall) => {
+    ["start", "end"].forEach((endpoint) => {
+      const cap = makeWallEndpointCap(wall, endpoint, result, wallHeight);
+      if (!cap) return;
+      const key = `${Math.round(cap.position.x * 1000)}:${Math.round(cap.position.z * 1000)}`;
+      if (created.has(key)) {
+        disposeObjectTree(cap);
+        return;
+      }
+      created.add(key);
+      generatedWallMeshes.push(cap);
+      group.add(cap);
+    });
+  });
 }
 
 function windowVerticalProfile(type, wallHeight, opening = null) {
@@ -6501,7 +7339,7 @@ function applySitePhotosToPlanModel() {
   }
 
   if (!detectedWallResult?.segments?.length) {
-    setRecognitionStatus("请先导入图纸并识别墙线，再执行图纸深化");
+    setRecognitionStatus("请先在读图工具中识别墙线，或手动绘制/补墙");
     return;
   }
 
@@ -6780,7 +7618,7 @@ function clearSitePhotoModel() {
   sitePhotoMatches = [];
   if (sitePhotoInput) sitePhotoInput.value = "";
   setSitePhotoStatus("尚未导入现场图片", "可同时上传多张现场图");
-  setRecognitionStatus(planCanvas ? "可识别墙线" : "等待识别");
+  setRecognitionStatus(planCanvas ? "可在读图工具中识别墙线" : "等待识别");
 }
 
 function wallSummaryText(suffix = "") {
@@ -6987,7 +7825,7 @@ function renderLinearPlanEditor(result = detectedWallResult) {
   if (!result?.segments?.length) {
     const empty = document.createElement("div");
     empty.className = "linear-plan-empty";
-    empty.textContent = "导入平面图并点击识别墙线后，这里会出现可编辑的线性平面图。";
+    empty.textContent = "导入平面图后，可用划线墙或补墙手动生成可编辑的线性平面图。";
     linearPlanList.append(empty);
     window.lucide?.createIcons();
     return;
@@ -7009,6 +7847,116 @@ function renderLinearPlanEditor(result = detectedWallResult) {
 function preserveManualOpenings(existing = [], next = []) {
   const manual = existing.filter((opening) => opening.source?.startsWith("manual"));
   return dedupeOpenings([...next, ...manual]);
+}
+
+function deletedOpeningStore(result = detectedWallResult) {
+  if (!result) return null;
+  result.deletedOpenings = result.deletedOpenings ?? { door: [], window: [] };
+  result.deletedOpenings.door = result.deletedOpenings.door ?? [];
+  result.deletedOpenings.window = result.deletedOpenings.window ?? [];
+  return result.deletedOpenings;
+}
+
+function deletedWallStore(result = detectedWallResult) {
+  if (!result) return null;
+  result.deletedWalls = result.deletedWalls ?? [];
+  return result.deletedWalls;
+}
+
+function shouldTrackDeletedOpening(opening) {
+  return Boolean(opening && !opening.source?.startsWith("manual"));
+}
+
+function shouldTrackDeletedWall(wall) {
+  return Boolean(wall && !wall.source?.startsWith("manual") && !wall.manualLock);
+}
+
+function deletedWallSnapshot(wall) {
+  return {
+    orientation: wall.orientation,
+    start: wall.start,
+    end: wall.end,
+    axisCenter: wall.axisCenter,
+    thicknessPx: wall.thicknessPx ?? 5,
+    source: wall.source ?? "wall",
+  };
+}
+
+function deletedOpeningSnapshot(opening) {
+  return {
+    orientation: opening.orientation,
+    start: opening.start,
+    end: opening.end,
+    axisCenter: opening.axisCenter,
+    thicknessPx: opening.thicknessPx ?? 5,
+    source: opening.source ?? "auto",
+  };
+}
+
+function deletedWallMatches(deletedWall, wall) {
+  if (!deletedWall || !wall || deletedWall.orientation !== wall.orientation) return false;
+  const axisTolerance = Math.max(10, deletedWall.thicknessPx ?? 5, wall.thicknessPx ?? 5);
+  if (Math.abs((deletedWall.axisCenter ?? 0) - (wall.axisCenter ?? 0)) > axisTolerance) return false;
+
+  const deletedLength = Math.max(1, segmentLength(deletedWall));
+  const wallLength = Math.max(1, segmentLength(wall));
+  const overlap = overlapLength(deletedWall, wall);
+  if (overlap >= Math.min(deletedLength, wallLength) * 0.5) return true;
+
+  const centerDelta = Math.abs((deletedWall.start + deletedWall.end - wall.start - wall.end) / 2);
+  return centerDelta <= Math.max(10, Math.min(deletedLength, wallLength) * 0.35);
+}
+
+function registerDeletedWall(wall) {
+  if (!shouldTrackDeletedWall(wall)) return;
+  const store = deletedWallStore();
+  if (!store) return;
+  const snapshot = deletedWallSnapshot(wall);
+  const exists = store.some((item) => deletedWallMatches(item, snapshot));
+  if (!exists) store.push(snapshot);
+}
+
+function registerDeletedOpening(kind, opening) {
+  if (!["door", "window"].includes(kind) || !shouldTrackDeletedOpening(opening)) return;
+  const store = deletedOpeningStore();
+  if (!store) return;
+  const snapshot = deletedOpeningSnapshot(opening);
+  const collection = store[kind];
+  const exists = collection.some((item) => deletedOpeningMatches(item, snapshot));
+  if (!exists) collection.push(snapshot);
+}
+
+function deletedOpeningMatches(deletedOpening, opening) {
+  if (!deletedOpening || !opening || deletedOpening.orientation !== opening.orientation) return false;
+  const axisTolerance = Math.max(10, deletedOpening.thicknessPx ?? 5, opening.thicknessPx ?? 5);
+  if (Math.abs((deletedOpening.axisCenter ?? 0) - (opening.axisCenter ?? 0)) > axisTolerance) return false;
+
+  const deletedLength = Math.max(1, segmentLength(deletedOpening));
+  const openingLength = Math.max(1, segmentLength(opening));
+  const overlap = overlapLength(deletedOpening, opening);
+  if (overlap >= Math.min(deletedLength, openingLength) * 0.45) return true;
+
+  const centerDelta = Math.abs((deletedOpening.start + deletedOpening.end - opening.start - opening.end) / 2);
+  return centerDelta <= Math.max(10, Math.min(deletedLength, openingLength) * 0.35);
+}
+
+function filterDeletedAutoOpenings(kind, openings) {
+  const store = deletedOpeningStore();
+  const deleted = store?.[kind] ?? [];
+  if (!deleted.length) return openings;
+  return openings.filter((opening) => {
+    if (opening.source?.startsWith("manual")) return true;
+    return !deleted.some((item) => deletedOpeningMatches(item, opening));
+  });
+}
+
+function filterDeletedAutoWalls(walls) {
+  const deleted = deletedWallStore() ?? [];
+  if (!deleted.length) return walls;
+  return walls.filter((wall) => {
+    if (wall.source?.startsWith("manual") || wall.manualLock) return true;
+    return !deleted.some((item) => deletedWallMatches(item, wall));
+  });
 }
 
 function rebuildGeneratedModelAfterPlanEdit() {
@@ -7291,6 +8239,8 @@ function serializeDetectedWallResult(result) {
     layoutLogic,
     architecturalBounds,
     optimizer,
+    deletedOpenings,
+    deletedWalls,
   } = result;
   return structuredClone({
     segments: segments ?? [],
@@ -7305,6 +8255,8 @@ function serializeDetectedWallResult(result) {
     layoutLogic,
     architecturalBounds,
     optimizer,
+    deletedOpenings: deletedOpenings ? structuredClone(deletedOpenings) : undefined,
+    deletedWalls: deletedWalls ? structuredClone(deletedWalls) : undefined,
   });
 }
 
@@ -7343,6 +8295,7 @@ function createProjectSnapshot() {
       wallHeight: wallHeightInput?.value ?? null,
     },
     optimizer: planOptimizerSettings(),
+    wallRecognitionTraining: wallRecognitionTrainingSamples,
     sitePhotos: sitePhotoCanvases.map((item) => canvasToProjectDataUrl(item)),
     models: modelObjects.map(serializeModelObject).filter(Boolean),
   };
@@ -7396,6 +8349,10 @@ async function restoreSavedProject() {
   resetPlanRegionState();
   resetScaleCalibrationState();
   planUndoStack.length = 0;
+  if (Array.isArray(snapshot.wallRecognitionTraining)) {
+    wallRecognitionTrainingSamples = snapshot.wallRecognitionTraining.slice(-maxWallRecognitionTrainingSamples);
+    saveWallRecognitionTrainingSamples();
+  }
 
   activeRoom = snapshot.activeRoom ?? activeRoom;
   activeWallFinish = snapshot.finishes?.wall ?? activeWallFinish;
@@ -7471,7 +8428,7 @@ async function restoreSavedProject() {
   updateWallEditor();
   renderLinearPlanEditor(detectedWallResult);
   renderGeneratedOpeningHandles();
-  updatePlanOptimizerStatus();
+  updateWallRecognitionTrainingStatus();
   setRecognitionStatus(`已恢复上次保存 · ${new Date(snapshot.savedAt).toLocaleString("zh-CN")}`);
   return true;
 }
@@ -7537,16 +8494,25 @@ function deleteLinearFeature(kind, index) {
   if (kind === "wall") {
     const wall = detectedWallResult.segments[index];
     if (!wall) return;
+    registerDeletedWall(wall);
+    (detectedWallResult.doors ?? []).forEach((opening) => {
+      if (openingAlignedToWall(opening, wall)) registerDeletedOpening("door", opening);
+    });
+    (detectedWallResult.windows ?? []).forEach((opening) => {
+      if (openingAlignedToWall(opening, wall)) registerDeletedOpening("window", opening);
+    });
     detectedWallResult.doors = (detectedWallResult.doors ?? []).filter((opening) => !openingAlignedToWall(opening, wall));
     detectedWallResult.windows = (detectedWallResult.windows ?? []).filter((opening) => !openingAlignedToWall(opening, wall));
     detectedWallResult.segments.splice(index, 1);
     selectedDetectedWallIndex = null;
   } else if (kind === "door") {
+    registerDeletedOpening("door", detectedWallResult.doors?.[index]);
     detectedWallResult.doors?.splice(index, 1);
     selectedLinearFeature = null;
     commitOpeningPlanEdit("Door opening deleted");
     return;
   } else if (kind === "window") {
+    registerDeletedOpening("window", detectedWallResult.windows?.[index]);
     detectedWallResult.windows?.splice(index, 1);
     selectedLinearFeature = null;
     commitOpeningPlanEdit("Window deleted");
@@ -7671,7 +8637,7 @@ function ensureDetectedWallResultForManualEdit() {
       usedRuleBasedSegments: false,
       manualOnly: true,
     },
-    optimizer: planOptimizerSettings(),
+    optimizer: wallRecognitionOptimizerSettings(),
     inkMap: map,
   };
   detectedWallSegments = detectedWallResult.segments;
@@ -7998,7 +8964,7 @@ function updateDoorsAfterWallEdit() {
   const symbolDoors = detectedWallResult.runs
     ? estimateSymbolDoors(detectedWallResult.inkMap, detectedWallResult.segments, detectedWallResult.runs, gapDoors)
     : [];
-  const rawDoors = preserveManualOpenings(previousDoors, [...gapDoors, ...symbolDoors]);
+  const rawDoors = filterDeletedAutoOpenings("door", preserveManualOpenings(previousDoors, [...gapDoors, ...symbolDoors]));
   const gapWindows = estimateWindowOpenings(detectedWallResult.inkMap, detectedWallResult.segments, rawDoors);
   const symbolWindows = detectedWallResult.runs
     ? estimateSymbolWindows(detectedWallResult.inkMap, detectedWallResult.segments, detectedWallResult.runs, [
@@ -8013,7 +8979,10 @@ function updateDoorsAfterWallEdit() {
         ...symbolWindows,
       ])
     : [];
-  const rawWindows = preserveManualOpenings(previousWindows, [...gapWindows, ...symbolWindows, ...slidingWindows]).map((opening) => ({
+  const rawWindows = filterDeletedAutoOpenings(
+    "window",
+    preserveManualOpenings(previousWindows, [...gapWindows, ...symbolWindows, ...slidingWindows]),
+  ).map((opening) => ({
     ...opening,
     windowType: opening.windowType ?? "standard",
   }));
@@ -8026,8 +8995,8 @@ function updateDoorsAfterWallEdit() {
   };
   const architectural = applyArchitecturalOpeningLogic(architecturalInput, detectedWallResult.inkMap);
   detectedWallResult.architecturalBounds = architecturalInput.architecturalBounds;
-  detectedWallResult.doors = architectural.doors;
-  detectedWallResult.windows = architectural.windows;
+  detectedWallResult.doors = filterDeletedAutoOpenings("door", architectural.doors);
+  detectedWallResult.windows = filterDeletedAutoOpenings("window", architectural.windows);
   detectedWallResult.layoutLogic = applyFloorPlanSpatialLogic(detectedWallResult, detectedWallResult.inkMap);
   detectedWallResult.quality = {
     ...(detectedWallResult.quality ?? {}),
@@ -8221,7 +9190,7 @@ function applyWallGlueToDetectedResult(options = {}) {
     .join("|");
 
   const glued = closeWallTopology(detectedWallResult.segments, detectedWallResult.width, detectedWallResult.height);
-  detectedWallResult.segments = glued.map((segment) => ({
+  detectedWallResult.segments = filterDeletedAutoWalls(glued).map((segment) => ({
     ...segment,
     baseStart: segment.start,
     baseEnd: segment.end,
@@ -8333,18 +9302,7 @@ function applySelectedWallEndpointOffsets(rawStart, rawEnd) {
 
 function deleteSelectedWall() {
   if (selectedDetectedWallIndex === null || !detectedWallResult) return;
-
-  savePlanUndoSnapshot();
-  const wall = detectedWallResult.segments[selectedDetectedWallIndex];
-  detectedWallResult.doors = (detectedWallResult.doors ?? []).filter((opening) => !openingAlignedToWall(opening, wall));
-  detectedWallResult.windows = (detectedWallResult.windows ?? []).filter((opening) => !openingAlignedToWall(opening, wall));
-  detectedWallResult.segments.splice(selectedDetectedWallIndex, 1);
-  selectedDetectedWallIndex = null;
-  selectedLinearFeature = null;
-  applyWallGlueToDetectedResult({ rebuildOpenings: true });
-  renderDetectedWalls(detectedWallResult);
-  setRecognitionStatus(wallSummaryText("已删除墙体"));
-  if (generated3DActive) build3DFromDetectedWalls({ preserveView: true });
+  deleteLinearFeature("wall", selectedDetectedWallIndex);
 }
 
 function deleteSelectedLinearFeature() {
@@ -9129,6 +10087,8 @@ function build3DFromDetectedWalls(options = {}) {
       addWindowWallInfill(generatedModelGroup, opening, detectedWallResult, wallHeight, wallThickness);
     });
   });
+  addWallJointFillers(generatedModelGroup, detectedWallResult, wallHeight);
+  addWallEndpointCaps(generatedModelGroup, detectedWallResult, wallHeight);
 
   detectedWallResult.doors.forEach((opening, index) => {
     const wallThickness = worldThicknessForFeature(opening, detectedWallResult, 0.1);
@@ -9312,23 +10272,26 @@ function renderDetectedWalls(result) {
   renderLinearPlanEditor(result);
 }
 
-function detectWallsFromPlan() {
+async function detectWallsFromPlan() {
   if (!planCanvas) {
     setRecognitionStatus("请先导入图纸");
     return;
   }
 
-  setRecognitionStatus("识别中...");
+  setRecognitionStatus("CODEX 默认读图识别中...");
   const source = recognitionSourceForPlan();
   savePlanUndoSnapshot();
-  const result = estimateWallSegments(source.canvas, { sourceRect: source.sourceRect });
+  const result = await estimateWallSegmentsWithCodexDefault(source.canvas, { sourceRect: source.sourceRect });
   result.sourceRect = source.sourceRect;
   result.sourceLabel = source.label;
   clearGenerated3D();
   selectedDetectedWallIndex = null;
   selectedLinearFeature = null;
   renderDetectedWalls(result);
-  setRecognitionStatus(wallSummaryText([source.sourceRect ? "来自框选区域" : "", recognitionQualityText(result)].filter(Boolean).join(" · ")));
+  const sourceLabel = result.codexDefaultBackend ? "CODEX 默认读图" : "浏览器规则回退";
+  setRecognitionStatus(
+    wallSummaryText([source.sourceRect ? "来自框选区域" : "", sourceLabel, recognitionQualityText(result)].filter(Boolean).join(" · ")),
+  );
 }
 
 function updateSelectedTransform(type, rawValue) {
@@ -9504,31 +10467,59 @@ function beginModelResizeHandleDrag(event, hit) {
   const bounds = selectedModelBounds();
   if (!point || !bounds) return false;
 
-  const center = bounds.getCenter(new THREE.Vector3());
-  modelResizeStartDistance = Math.max(0.08, Math.hypot(point.x - center.x, point.z - center.z));
-  modelResizeStartScale = selectedGroup.scale.x;
+  modelResizeStartScale.copy(selectedGroup.scale);
+  modelResizeStartPosition.copy(selectedGroup.position);
+  modelResizeStartBounds = bounds.clone();
+  modelResizeHandleData = {
+    sideX: hit.object.userData.sideX || 1,
+    sideY: hit.object.userData.sideY || 0,
+    sideZ: hit.object.userData.sideZ || 1,
+  };
+  modelResizeStartClientY = event.clientY;
   isDraggingModelResizeHandle = true;
   modelResizePointerId = event.pointerId;
   controls.enabled = false;
   safeSetPointerCapture(event.pointerId);
-  updateSelection("Adjusting model size");
+  updateSelection("拖动控点调整家具尺寸");
   return true;
 }
 
 function updateModelResizeHandleDrag(event) {
   if (!selectedGroup?.userData?.editable) return;
   const point = groundPointFromEvent(event);
-  const bounds = selectedModelBounds();
-  if (!point || !bounds) return;
+  if (!point || !modelResizeStartBounds || !modelResizeHandleData) return;
 
-  const center = bounds.getCenter(new THREE.Vector3());
-  const distance = Math.max(0.08, Math.hypot(point.x - center.x, point.z - center.z));
-  const ratio = THREE.MathUtils.clamp(distance / Math.max(0.08, modelResizeStartDistance), 0.15, 5);
-  const previousPosition = selectedGroup.position.clone();
-  const nextScale = THREE.MathUtils.clamp(modelResizeStartScale * ratio, 0.2, 3);
-  selectedGroup.scale.setScalar(nextScale);
-  if (!constrainFurniturePosition(selectedGroup, previousPosition)) {
-    selectedGroup.scale.setScalar(modelResizeStartScale);
+  const startBounds = modelResizeStartBounds;
+  const startWidth = Math.max(0.05, startBounds.max.x - startBounds.min.x);
+  const startDepth = Math.max(0.05, startBounds.max.z - startBounds.min.z);
+  const startHeight = Math.max(0.05, startBounds.max.y - startBounds.min.y);
+  const oppositeX = modelResizeHandleData.sideX > 0 ? startBounds.min.x : startBounds.max.x;
+  const oppositeZ = modelResizeHandleData.sideZ > 0 ? startBounds.min.z : startBounds.max.z;
+  const nextWidth = THREE.MathUtils.clamp(Math.abs(point.x - oppositeX), 0.12, 80);
+  const nextDepth = THREE.MathUtils.clamp(Math.abs(point.z - oppositeZ), 0.12, 80);
+  const heightDelta = modelResizeHandleData.sideY ? (modelResizeStartClientY - event.clientY) * 0.012 : 0;
+  const nextHeight = THREE.MathUtils.clamp(startHeight + heightDelta, 0.12, 12);
+  const targetCenterX = (oppositeX + point.x) / 2;
+  const targetCenterZ = (oppositeZ + point.z) / 2;
+
+  selectedGroup.position.copy(modelResizeStartPosition);
+  selectedGroup.scale.set(
+    THREE.MathUtils.clamp(modelResizeStartScale.x * (nextWidth / startWidth), 0.05, 12),
+    THREE.MathUtils.clamp(modelResizeStartScale.y * (nextHeight / startHeight), 0.05, 12),
+    THREE.MathUtils.clamp(modelResizeStartScale.z * (nextDepth / startDepth), 0.05, 12),
+  );
+
+  const resizedBounds = selectedModelBounds();
+  if (resizedBounds) {
+    const resizedCenter = resizedBounds.getCenter(new THREE.Vector3());
+    selectedGroup.position.x += targetCenterX - resizedCenter.x;
+    selectedGroup.position.z += targetCenterZ - resizedCenter.z;
+    selectedGroup.position.y += startBounds.min.y - resizedBounds.min.y;
+  }
+
+  const attemptedPosition = selectedGroup.position.clone();
+  if (!constrainFurniturePosition(selectedGroup, modelResizeStartPosition)) {
+    selectedGroup.position.copy(attemptedPosition);
   }
   syncTransformInputs();
   updateEditor();
@@ -9540,6 +10531,8 @@ function finishModelResizeHandleDrag(event) {
   if (!isDraggingModelResizeHandle || event.pointerId !== modelResizePointerId) return false;
   isDraggingModelResizeHandle = false;
   modelResizePointerId = null;
+  modelResizeStartBounds = null;
+  modelResizeHandleData = null;
   controls.enabled = true;
   safeReleasePointerCapture(event.pointerId);
   updateSelection(selectedGroup?.userData?.selectName ?? "Model selected");
@@ -10183,6 +11176,8 @@ async function init() {
   raycaster = new THREE.Raycaster();
   pointer = new THREE.Vector2();
   gltfLoader = new GLTFLoader();
+  loadWallRecognitionTrainingSamples();
+  updateWallRecognitionTrainingStatus();
 
   if (trellisEndpointInput) {
     trellisEndpointInput.value =
@@ -10332,6 +11327,11 @@ async function init() {
     clearOriginalModel();
   });
 
+  planUploadButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    planFileInput?.click();
+  });
+
   planFileInput?.addEventListener("change", (event) => {
     importPlanFile(event.target.files?.[0]);
   });
@@ -10405,12 +11405,28 @@ async function init() {
   clearWallsButton?.addEventListener("click", () => {
     if (detectedWallResult) savePlanUndoSnapshot();
     clearDetectedWalls();
-    setRecognitionStatus(planCanvas ? "可重新识别" : "等待识别");
+    setRecognitionStatus(planCanvas ? "可在读图工具中识别墙线" : "等待识别");
   });
 
   rerunOptimizedRecognitionButton?.addEventListener("click", () => {
     updatePlanOptimizerStatus();
     detectWallsFromPlan();
+  });
+
+  trainWallRecognitionButton?.addEventListener("click", () => {
+    rememberCurrentWallRecognitionTraining();
+  });
+
+  rerunTrainedRecognitionButton?.addEventListener("click", () => {
+    detectWallsFromPlan();
+  });
+
+  exportWallTrainingButton?.addEventListener("click", () => {
+    exportWallRecognitionTrainingSet();
+  });
+
+  clearWallTrainingButton?.addEventListener("click", () => {
+    clearWallRecognitionTraining();
   });
 
   [optShowRoomsInput, optLengthLabelsInput].forEach((input) => {
@@ -10420,7 +11436,7 @@ async function init() {
   [optCollapseWallsInput, optExtendCornersInput, optDoorWindowSymbolsInput, optMinWallLengthInput].forEach((input) => {
     input?.addEventListener("change", () => {
       updatePlanOptimizerStatus();
-      if (planCanvas) setRecognitionStatus("读图设置已更新，点击“按设置重识别”生效");
+      if (planCanvas) setRecognitionStatus("读图设置已更新，可在读图工具中重识别");
     });
     input?.addEventListener("input", () => {
       updatePlanOptimizerStatus();
@@ -10433,7 +11449,12 @@ async function init() {
 
   clear3DModelButton?.addEventListener("click", () => {
     clearGenerated3D();
-    setRecognitionStatus(detectedWallSegments.length > 0 ? wallSummaryText() : planCanvas ? "可识别墙线" : "等待识别");
+    setRecognitionStatus(detectedWallSegments.length > 0 ? wallSummaryText() : planCanvas ? "可在读图工具中识别墙线" : "等待识别");
+  });
+
+  sitePhotoUploadButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    sitePhotoInput?.click();
   });
 
   sitePhotoInput?.addEventListener("change", (event) => {

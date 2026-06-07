@@ -537,7 +537,16 @@ h2 {
 
 #planFileInput,
 #sitePhotoInput {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
 }
 
 .plan-status {
@@ -711,6 +720,101 @@ h2 {
 }
 
 .recognition-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.plan-read-tools {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.plan-read-tools summary {
+  list-style: none;
+}
+
+.plan-read-tools summary::-webkit-details-marker {
+  display: none;
+}
+
+.plan-read-summary {
+  min-width: 116px;
+}
+
+.plan-read-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 35;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  width: min(260px, calc(100vw - 32px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(18, 31, 38, 0.14);
+}
+
+.plan-read-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 4px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-read-status span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.plan-read-status strong {
+  color: var(--green);
+  font-size: 13px;
+}
+
+.plan-read-menu .compact-action {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.wall-training-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin: -6px 0 14px;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.wall-training-strip span,
+.wall-training-strip strong {
+  display: block;
+}
+
+.wall-training-strip span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.wall-training-strip strong {
+  margin-top: 1px;
+  color: var(--green);
+  font-size: 13px;
+}
+
+.wall-training-actions {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1845,7 +1949,8 @@ tbody tr:last-child td {
     width: 100%;
   }
 
-  .recognition-strip {
+  .recognition-strip,
+  .wall-training-strip {
     align-items: stretch;
     flex-direction: column;
     padding: 10px;
@@ -1864,6 +1969,18 @@ tbody tr:last-child td {
   .recognition-actions {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .plan-read-tools,
+  .plan-read-summary {
+    width: 100%;
+  }
+
+  .plan-read-menu {
+    position: static;
+    width: 100%;
+    margin-top: 8px;
+    box-shadow: none;
   }
 
   .plan-status {

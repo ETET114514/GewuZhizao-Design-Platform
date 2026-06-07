@@ -45,6 +45,20 @@ function Get-ContentType {
   }
 }
 
+function Get-PythonCommand {
+  $py = Get-Command py -ErrorAction SilentlyContinue
+  if ($py) {
+    return "py"
+  }
+
+  $python = Get-Command python -ErrorAction SilentlyContinue
+  if ($python) {
+    return "python"
+  }
+
+  return $null
+}
+
 function Start-StaticServer {
   param([int]$ListenPort)
 
@@ -126,6 +140,14 @@ function Start-StaticServer {
 }
 
 if ($Serve) {
+  $pythonCommand = Get-PythonCommand
+  if ($pythonCommand) {
+    $env:PORT = "$Port"
+    & $pythonCommand "floorplan_server.py"
+    exit $LASTEXITCODE
+  }
+
+  Write-Host "Python was not found. Starting static server without /api/segment."
   Start-StaticServer $Port
   exit 0
 }

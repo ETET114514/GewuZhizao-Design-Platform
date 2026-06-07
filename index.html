@@ -267,10 +267,42 @@
                 <strong id="recognitionStatus">等待识别</strong>
               </div>
               <div class="recognition-actions">
-                <button class="secondary-button compact-action detect-action" id="detectWalls" type="button">
-                  <i data-lucide="scan-search"></i>
-                  <span>识别墙线</span>
-                </button>
+                <details class="plan-read-tools">
+                  <summary class="secondary-button compact-action plan-read-summary">
+                    <i data-lucide="scan-search"></i>
+                    <span>读图工具</span>
+                  </summary>
+                  <div class="plan-read-menu">
+                    <div class="plan-read-status">
+                      <span>墙体训练</span>
+                      <strong id="wallTrainingStatus">未训练</strong>
+                    </div>
+                    <button class="secondary-button compact-action detect-action" id="detectWalls" type="button">
+                      <i data-lucide="scan-search"></i>
+                      <span>CODEX 识别墙线</span>
+                    </button>
+                    <button class="secondary-button compact-action detect-action" id="rerunOptimizedRecognition" type="button">
+                      <i data-lucide="refresh-cw"></i>
+                      <span>按设置重识别</span>
+                    </button>
+                    <button class="secondary-button compact-action" id="trainWallRecognition" type="button">
+                      <i data-lucide="brain-circuit"></i>
+                      <span>学习修正</span>
+                    </button>
+                    <button class="secondary-button compact-action detect-action" id="rerunTrainedRecognition" type="button">
+                      <i data-lucide="repeat-2"></i>
+                      <span>训练重识别</span>
+                    </button>
+                    <button class="secondary-button compact-action" id="exportWallTraining" type="button">
+                      <i data-lucide="download"></i>
+                      <span>导出样本</span>
+                    </button>
+                    <button class="secondary-button compact-action" id="clearWallTraining" type="button">
+                      <i data-lucide="trash-2"></i>
+                      <span>清空样本</span>
+                    </button>
+                  </div>
+                </details>
                 <label class="plan-field wall-height-field">
                   <span>墙高</span>
                   <input id="wallHeightInput" type="number" min="2.2" max="4.5" step="0.1" value="2.8" />

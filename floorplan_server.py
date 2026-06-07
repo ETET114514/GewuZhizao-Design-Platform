@@ -294,7 +294,7 @@ def encode_mask_png(mask, cv2):
 
 
 def main():
-    port = int(os.environ.get("PORT", "8010"))
+    port = int(os.environ.get("PORT", "8000"))
     server = ThreadingHTTPServer(("127.0.0.1", port), FloorPlanHandler)
     print(f"GewuZhizao floor-plan service: http://127.0.0.1:{port}/index.html")
     print("POST /api/segment enabled")

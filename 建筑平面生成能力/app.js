@@ -145,6 +145,7 @@ const state = {
   pendingProductCategory: "furniture",
   hiddenOpeningKeys: [],
   manualMillimetersPerPixel: null,
+  beginnerLastResultKey: "",
   undoStack: [],
   clipboard: null,
   sourceName: "floor-plan",
@@ -189,6 +190,30 @@ window.__floorPlanState = state;
 window.__floorPlanElements = elements;
 
 const ctx = elements.previewCanvas.getContext("2d");
+
+const beginnerUi = {
+  launcher: document.querySelector("#modeLauncher"),
+  beginnerModeButton: document.querySelector("#beginnerModeButton"),
+  advancedModeButton: document.querySelector("#advancedModeButton"),
+  modeSwitchButton: document.querySelector("#modeSwitchButton"),
+  chatBackButton: document.querySelector("#chatBackButton"),
+  chatAdvancedButton: document.querySelector("#chatAdvancedButton"),
+  chatUploadButton: document.querySelector("#chatUploadButton"),
+  chatDemoButton: document.querySelector("#chatDemoButton"),
+  chatAiButton: document.querySelector("#chatAiButton"),
+  chatBrowserButton: document.querySelector("#chatBrowserButton"),
+  chatRegenerateButton: document.querySelector("#chatRegenerateButton"),
+  chatExportButton: document.querySelector("#chatExportButton"),
+  chatForm: document.querySelector("#chatForm"),
+  chatInput: document.querySelector("#chatInput"),
+  chatMessages: document.querySelector("#chatMessages"),
+  chatStatusText: document.querySelector("#chatStatusText"),
+  chatImageText: document.querySelector("#chatImageText"),
+  chatWallText: document.querySelector("#chatWallText"),
+  chatRoomText: document.querySelector("#chatRoomText"),
+  chatOpeningText: document.querySelector("#chatOpeningText"),
+  chatModeText: document.querySelector("#chatModeText"),
+};
 
 for (const [name, element] of Object.entries(elements)) {
   if (!element) throw new Error(`页面元素缺失: ${name}`);
@@ -283,6 +308,7 @@ function syncControlLabels() {
 
 function setStatus(text) {
   elements.statusPill.textContent = text;
+  updateBeginnerSummary();
 }
 
 function fitCanvasToImage(canvas) {
@@ -475,6 +501,7 @@ async function loadImageFromFile(file) {
     state.undoStack = [];
     state.sourceName = file.name.replace(/\.[^.]+$/, "") || "floor-plan";
     state.projectFileHandle = null;
+    announceBeginnerImageLoaded(file.name);
     fitCanvasToImage(state.analysisCanvas);
     elements.emptyState.hidden = true;
     elements.imageStat.textContent = `${state.analysisCanvas.width} x ${state.analysisCanvas.height}`;
@@ -624,6 +651,7 @@ function finishRecognition(lines, settings, mode) {
   elements.processButton.disabled = !state.analysisCanvas;
   elements.saveProjectButton.disabled = !state.analysisCanvas;
   setStatus("已生成");
+  announceBeginnerRecognition();
 }
 
 function buildDarkPixelMask(imageData, threshold) {
@@ -1371,6 +1399,7 @@ function updateStats() {
   elements.roomStat.textContent = String(state.topology.rooms.length);
   elements.modeStat.textContent = state.recognitionMode;
   updateSelectedComponentInfo();
+  updateBeginnerSummary();
 }
 
 function updateSelectedComponentInfo() {
@@ -6646,6 +6675,309 @@ function handleDocumentKeyDown(event) {
   }
 }
 
+function isBeginnerMode() {
+  return document.body.classList.contains("mode-beginner");
+}
+
+function setExperienceMode(mode) {
+  const nextMode = mode === "beginner" || mode === "advanced" ? mode : "launch";
+  document.body.classList.toggle("mode-launch", nextMode === "launch");
+  document.body.classList.toggle("mode-beginner", nextMode === "beginner");
+  document.body.classList.toggle("mode-advanced", nextMode === "advanced");
+  updateBeginnerSummary();
+
+  if (nextMode === "beginner") {
+    window.setTimeout(() => {
+      resizeThreeViewer();
+      if (state.analysisCanvas) renderPreview();
+      beginnerUi.chatInput?.focus({ preventScroll: true });
+    }, 0);
+    return;
+  }
+
+  if (nextMode === "advanced") {
+    window.setTimeout(() => {
+      resizeThreeViewer();
+      if (state.analysisCanvas) renderPreview();
+    }, 0);
+  }
+}
+
+function recognitionModeLabel() {
+  const selected = elements.recognitionModeSelect.value;
+  if (state.recognitionMode === "opencv-fallback") return "AI/CV 后端";
+  if (state.recognitionMode === "onnx-wall-segmentation") return "ONNX 模型";
+  if (state.recognitionMode === "browser-rules" || selected === "browser") return "普通识别";
+  if (selected === "ai-cv") return "AI/CV 识别";
+  if (state.recognitionMode === "manual") return "手动画图";
+  if (state.recognitionMode === "project") return "项目文件";
+  return state.recognitionMode === "-" ? "普通识别" : state.recognitionMode;
+}
+
+function updateBeginnerSummary() {
+  if (!beginnerUi.chatStatusText) return;
+  const openingCount = state.topology ? constructibleOpenings().length : 0;
+  beginnerUi.chatStatusText.textContent = elements.statusPill.textContent || "待上传";
+  beginnerUi.chatImageText.textContent = state.analysisCanvas ? `${state.analysisCanvas.width} x ${state.analysisCanvas.height}` : "还没有图纸";
+  beginnerUi.chatWallText.textContent = `${state.lines.length} 条墙线`;
+  beginnerUi.chatRoomText.textContent = `${state.topology.rooms.length} 个房间`;
+  beginnerUi.chatOpeningText.textContent = `${openingCount} 个`;
+  beginnerUi.chatModeText.textContent = recognitionModeLabel();
+  if (beginnerUi.chatRegenerateButton) beginnerUi.chatRegenerateButton.disabled = !state.analysisCanvas;
+  if (beginnerUi.chatExportButton) beginnerUi.chatExportButton.disabled = !hasExportableContent();
+}
+
+function addChatMessage(role, text) {
+  if (!beginnerUi.chatMessages) return;
+  const message = document.createElement("article");
+  message.className = `chat-message ${role}`;
+  const label = document.createElement("span");
+  label.textContent = role === "user" ? "你" : "助手";
+  const body = document.createElement("p");
+  body.textContent = text;
+  message.append(label, body);
+  beginnerUi.chatMessages.appendChild(message);
+  beginnerUi.chatMessages.scrollTop = beginnerUi.chatMessages.scrollHeight;
+}
+
+function addAssistantMessage(text) {
+  if (isBeginnerMode()) addChatMessage("assistant", text);
+}
+
+function announceBeginnerImageLoaded(fileName) {
+  if (!isBeginnerMode()) return;
+  addChatMessage(
+    "assistant",
+    `我已经读到「${fileName}」了。接下来会自动识别墙线；你先看右侧预览，如果墙线太多或太少，可以让我切换 AI/CV 识别或普通识别。`
+  );
+}
+
+function announceBeginnerRecognition() {
+  if (!isBeginnerMode()) return;
+  const openingCount = constructibleOpenings().length;
+  const resultKey = `${state.sourceName}|${state.recognitionMode}|${state.lines.length}|${state.topology.rooms.length}|${openingCount}`;
+  if (state.beginnerLastResultKey === resultKey) return;
+  state.beginnerLastResultKey = resultKey;
+
+  if (!state.lines.length) {
+    addChatMessage(
+      "assistant",
+      "这次没有识别到明显墙线。你可以试试 AI/CV 识别；如果原图线条很浅，建议换一张更清晰的平面图，或者进详细界面调低墙体阈值。"
+    );
+    return;
+  }
+
+  addChatMessage(
+    "assistant",
+    `生成完成：我找到了 ${state.lines.length} 条墙线、${openingCount} 个门窗洞口、${state.topology.rooms.length} 个闭合房间。现在建议先检查右侧叠加图：墙体位置对的话就可以导出 JSON；如果有缺墙，可以让我进入画墙或门窗模式补一下。`
+  );
+}
+
+function setBeginnerRecognitionMode(mode) {
+  elements.recognitionModeSelect.value = mode;
+  syncControlLabels();
+  if (mode === "ai-cv") {
+    addAssistantMessage("我已切到 AI/CV 识别。它会请求同一个后端接口 `/api/segment`，适合线条复杂、噪点多的图。");
+  } else {
+    addAssistantMessage("我已切到普通识别。它直接在浏览器里按线条规则处理，速度快，适合清晰的黑白平面图。");
+  }
+  if (state.analysisCanvas) runRecognition();
+}
+
+function runBeginnerCommand(input) {
+  const text = input.trim().toLowerCase();
+  if (!text) return;
+
+  if (/返回选择|回到选择|选择入口|切换入口|重新选择/.test(text)) {
+    addAssistantMessage("好的，我带你回到入口选择页。当前图纸和识别结果还保留在页面状态里。");
+    setExperienceMode("launch");
+    return;
+  }
+
+  if (/详细|专业|参数/.test(text)) {
+    addAssistantMessage("好的，我切到详细界面。你的图纸和识别结果不会丢。");
+    setExperienceMode("advanced");
+    return;
+  }
+
+  if (/帮助|能做什么|怎么用|指令/.test(text)) {
+    addAssistantMessage("你可以直接说：帮我上传图纸、加载样例、用 AI/CV 识别、普通识别、重新生成、导出 JSON、保存项目、打开项目、画墙、画门、画窗、测量、标定比例、线框模式、叠加模式、重置视角、进入详细界面。");
+    return;
+  }
+
+  if (/ai|cv|智能|模型|后端|精细/.test(text)) {
+    setBeginnerRecognitionMode("ai-cv");
+    return;
+  }
+
+  if (/普通|浏览器|规则|快速/.test(text)) {
+    setBeginnerRecognitionMode("browser");
+    return;
+  }
+
+  if (/样例|示例|demo|试试/.test(text)) {
+    addAssistantMessage("好的，我先加载内置样例。加载后会自动生成，你可以用它熟悉流程。");
+    loadDemoPlan();
+    return;
+  }
+
+  if (/上传|导入|图片|图纸|平面图|户型/.test(text)) {
+    addAssistantMessage("好的，请选择一张 PNG、JPG、WebP 或 SVG 平面图。选完后我会自动开始识别。");
+    openImagePicker();
+    return;
+  }
+
+  if (/重新|再生成|重跑|识别/.test(text)) {
+    if (!state.analysisCanvas) {
+      addAssistantMessage("还没有图纸。先上传一张平面图，或者加载样例，我再帮你重新生成。");
+      return;
+    }
+    addAssistantMessage("我会用当前识别方式重新生成一次。你稍后看右侧叠加图和下方 3D 模型。");
+    runRecognition();
+    return;
+  }
+
+  if (/导出|json|结果/.test(text)) {
+    if (!hasExportableContent()) {
+      addAssistantMessage("现在还没有可导出的墙线或构件。先上传图纸并生成结果，再导出 JSON。");
+      return;
+    }
+    addAssistantMessage("我正在导出 JSON。这个文件会包含墙线、交点、门窗洞口、房间和当前参数。");
+    exportJson();
+    return;
+  }
+
+  if (/打开/.test(text)) {
+    addAssistantMessage("请选择之前保存的项目 JSON。打开后，右侧会恢复原图、墙线和 3D 内容。");
+    openProjectArchive();
+    return;
+  }
+
+  if (/保存|存档|项目/.test(text)) {
+    if (!state.analysisCanvas) {
+      addAssistantMessage("现在还没有项目内容。先上传图纸或打开已有项目，再保存。");
+      return;
+    }
+    addAssistantMessage("我会保存项目文件，里面包含原图、识别结果、手动修改和当前参数。");
+    saveProjectArchive();
+    return;
+  }
+
+  if (/画墙|补墙|加墙/.test(text)) {
+    setTool("draw-wall");
+    addAssistantMessage("已进入画墙模式。请在右侧图纸上点一下作为起点，再点一下作为终点；适合补识别漏掉的墙。");
+    return;
+  }
+
+  if (/门/.test(text)) {
+    setTool("draw-door");
+    addAssistantMessage("已进入画门模式。请在右侧墙线上点门洞的起点和终点；门会和墙体一起参与导出。");
+    return;
+  }
+
+  if (/窗/.test(text)) {
+    setTool("draw-window");
+    addAssistantMessage("已进入画窗模式。请在右侧墙线上点窗洞两端；选中窗以后还能改成高窗、落地窗或飘窗。");
+    return;
+  }
+
+  if (/测量|量尺|尺寸/.test(text)) {
+    setTool("measure");
+    addAssistantMessage("已进入测量模式。请在右侧图纸上点两个位置，我会按当前比例给出尺寸。");
+    return;
+  }
+
+  if (/标定|比例/.test(text)) {
+    const metricMatch = text.match(/(\d+(?:\.\d+)?)\s*(米|m|毫米|mm)?/i);
+    if (metricMatch) {
+      const unit = metricMatch[2] || "mm";
+      const value = Number(metricMatch[1]);
+      const millimeters = /米|m/i.test(unit) ? value * 1000 : value;
+      if (millimeters >= 100) elements.calibrationLengthInput.value = String(Math.round(millimeters));
+    }
+    setTool("calibrate-scale");
+    addAssistantMessage(`已进入比例标定。请在右侧图纸上点一段已知长度的两个端点；我会按 ${elements.calibrationLengthInput.value} mm 来换算。你也可以输入“按 3 米标定比例”来改长度。`);
+    return;
+  }
+
+  if (/线框|只看线/.test(text)) {
+    setView("vector");
+    addAssistantMessage("已切到线框模式。现在右侧主要显示识别出的墙体中心线和构件关系。");
+    return;
+  }
+
+  if (/叠加|原图|覆盖/.test(text)) {
+    setView("overlay");
+    addAssistantMessage("已切到叠加模式。现在可以对照原图检查墙线是否贴合。");
+    return;
+  }
+
+  if (/重置视角|恢复视角|视角重置/.test(text)) {
+    resetThreeCamera();
+    addAssistantMessage("3D 视角已重置。");
+    return;
+  }
+
+  if (/退出漫游|俯视/.test(text)) {
+    setThreeMode("orbit");
+    addAssistantMessage("已回到 3D 俯视模式。");
+    return;
+  }
+
+  if (/漫游|走进|第一人称/.test(text)) {
+    setThreeMode("roam");
+    addAssistantMessage("已进入 3D 漫游模式。你可以用键盘方向键或 WASD 在模型里移动。");
+    return;
+  }
+
+  addAssistantMessage("我可以帮你做这些事：上传图纸、加载样例、切换 AI/CV 或普通识别、重新生成、导出 JSON、保存项目、打开项目、画墙、画门窗、测量、标定比例、线框模式、叠加模式、重置视角、进入详细界面、返回选择页。");
+}
+
+function handleChatSubmit(event) {
+  event.preventDefault();
+  if (!beginnerUi.chatInput) return;
+  const value = beginnerUi.chatInput.value.trim();
+  if (!value) return;
+  addChatMessage("user", value);
+  beginnerUi.chatInput.value = "";
+  runBeginnerCommand(value);
+}
+
+function bindExperienceUi() {
+  beginnerUi.beginnerModeButton?.addEventListener("click", () => setExperienceMode("beginner"));
+  beginnerUi.advancedModeButton?.addEventListener("click", () => setExperienceMode("advanced"));
+  beginnerUi.modeSwitchButton?.addEventListener("click", () => setExperienceMode("launch"));
+  beginnerUi.chatBackButton?.addEventListener("click", () => setExperienceMode("launch"));
+  beginnerUi.chatAdvancedButton?.addEventListener("click", () => setExperienceMode("advanced"));
+  beginnerUi.chatUploadButton?.addEventListener("click", () => {
+    addAssistantMessage("请从电脑里选择一张平面图。选完后，我会自动识别并解释结果。");
+    openImagePicker();
+  });
+  beginnerUi.chatDemoButton?.addEventListener("click", () => {
+    addAssistantMessage("我先加载内置样例。它适合快速看完整流程，不会影响你之后上传自己的图。");
+    loadDemoPlan();
+  });
+  beginnerUi.chatAiButton?.addEventListener("click", () => setBeginnerRecognitionMode("ai-cv"));
+  beginnerUi.chatBrowserButton?.addEventListener("click", () => setBeginnerRecognitionMode("browser"));
+  beginnerUi.chatRegenerateButton?.addEventListener("click", () => {
+    if (!state.analysisCanvas) {
+      addAssistantMessage("还没有图纸。先上传图纸或加载样例，再重新生成。");
+      return;
+    }
+    addAssistantMessage("我会按当前设置重新生成一次。");
+    runRecognition();
+  });
+  beginnerUi.chatExportButton?.addEventListener("click", () => {
+    if (!hasExportableContent()) {
+      addAssistantMessage("现在还没有可导出的结果。先生成墙线后再导出。");
+      return;
+    }
+    addAssistantMessage("正在导出 JSON，文件里会包含这次识别和编辑后的数据。");
+    exportJson();
+  });
+  beginnerUi.chatForm?.addEventListener("submit", handleChatSubmit);
+}
+
 elements.uploadButton.addEventListener("click", openImagePicker);
 elements.fileInput.addEventListener("change", (event) => {
   const [file] = event.target.files;
@@ -6736,7 +7068,7 @@ elements.canvasWrap.addEventListener("drop", (event) => {
 });
 document.addEventListener("keydown", handleDocumentKeyDown);
 
+bindExperienceUi();
 syncControlLabels();
+updateBeginnerSummary();
 initThreeViewer();
-
-

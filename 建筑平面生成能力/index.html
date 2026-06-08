@@ -6,7 +6,29 @@
     <title>建筑平面生成能力</title>
     <link rel="stylesheet" href="./styles.css?v=20260605-font2" />
   </head>
-  <body>
+  <body class="mode-launch">
+    <section id="modeLauncher" class="mode-launcher" aria-label="选择使用方式">
+      <div class="launch-panel">
+        <div class="launch-copy">
+          <span class="eyebrow">建筑平面生成能力</span>
+          <h1>选择你想进入的操作界面</h1>
+          <p>同一套识别、生成、保存和导出逻辑；只是把操作方式分成新手对话和完整参数两种入口。</p>
+        </div>
+        <div class="mode-options">
+          <button id="beginnerModeButton" class="mode-card recommended" type="button">
+            <span>适合装修小白</span>
+            <strong>对话界面</strong>
+            <small>像 ChatGPT 一样，一步步带你上传图纸、选择识别方式、检查结果并导出。</small>
+          </button>
+          <button id="advancedModeButton" class="mode-card" type="button">
+            <span>适合有基础的人</span>
+            <strong>详细界面</strong>
+            <small>保留当前参数、线框、构件编辑、测量、标定和 3D 视图的完整工具。</small>
+          </button>
+        </div>
+      </div>
+    </section>
+
     <main class="app">
       <header class="topbar">
         <div>
@@ -14,6 +36,7 @@
           <p>上传建筑平面图，生成墙体线框、交点、门洞、墙垛和闭合房间。</p>
         </div>
         <div class="actions">
+          <button id="modeSwitchButton" type="button">切换入口</button>
           <button id="uploadButton" type="button">上传平面图</button>
           <button id="demoButton" type="button">加载样例</button>
           <button id="saveProjectButton" type="button" disabled>保存项目</button>
@@ -23,6 +46,62 @@
       </header>
 
       <section class="workspace">
+        <section id="beginnerChat" class="beginner-chat" aria-label="对话式操作">
+          <header class="chat-top">
+            <div>
+              <span class="eyebrow">对话界面</span>
+              <h2>我来带你生成建筑平面结果</h2>
+            </div>
+          </header>
+
+          <div class="assistant-intro">
+            <div class="assistant-avatar">AI</div>
+            <div>
+              <strong>你只要像聊天一样告诉我想做什么。</strong>
+              <p>例如输入“帮我上传图纸”“先加载样例”“用 AI/CV 识别”“导出 JSON”“进入详细界面”。我会调用同一套识别和编辑逻辑完成操作。</p>
+            </div>
+          </div>
+
+          <div class="beginner-summary" aria-live="polite">
+            <div>
+              <span>当前状态</span>
+              <strong id="chatStatusText">待上传</strong>
+            </div>
+            <div>
+              <span>图纸</span>
+              <strong id="chatImageText">还没有图纸</strong>
+            </div>
+            <div>
+              <span>识别结果</span>
+              <strong id="chatWallText">0 条墙线</strong>
+            </div>
+            <div>
+              <span>空间</span>
+              <strong id="chatRoomText">0 个房间</strong>
+            </div>
+            <div>
+              <span>门窗洞口</span>
+              <strong id="chatOpeningText">0 个</strong>
+            </div>
+            <div>
+              <span>识别方式</span>
+              <strong id="chatModeText">普通识别</strong>
+            </div>
+          </div>
+
+          <div id="chatMessages" class="chat-messages" aria-live="polite">
+            <article class="chat-message assistant">
+              <span>助手</span>
+              <p>你好，我会用装修小白能理解的话来带你操作。你可以直接输入“帮我上传图纸”，或者输入“加载样例”先体验完整流程。</p>
+            </article>
+          </div>
+
+          <form id="chatForm" class="chat-composer">
+            <input id="chatInput" type="text" autocomplete="off" placeholder="输入一句话，例如：帮我上传图纸 / 加载样例 / 用AI识别 / 导出JSON" />
+            <button type="submit">发送</button>
+          </form>
+        </section>
+
         <aside class="panel">
           <div class="panel-title">
             <h2>参数</h2>

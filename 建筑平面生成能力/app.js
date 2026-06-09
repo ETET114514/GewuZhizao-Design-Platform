@@ -3025,20 +3025,14 @@ function productDefaultHeightMeters(category, subtype = null) {
 }
 
 function productMinimumSizeMeters(category, subtype = null) {
-  if (category === "window") return subtype === "door-window" ? 0.45 : 0.5;
-  return 0.12;
+  return 0.02;
 }
 
 function productMinimumDepthMeters(category, subtype = null) {
-  if (category === "window") {
-    if (subtype === "louver-window") return 0.18;
-    return productDefaultDepthMeters(category, subtype);
-  }
-  return 0.12;
+  return 0.02;
 }
 
 function productMinimumHeightMeters(category, subtype = null) {
-  if (category === "window") return subtype === "door-window" ? 1.8 : 0.6;
   return 0.05;
 }
 

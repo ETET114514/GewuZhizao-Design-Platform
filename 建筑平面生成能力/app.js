@@ -94,6 +94,7 @@ const elements = {
   threeViewport: document.querySelector("#threeViewport"),
   threeStat: document.querySelector("#threeStat"),
   threeRoamButton: document.querySelector("#threeRoamButton"),
+  threeRenderButton: document.querySelector("#threeRenderButton"),
   threeResetButton: document.querySelector("#threeResetButton"),
   threeComponentCard: document.querySelector("#threeComponentCard"),
   threeComponentTitle: document.querySelector("#threeComponentTitle"),
@@ -108,6 +109,10 @@ const elements = {
   threeComponentHeightInput: document.querySelector("#threeComponentHeightInput"),
   threeComponentCoords: document.querySelector("#threeComponentCoords"),
   threeDeleteComponentButton: document.querySelector("#threeDeleteComponentButton"),
+  threeRenderModal: document.querySelector("#threeRenderModal"),
+  threeRenderImage: document.querySelector("#threeRenderImage"),
+  threeRenderSaveButton: document.querySelector("#threeRenderSaveButton"),
+  threeRenderCloseButton: document.querySelector("#threeRenderCloseButton"),
 };
 
 const state = {
@@ -183,6 +188,9 @@ const state = {
     lastY: 0,
     cardX: 16,
     cardY: 16,
+    renderBlob: null,
+    renderUrl: null,
+    renderFileName: "floor-plan-3d-render.png",
   },
 };
 
@@ -1765,9 +1773,9 @@ function commitSelectedProductParameter(parameter, prefix = "selected") {
   }
 
   pushUndoSnapshot(`edit-product-${parameter}`);
-  if (parameter === "length") product.widthMillimeters = Math.max(50, value);
-  else if (parameter === "thickness") product.depthMillimeters = Math.max(50, value);
-  else if (parameter === "height") product.heightMillimeters = Math.max(50, value);
+  if (parameter === "length") product.widthMillimeters = clampProductDimensionMillimeters(product, parameter, value);
+  else if (parameter === "thickness") product.depthMillimeters = clampProductDimensionMillimeters(product, parameter, value);
+  else if (parameter === "height") product.heightMillimeters = clampProductDimensionMillimeters(product, parameter, value);
   syncProductObjectScale(product);
   renderPreview();
   updateSelectedComponentInfo();
@@ -2195,11 +2203,24 @@ function drawProductModels(context) {
 
 function productResizeHandleDefinitions(width, depth) {
   return [
-    { corner: "nw", x: -width / 2, y: -depth / 2, sideX: -1, sideY: -1 },
-    { corner: "ne", x: width / 2, y: -depth / 2, sideX: 1, sideY: -1 },
-    { corner: "se", x: width / 2, y: depth / 2, sideX: 1, sideY: 1 },
-    { corner: "sw", x: -width / 2, y: depth / 2, sideX: -1, sideY: 1 },
+    { key: "nw", x: -width / 2, y: -depth / 2, sideX: -1, sideY: -1, resizeAxis: "both" },
+    { key: "n", x: 0, y: -depth / 2, sideX: 0, sideY: -1, resizeAxis: "depth" },
+    { key: "ne", x: width / 2, y: -depth / 2, sideX: 1, sideY: -1, resizeAxis: "both" },
+    { key: "e", x: width / 2, y: 0, sideX: 1, sideY: 0, resizeAxis: "width" },
+    { key: "se", x: width / 2, y: depth / 2, sideX: 1, sideY: 1, resizeAxis: "both" },
+    { key: "s", x: 0, y: depth / 2, sideX: 0, sideY: 1, resizeAxis: "depth" },
+    { key: "sw", x: -width / 2, y: depth / 2, sideX: -1, sideY: 1, resizeAxis: "both" },
+    { key: "w", x: -width / 2, y: 0, sideX: -1, sideY: 0, resizeAxis: "width" },
   ];
+}
+
+function productResizeCursor(handle) {
+  if (!handle) return "nwse-resize";
+  if (handle.resizeAxis === "width") return "ew-resize";
+  if (handle.resizeAxis === "depth") return "ns-resize";
+  const sideX = Number(handle.sideX) || 0;
+  const sideY = Number(handle.sideY) || 0;
+  return sideX * sideY > 0 ? "nwse-resize" : "nesw-resize";
 }
 
 function drawProductRotationHandle(context, width, depth) {
@@ -2404,9 +2425,9 @@ function drawEditableEndpoint(context, x, y, active) {
   context.save();
   context.fillStyle = active ? "#ffb14a" : "#f28c28";
   context.strokeStyle = "#fff";
-  context.lineWidth = active ? 4 : 3;
+  context.lineWidth = active ? 2 : 1.5;
   context.beginPath();
-  context.arc(x, y, active ? 7 : 6, 0, Math.PI * 2);
+  context.arc(x, y, active ? 4.5 : 3.5, 0, Math.PI * 2);
   context.fill();
   context.stroke();
   context.restore();
@@ -2930,8 +2951,8 @@ function productCategoryLabel(category) {
 function inferProductSubtype(name, category) {
   if (category === "window") {
     const text = String(name || "").toLowerCase();
-    if (/door|门/.test(text)) return "door-window";
     if (/louver|shutter|blind|百叶|百页/.test(text)) return "louver-window";
+    if (/door|门/.test(text)) return "door-window";
     return "window";
   }
   if (category !== "furniture") return category || "product";
@@ -2946,6 +2967,10 @@ function inferProductSubtype(name, category) {
 
 function normalizeProductMetadata(product) {
   if (!product) return product;
+  if (product.category === "window" && /louver|shutter|blind|百叶|百页/.test(String(product.name || "").toLowerCase())) {
+    product.productSubtype = "louver-window";
+    return product;
+  }
   product.productSubtype = product.productSubtype || inferProductSubtype(product.name, product.category);
   return product;
 }
@@ -2999,6 +3024,32 @@ function productDefaultHeightMeters(category, subtype = null) {
   return productDefaultSizeMeters(category, subtype);
 }
 
+function productMinimumSizeMeters(category, subtype = null) {
+  if (category === "window") return subtype === "door-window" ? 0.45 : 0.5;
+  return 0.12;
+}
+
+function productMinimumDepthMeters(category, subtype = null) {
+  if (category === "window") {
+    if (subtype === "louver-window") return 0.18;
+    return productDefaultDepthMeters(category, subtype);
+  }
+  return 0.12;
+}
+
+function productMinimumHeightMeters(category, subtype = null) {
+  if (category === "window") return subtype === "door-window" ? 1.8 : 0.6;
+  return 0.05;
+}
+
+function clampProductDimensionMillimeters(product, parameter, value) {
+  normalizeProductMetadata(product);
+  if (parameter === "length") return Math.max(Math.round(productMinimumSizeMeters(product.category, product.productSubtype) * 1000), Math.round(value));
+  if (parameter === "thickness") return Math.max(Math.round(productMinimumDepthMeters(product.category, product.productSubtype) * 1000), Math.round(value));
+  if (parameter === "height") return Math.max(Math.round(productMinimumHeightMeters(product.category, product.productSubtype) * 1000), Math.round(value));
+  return Math.max(50, Math.round(value));
+}
+
 function selectedProduct() {
   if (!state.selectedProductId) return null;
   return state.productModels.find((product) => product.id === state.selectedProductId) || null;
@@ -3019,6 +3070,7 @@ function productFootprintMeters(product) {
     width: Math.max(0.05, (product.widthMillimeters || base * 1000) / 1000),
     depth: Math.max(0.05, (product.depthMillimeters || productDefaultDepthMeters(product.category, product.productSubtype) * 1000) / 1000),
   };
+  if (Number(product.widthMillimeters) > 0 || Number(product.depthMillimeters) > 0) return fallback;
   const modelRoot = product.object ? findProductScenePart(product.object, "productModelRoot") : null;
   const normalizedSize = modelRoot && modelRoot.userData && modelRoot.userData.productNormalizedSize;
   if (!modelRoot || !normalizedSize) return fallback;
@@ -4246,6 +4298,73 @@ function renderThreeScene() {
   renderer.render(scene, camera);
 }
 
+function exportThreeRenderImage() {
+  const { module: three, renderer, scene, camera, resizeHandlesGroup } = state.three;
+  if (!three || !renderer || !scene || !camera) {
+    setStatus("3D 模型尚未加载完成");
+    return;
+  }
+  const rect = renderer.domElement.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width || renderer.domElement.clientWidth || 1200));
+  const height = Math.max(1, Math.round(rect.height || renderer.domElement.clientHeight || 820));
+  const outputScale = 2;
+  const originalPixelRatio = renderer.getPixelRatio();
+  const originalSize = renderer.getSize(new three.Vector2());
+  const originalAspect = camera.aspect;
+  const handlesVisible = resizeHandlesGroup ? resizeHandlesGroup.visible : null;
+
+  setStatus("3D 渲染中");
+  if (resizeHandlesGroup) resizeHandlesGroup.visible = false;
+  renderer.setPixelRatio(1);
+  renderer.setSize(width * outputScale, height * outputScale, false);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+
+  renderer.domElement.toBlob((blob) => {
+    if (blob) {
+      const name = `${state.sourceName || "floor-plan"}-3d-render.png`;
+      showThreeRenderPreview(blob, name);
+      setStatus("3D 渲染图已生成");
+    } else {
+      setStatus("3D 渲染导出失败");
+    }
+    renderer.setPixelRatio(originalPixelRatio);
+    renderer.setSize(originalSize.x, originalSize.y, false);
+    camera.aspect = originalAspect;
+    camera.updateProjectionMatrix();
+    if (resizeHandlesGroup) resizeHandlesGroup.visible = handlesVisible;
+    renderThreeScene();
+  }, "image/png");
+}
+
+function showThreeRenderPreview(blob, fileName) {
+  closeThreeRenderPreview();
+  state.three.renderBlob = blob;
+  state.three.renderFileName = fileName;
+  state.three.renderUrl = URL.createObjectURL(blob);
+  elements.threeRenderImage.src = state.three.renderUrl;
+  elements.threeRenderModal.hidden = false;
+  elements.threeRenderSaveButton.focus({ preventScroll: true });
+}
+
+function closeThreeRenderPreview() {
+  if (state.three.renderUrl) URL.revokeObjectURL(state.three.renderUrl);
+  state.three.renderUrl = null;
+  state.three.renderBlob = null;
+  elements.threeRenderImage.removeAttribute("src");
+  elements.threeRenderModal.hidden = true;
+}
+
+function saveThreeRenderPreview() {
+  if (!state.three.renderBlob) {
+    setStatus("没有可保存的渲染图");
+    return;
+  }
+  downloadBlob(state.three.renderBlob, state.three.renderFileName || "floor-plan-3d-render.png");
+  setStatus("3D 渲染图已保存");
+}
+
 function updateThreeRaycasterFromEvent(event) {
   const { renderer, camera, raycaster, pointer } = state.three;
   if (!renderer || !camera || !raycaster || !pointer) return false;
@@ -4465,16 +4584,20 @@ function updateThreeProductResize(event) {
   const startHeight = Math.max(0.05, drag.dimensions.height);
   const oppositeX = drag.sign > 0 ? -startWidth / 2 : startWidth / 2;
   const oppositeZ = drag.sign > 0 ? -startDepth / 2 : startDepth / 2;
-  const nextWidth = drag.axis === "x" ? clamp(Math.abs(localPoint.x - oppositeX), 0.08, 80) : startWidth;
-  const nextDepth = drag.axis === "z" ? clamp(Math.abs(localPoint.z - oppositeZ), 0.08, 80) : startDepth;
-  const nextHeight = drag.axis === "y" ? clamp(startHeight + (drag.startClientY - event.clientY) * 0.012 * drag.sign, 0.08, 12) : startHeight;
+  normalizeProductMetadata(product);
+  const minWidthMeters = productMinimumSizeMeters(product.category, product.productSubtype);
+  const minDepthMeters = productMinimumDepthMeters(product.category, product.productSubtype);
+  const minHeightMeters = productMinimumHeightMeters(product.category, product.productSubtype);
+  const nextWidth = drag.axis === "x" ? clamp(Math.abs(localPoint.x - oppositeX), minWidthMeters, 80) : startWidth;
+  const nextDepth = drag.axis === "z" ? clamp(Math.abs(localPoint.z - oppositeZ), minDepthMeters, 80) : startDepth;
+  const nextHeight = drag.axis === "y" ? clamp(startHeight + (drag.startClientY - event.clientY) * 0.012 * drag.sign, minHeightMeters, 12) : startHeight;
   const widthRatio = nextWidth / startWidth;
   const depthRatio = nextDepth / startDepth;
   const heightRatio = nextHeight / startHeight;
 
-  product.widthMillimeters = Math.max(50, Math.round((drag.startProduct.widthMillimeters || productDefaultSizeMeters(product.category, product.productSubtype) * 1000) * widthRatio));
-  product.depthMillimeters = Math.max(50, Math.round((drag.startProduct.depthMillimeters || productDefaultDepthMeters(product.category, product.productSubtype) * 1000) * depthRatio));
-  product.heightMillimeters = Math.max(50, Math.round((drag.startProduct.heightMillimeters || productDefaultHeightMeters(product.category, product.productSubtype) * 1000) * heightRatio));
+  product.widthMillimeters = clampProductDimensionMillimeters(product, "length", (drag.startProduct.widthMillimeters || productDefaultSizeMeters(product.category, product.productSubtype) * 1000) * widthRatio);
+  product.depthMillimeters = clampProductDimensionMillimeters(product, "thickness", (drag.startProduct.depthMillimeters || productDefaultDepthMeters(product.category, product.productSubtype) * 1000) * depthRatio);
+  product.heightMillimeters = clampProductDimensionMillimeters(product, "height", (drag.startProduct.heightMillimeters || productDefaultHeightMeters(product.category, product.productSubtype) * 1000) * heightRatio);
   if (drag.axis === "x") {
     const centerLocal = { x: (oppositeX + localPoint.x) / 2, z: 0 };
     const delta = productLocalOffsetToPlanDelta(centerLocal, drag.startProduct.rotationDegrees, unit);
@@ -5423,9 +5546,10 @@ function beginSelectedProductResizeDrag(handle, point) {
     start: { ...point },
     sideX: handle.sideX,
     sideY: handle.sideY,
+    resizeAxis: handle.resizeAxis || "both",
     oppositeLocal: {
-      x: -handle.sideX * width / 2,
-      y: -handle.sideY * depth / 2,
+      x: handle.sideX ? -handle.sideX * width / 2 : 0,
+      y: handle.sideY ? -handle.sideY * depth / 2 : 0,
     },
     original: {
       planX: product.planX,
@@ -5476,17 +5600,23 @@ function resizeSelectedProduct(selection, point) {
   product.planY = selection.original.planY;
   product.rotationDegrees = selection.original.rotationDegrees;
   const local = pointToProductLocal(point, product);
-  const minPixels = millimetersToPixels(120, getSettings());
-  const widthPixels = Math.max(minPixels, Math.abs(local.x - selection.oppositeLocal.x));
-  const depthPixels = Math.max(minPixels, Math.abs(local.y - selection.oppositeLocal.y));
+  normalizeProductMetadata(product);
+  const settings = getSettings();
+  const minWidthPixels = millimetersToPixels(productMinimumSizeMeters(product.category, product.productSubtype) * 1000, settings);
+  const minDepthPixels = millimetersToPixels(productMinimumDepthMeters(product.category, product.productSubtype) * 1000, settings);
+  const originalWidthPixels = millimetersToPixels(selection.original.widthMillimeters || productDefaultSizeMeters(product.category, product.productSubtype) * 1000, settings);
+  const originalDepthPixels = millimetersToPixels(selection.original.depthMillimeters || productDefaultDepthMeters(product.category, product.productSubtype) * 1000, settings);
+  const resizeAxis = selection.resizeAxis || "both";
+  const widthPixels = resizeAxis === "depth" ? originalWidthPixels : Math.max(minWidthPixels, Math.abs(local.x - selection.oppositeLocal.x));
+  const depthPixels = resizeAxis === "width" ? originalDepthPixels : Math.max(minDepthPixels, Math.abs(local.y - selection.oppositeLocal.y));
   const centerLocal = {
-    x: (local.x + selection.oppositeLocal.x) / 2,
-    y: (local.y + selection.oppositeLocal.y) / 2,
+    x: resizeAxis === "depth" ? 0 : (local.x + selection.oppositeLocal.x) / 2,
+    y: resizeAxis === "width" ? 0 : (local.y + selection.oppositeLocal.y) / 2,
   };
   const centerWorld = productLocalToWorld(centerLocal, product);
-  product.widthMillimeters = Math.max(50, Math.round(pxToMillimeters(widthPixels, getSettings())));
-  product.depthMillimeters = Math.max(50, Math.round(pxToMillimeters(depthPixels, getSettings())));
-  product.heightMillimeters = selection.original.heightMillimeters;
+  product.widthMillimeters = clampProductDimensionMillimeters(product, "length", pxToMillimeters(widthPixels, settings));
+  product.depthMillimeters = clampProductDimensionMillimeters(product, "thickness", pxToMillimeters(depthPixels, settings));
+  product.heightMillimeters = clampProductDimensionMillimeters(product, "height", selection.original.heightMillimeters || productDefaultHeightMeters(product.category, product.productSubtype) * 1000);
   product.planX = centerWorld.x;
   product.planY = centerWorld.y;
   if (state.analysisCanvas) {
@@ -6048,7 +6178,7 @@ function handleCanvasPointerDown(event) {
   if (productResizeHandle) {
     beginSelectedProductResizeDrag(productResizeHandle, point);
     elements.previewCanvas.setPointerCapture(event.pointerId);
-    elements.previewCanvas.style.cursor = "nwse-resize";
+    elements.previewCanvas.style.cursor = productResizeCursor(productResizeHandle);
     event.preventDefault();
     return;
   }
@@ -6251,8 +6381,9 @@ function handleCanvasPointerMove(event) {
   }
 
   state.hoveredEndpoint = findNearestSelectedEndpoint(point);
-  if (findSelectedProductResizeHandle(point)) {
-    elements.previewCanvas.style.cursor = "nwse-resize";
+  const productResizeHandle = findSelectedProductResizeHandle(point);
+  if (productResizeHandle) {
+    elements.previewCanvas.style.cursor = productResizeCursor(productResizeHandle);
   } else if (findSelectedProductRotationHandle(point)) {
     elements.previewCanvas.style.cursor = "grab";
   } else if (state.hoveredEndpoint) {
@@ -6614,6 +6745,12 @@ function isEditableTarget(target) {
 }
 
 function handleDocumentKeyDown(event) {
+  if (!elements.threeRenderModal.hidden && event.key === "Escape") {
+    event.preventDefault();
+    closeThreeRenderPreview();
+    setStatus("已退出渲染预览");
+    return;
+  }
   if (state.three.mode === "roam" && !event.defaultPrevented && !event.ctrlKey && !event.metaKey && !isEditableTarget(event.target)) {
     handleThreeKeyDown(event);
     if (event.defaultPrevented) return;
@@ -7011,7 +7148,18 @@ elements.calibrateToolButton.addEventListener("click", toggleCalibrateScaleTool)
 elements.calibrateScaleButton.addEventListener("click", toggleCalibrateScaleTool);
 elements.measureToolButton.addEventListener("click", toggleMeasureTool);
 elements.threeRoamButton.addEventListener("click", toggleThreeRoamMode);
+elements.threeRenderButton.addEventListener("click", exportThreeRenderImage);
 elements.threeResetButton.addEventListener("click", resetThreeCamera);
+elements.threeRenderSaveButton.addEventListener("click", saveThreeRenderPreview);
+elements.threeRenderCloseButton.addEventListener("click", () => {
+  closeThreeRenderPreview();
+  setStatus("已退出渲染预览");
+});
+elements.threeRenderModal.addEventListener("click", (event) => {
+  if (event.target !== elements.threeRenderModal) return;
+  closeThreeRenderPreview();
+  setStatus("已退出渲染预览");
+});
 elements.selectedDeleteComponentButton.addEventListener("click", deleteSelectedComponent);
 elements.threeDeleteComponentButton.addEventListener("click", deleteSelectedComponent);
 elements.overlayTab.addEventListener("click", () => setView("overlay"));

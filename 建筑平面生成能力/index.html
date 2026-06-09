@@ -282,6 +282,7 @@
               <div class="model-actions">
                 <button id="threeRoamButton" type="button">漫游</button>
                 <span id="threeStat">0 墙体</span>
+                <button id="threeRenderButton" type="button">渲染</button>
                 <button id="threeResetButton" type="button">重置视角</button>
               </div>
             </div>
@@ -335,6 +336,20 @@
         </section>
       </section>
     </main>
+    <section id="threeRenderModal" class="render-modal" hidden role="dialog" aria-modal="true" aria-labelledby="threeRenderTitle">
+      <div class="render-dialog">
+        <div class="render-dialog-header">
+          <strong id="threeRenderTitle">3D 渲染画面</strong>
+          <button id="threeRenderCloseButton" class="render-close-button" type="button">退出</button>
+        </div>
+        <div class="render-preview-frame">
+          <img id="threeRenderImage" alt="3D 渲染画面" />
+        </div>
+        <div class="render-dialog-actions">
+          <button id="threeRenderSaveButton" type="button">保存</button>
+        </div>
+      </div>
+    </section>
     <script src="./app.js?v=20260606-product-footprint1"></script>
   </body>
 </html>

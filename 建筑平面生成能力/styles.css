@@ -542,6 +542,74 @@ p {
   height: 100%;
 }
 
+.render-modal {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.render-modal[hidden] {
+  display: none;
+}
+
+.render-dialog {
+  width: min(1120px, 100%);
+  max-height: calc(100vh - 48px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 8px;
+  background: #f8fafc;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
+}
+
+.render-dialog-header,
+.render-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
+}
+
+.render-dialog-header {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.render-dialog-actions {
+  justify-content: flex-end;
+  border-top: 1px solid #e2e8f0;
+}
+
+.render-preview-frame {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 16px;
+  background: #e8eef2;
+}
+
+.render-preview-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 190px);
+  object-fit: contain;
+  border: 1px solid rgba(100, 116, 139, 0.28);
+  background: #edf3f4;
+}
+
+.render-close-button {
+  min-height: 32px;
+  padding: 0 12px;
+}
+
 .empty-state {
   z-index: 2;
   position: absolute;

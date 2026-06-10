@@ -1,4 +1,4 @@
-﻿const IMAGE_ACCEPT = ".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml";
+const IMAGE_ACCEPT = ".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml";
 const MIN_CANVAS_ZOOM = 0.35;
 const MAX_CANVAS_ZOOM = 5;
 const THREE_MODULE_URL = "https://unpkg.com/three@0.164.1/build/three.module.js";
@@ -151,6 +151,32 @@ const state = {
   hiddenOpeningKeys: [],
   manualMillimetersPerPixel: null,
   beginnerLastResultKey: "",
+  beginnerPhonePreviewMode: "plan",
+  beginnerPhonePreview: {
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    dragging: false,
+    pointerId: null,
+    lastX: 0,
+    lastY: 0,
+    activeEdit: false,
+  },
+  beginnerPhoneLayout: {
+    resizing: false,
+    pointerId: null,
+    startY: 0,
+    startPreviewHeight: 0,
+  },
+  beginnerVoice: {
+    enabled: false,
+    listening: false,
+    recognition: null,
+    restartTimer: null,
+    lastError: "",
+    uploadFallbackTimer: null,
+    uploadAttemptId: 0,
+  },
   undoStack: [],
   clipboard: null,
   sourceName: "floor-plan",
@@ -214,7 +240,13 @@ const beginnerUi = {
   chatExportButton: document.querySelector("#chatExportButton"),
   chatForm: document.querySelector("#chatForm"),
   chatInput: document.querySelector("#chatInput"),
+  voiceToggleButton: document.querySelector("#voiceToggleButton"),
   chatMessages: document.querySelector("#chatMessages"),
+  beginnerChat: document.querySelector("#beginnerChat"),
+  phonePreview: document.querySelector(".phone-preview"),
+  phonePreviewCanvas: document.querySelector("#phonePreviewCanvas"),
+  phonePreviewLabel: document.querySelector("#phonePreviewLabel"),
+  phoneChatResizer: document.querySelector("#phoneChatResizer"),
   chatStatusText: document.querySelector("#chatStatusText"),
   chatImageText: document.querySelector("#chatImageText"),
   chatWallText: document.querySelector("#chatWallText"),
@@ -266,8 +298,8 @@ function formatMillimeters(value) {
 }
 
 function formatSquareMillimeters(value) {
-  if (value >= 1000000) return `${(value / 1000000).toFixed(2)} m²`;
-  return `${Math.round(value)} mm²`;
+  if (value >= 1000000) return `${(value / 1000000).toFixed(2)} m2`;
+  return `${Math.round(value)} mm2`;
 }
 
 function formatPhysicalLength(pixels, settings) {
@@ -1981,6 +2013,7 @@ function renderSourceImageOnly() {
   const canvas = elements.previewCanvas;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(state.analysisCanvas, 0, 0, canvas.width, canvas.height);
+  updateBeginnerPhonePreview();
 }
 
 function renderPreview() {
@@ -2029,6 +2062,357 @@ function renderPreview() {
   drawMeasurementDraft(ctx);
   drawEndpointHandles(ctx);
   ctx.restore();
+  updateBeginnerPhonePreview();
+}
+
+function setBeginnerPhonePreviewMode(mode) {
+  state.beginnerPhonePreviewMode = mode === "three" ? "three" : "plan";
+  state.beginnerPhonePreview.zoom = 1;
+  state.beginnerPhonePreview.panX = 0;
+  state.beginnerPhonePreview.panY = 0;
+  updateBeginnerPhonePreview();
+}
+
+function updateBeginnerPhonePreview() {
+  const canvas = beginnerUi.phonePreviewCanvas;
+  if (!canvas) return;
+  const context = canvas.getContext("2d");
+  const source = state.beginnerPhonePreviewMode === "three" && state.three.renderer
+    ? state.three.renderer.domElement
+    : elements.previewCanvas;
+  const hasImage = state.beginnerPhonePreviewMode === "three"
+    ? Boolean(state.three.renderer)
+    : Boolean(state.analysisCanvas);
+  canvas.classList.toggle("is-three-control", state.beginnerPhonePreviewMode === "three");
+  canvas.parentElement?.classList.toggle("is-three-preview", state.beginnerPhonePreviewMode === "three");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#17191c";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  if (hasImage && source && source.width && source.height) {
+    drawPhonePreviewImage(context, source, canvas.width, canvas.height);
+    beginnerUi.phonePreviewLabel.textContent = state.beginnerPhonePreviewMode === "three" ? "3D 画面" : "平面画布";
+    beginnerUi.phonePreviewCanvas.parentElement.classList.add("has-image");
+    return;
+  }
+  context.fillStyle = "#25313a";
+  context.fillRect(18, 18, canvas.width - 36, canvas.height - 36);
+  context.strokeStyle = "rgba(255,255,255,0.16)";
+  context.lineWidth = 1;
+  for (let x = 18; x <= canvas.width - 18; x += 24) {
+    context.beginPath();
+    context.moveTo(x, 18);
+    context.lineTo(x, canvas.height - 18);
+    context.stroke();
+  }
+  for (let y = 18; y <= canvas.height - 18; y += 24) {
+    context.beginPath();
+    context.moveTo(18, y);
+    context.lineTo(canvas.width - 18, y);
+    context.stroke();
+  }
+  context.fillStyle = "rgba(255,255,255,0.82)";
+  context.font = "600 15px Microsoft YaHei, sans-serif";
+  context.textAlign = "center";
+  const emptyText = state.beginnerPhonePreviewMode === "three" ? "等待 3D 画面" : "等待图纸";
+  context.fillText(emptyText, canvas.width / 2, canvas.height / 2);
+  beginnerUi.phonePreviewLabel.textContent = emptyText;
+  beginnerUi.phonePreviewCanvas.parentElement.classList.remove("has-image");
+}
+
+function drawContainedImage(context, source, x, y, width, height) {
+  const sourceWidth = source.videoWidth || source.naturalWidth || source.width;
+  const sourceHeight = source.videoHeight || source.naturalHeight || source.height;
+  if (!sourceWidth || !sourceHeight) return;
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  const drawX = x + (width - drawWidth) / 2;
+  const drawY = y + (height - drawHeight) / 2;
+  context.drawImage(source, drawX, drawY, drawWidth, drawHeight);
+}
+
+function phonePreviewBaseTransform(source, width, height) {
+  const sourceWidth = source.videoWidth || source.naturalWidth || source.width;
+  const sourceHeight = source.videoHeight || source.naturalHeight || source.height;
+  if (!sourceWidth || !sourceHeight) return null;
+  const fitScale = state.beginnerPhonePreviewMode === "three" ? Math.max : Math.min;
+  const scale = fitScale(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  return {
+    sourceWidth,
+    sourceHeight,
+    scale,
+    drawWidth,
+    drawHeight,
+    drawX: (width - drawWidth) / 2,
+    drawY: (height - drawHeight) / 2,
+  };
+}
+
+function drawPhonePreviewImage(context, source, width, height) {
+  const transform = phonePreviewBaseTransform(source, width, height);
+  if (!transform) return;
+  const preview = state.beginnerPhonePreview;
+  const zoom = clamp(Number(preview.zoom) || 1, 0.45, 8);
+  preview.zoom = zoom;
+  const drawWidth = transform.drawWidth * zoom;
+  const drawHeight = transform.drawHeight * zoom;
+  const drawX = transform.drawX + preview.panX;
+  const drawY = transform.drawY + preview.panY;
+  context.drawImage(source, drawX, drawY, drawWidth, drawHeight);
+}
+
+function phonePreviewSource() {
+  if (state.beginnerPhonePreviewMode === "three" && state.three.renderer) return state.three.renderer.domElement;
+  return elements.previewCanvas;
+}
+
+function phonePreviewCanvasPointFromEvent(event) {
+  const canvas = beginnerUi.phonePreviewCanvas;
+  const source = phonePreviewSource();
+  if (!canvas || !source) return { x: 0, y: 0 };
+  const rect = canvas.getBoundingClientRect();
+  const px = ((event.clientX - rect.left) * canvas.width) / Math.max(1, rect.width);
+  const py = ((event.clientY - rect.top) * canvas.height) / Math.max(1, rect.height);
+  const transform = phonePreviewBaseTransform(source, canvas.width, canvas.height);
+  if (!transform) return { x: 0, y: 0 };
+  const zoom = clamp(Number(state.beginnerPhonePreview.zoom) || 1, 0.45, 8);
+  return {
+    x: clamp((px - transform.drawX - state.beginnerPhonePreview.panX) / (transform.scale * zoom), 0, source.width),
+    y: clamp((py - transform.drawY - state.beginnerPhonePreview.panY) / (transform.scale * zoom), 0, source.height),
+  };
+}
+
+function phonePreviewLocalPoint(event) {
+  const canvas = beginnerUi.phonePreviewCanvas;
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) * canvas.width) / Math.max(1, rect.width),
+    y: ((event.clientY - rect.top) * canvas.height) / Math.max(1, rect.height),
+  };
+}
+
+function phonePreviewProxyEvent(event) {
+  return {
+    phonePreviewProxy: true,
+    phoneCanvasPoint: phonePreviewCanvasPointFromEvent(event),
+    pointerId: event.pointerId,
+    button: event.button,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    metaKey: event.metaKey,
+    preventDefault: () => event.preventDefault(),
+  };
+}
+
+function handlePhonePreviewWheel(event) {
+  const canvas = beginnerUi.phonePreviewCanvas;
+  const source = phonePreviewSource();
+  if (!canvas || !source) return;
+  event.preventDefault();
+  if (state.beginnerPhonePreviewMode === "three") {
+    handlePhoneThreeWheel(event);
+    return;
+  }
+  const local = phonePreviewLocalPoint(event);
+  const sourcePoint = phonePreviewCanvasPointFromEvent(event);
+  const transform = phonePreviewBaseTransform(source, canvas.width, canvas.height);
+  if (!transform) return;
+  const previousZoom = clamp(Number(state.beginnerPhonePreview.zoom) || 1, 0.45, 8);
+  const nextZoom = clamp(previousZoom * Math.exp(-event.deltaY * 0.0018), 0.45, 8);
+  state.beginnerPhonePreview.zoom = nextZoom;
+  state.beginnerPhonePreview.panX = local.x - transform.drawX - sourcePoint.x * transform.scale * nextZoom;
+  state.beginnerPhonePreview.panY = local.y - transform.drawY - sourcePoint.y * transform.scale * nextZoom;
+  updateBeginnerPhonePreview();
+}
+
+function handlePhonePreviewPointerDown(event) {
+  if (!beginnerUi.phonePreviewCanvas) return;
+  beginnerUi.phonePreviewCanvas.focus({ preventScroll: true });
+  if (state.beginnerPhonePreviewMode !== "plan" || event.altKey || event.button === 1 || event.button === 2) {
+    state.beginnerPhonePreview.dragging = true;
+    state.beginnerPhonePreview.activeEdit = false;
+    state.beginnerPhonePreview.pointerId = event.pointerId;
+    state.beginnerPhonePreview.lastX = event.clientX;
+    state.beginnerPhonePreview.lastY = event.clientY;
+    capturePhonePreviewPointer(event);
+    event.preventDefault();
+    return;
+  }
+  state.beginnerPhonePreview.activeEdit = true;
+  state.beginnerPhonePreview.pointerId = event.pointerId;
+  capturePhonePreviewPointer(event);
+  handleCanvasPointerDown(phonePreviewProxyEvent(event));
+}
+
+function handlePhonePreviewPointerMove(event) {
+  const preview = state.beginnerPhonePreview;
+  if (preview.dragging && preview.pointerId === event.pointerId) {
+    if (state.beginnerPhonePreviewMode === "three") {
+      handlePhoneThreePointerMove(event);
+      return;
+    }
+    const canvas = beginnerUi.phonePreviewCanvas;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(1, rect.width);
+    const scaleY = canvas.height / Math.max(1, rect.height);
+    preview.panX += (event.clientX - preview.lastX) * scaleX;
+    preview.panY += (event.clientY - preview.lastY) * scaleY;
+    preview.lastX = event.clientX;
+    preview.lastY = event.clientY;
+    updateBeginnerPhonePreview();
+    event.preventDefault();
+    return;
+  }
+  if (preview.activeEdit && preview.pointerId === event.pointerId) {
+    handleCanvasPointerMove(phonePreviewProxyEvent(event));
+  }
+}
+
+function handlePhoneThreeWheel(event) {
+  if (!state.three.renderer) return;
+  if (state.three.mode === "roam") {
+    const step = state.three.roamSpeed * (event.shiftKey ? 2.2 : 1);
+    moveThreeRoam(event.deltaY < 0 ? step : -step);
+    return;
+  }
+  state.three.radius = clamp(state.three.radius * Math.exp(event.deltaY * 0.0012), 3.8, 48);
+  updateThreeCamera();
+}
+
+function handlePhoneThreePointerMove(event) {
+  const preview = state.beginnerPhonePreview;
+  const dx = event.clientX - preview.lastX;
+  const dy = event.clientY - preview.lastY;
+  preview.lastX = event.clientX;
+  preview.lastY = event.clientY;
+  if (!state.three.renderer) return;
+  if (state.three.mode === "roam") {
+    state.three.roamYaw -= dx * 0.006;
+    state.three.roamPitch = clamp(state.three.roamPitch - dy * 0.0045, -0.75, 0.75);
+    updateThreeRoamCamera();
+  } else {
+    state.three.yaw -= dx * 0.008;
+    state.three.pitch = clamp(state.three.pitch + dy * 0.006, 0.22, 1.28);
+    updateThreeCamera();
+  }
+  event.preventDefault();
+}
+
+function handlePhonePreviewKeyDown(event) {
+  if (state.beginnerPhonePreviewMode !== "three" || state.three.mode !== "roam") return;
+  handleThreeKeyDown(event);
+}
+
+function phonePreviewHeightBounds() {
+  const phone = beginnerUi.beginnerChat;
+  const preview = beginnerUi.phonePreview;
+  if (!phone || !preview) return { min: 150, max: 320 };
+  const phoneHeight = phone.getBoundingClientRect().height;
+  const headerHeight = phone.querySelector(".chat-top")?.getBoundingClientRect().height || 0;
+  const resizerHeight = beginnerUi.phoneChatResizer?.getBoundingClientRect().height || 0;
+  const composerHeight = beginnerUi.chatForm?.getBoundingClientRect().height || 0;
+  const minimumChatHeight = 118;
+  const min = Math.min(190, Math.max(140, phoneHeight * 0.22));
+  const max = Math.max(min, phoneHeight - headerHeight - resizerHeight - composerHeight - minimumChatHeight);
+  return { min, max };
+}
+
+function setPhonePreviewHeight(height) {
+  const preview = beginnerUi.phonePreview;
+  if (!preview) return;
+  const { min, max } = phonePreviewHeightBounds();
+  const nextHeight = clamp(height, min, max);
+  preview.style.flexBasis = `${nextHeight}px`;
+  updateBeginnerPhonePreview();
+}
+
+function handlePhoneChatResizePointerDown(event) {
+  if (!beginnerUi.phoneChatResizer || !beginnerUi.phonePreview) return;
+  state.beginnerPhoneLayout.resizing = true;
+  state.beginnerPhoneLayout.pointerId = event.pointerId;
+  state.beginnerPhoneLayout.startY = event.clientY;
+  state.beginnerPhoneLayout.startPreviewHeight = beginnerUi.phonePreview.getBoundingClientRect().height;
+  beginnerUi.phoneChatResizer.classList.add("is-dragging");
+  try {
+    beginnerUi.phoneChatResizer.setPointerCapture(event.pointerId);
+  } catch (error) {
+    // Programmatic events may not own an active pointer.
+  }
+  event.preventDefault();
+}
+
+function handlePhoneChatResizePointerMove(event) {
+  const layout = state.beginnerPhoneLayout;
+  if (!layout.resizing || layout.pointerId !== event.pointerId) return;
+  setPhonePreviewHeight(layout.startPreviewHeight + event.clientY - layout.startY);
+  event.preventDefault();
+}
+
+function handlePhoneChatResizePointerUp(event) {
+  const layout = state.beginnerPhoneLayout;
+  if (!layout.resizing || layout.pointerId !== event.pointerId) return;
+  layout.resizing = false;
+  layout.pointerId = null;
+  beginnerUi.phoneChatResizer?.classList.remove("is-dragging");
+  try {
+    if (beginnerUi.phoneChatResizer?.hasPointerCapture(event.pointerId)) {
+      beginnerUi.phoneChatResizer.releasePointerCapture(event.pointerId);
+    }
+  } catch (error) {
+    // Ignore missing pointer capture.
+  }
+  event.preventDefault();
+}
+
+function handlePhoneChatResizeKeyDown(event) {
+  if (!beginnerUi.phonePreview) return;
+  const currentHeight = beginnerUi.phonePreview.getBoundingClientRect().height;
+  const step = event.shiftKey ? 48 : 18;
+  if (event.key === "ArrowDown") {
+    setPhonePreviewHeight(currentHeight + step);
+  } else if (event.key === "ArrowUp") {
+    setPhonePreviewHeight(currentHeight - step);
+  } else if (event.key === "End") {
+    setPhonePreviewHeight(phonePreviewHeightBounds().max);
+  } else if (event.key === "Home") {
+    setPhonePreviewHeight(phonePreviewHeightBounds().min);
+  } else {
+    return;
+  }
+  event.preventDefault();
+}
+
+function handlePhonePreviewPointerUp(event) {
+  const preview = state.beginnerPhonePreview;
+  if (preview.activeEdit && preview.pointerId === event.pointerId) handleCanvasPointerUp(phonePreviewProxyEvent(event));
+  preview.dragging = false;
+  preview.activeEdit = false;
+  preview.pointerId = null;
+  releasePhonePreviewPointer(event);
+  event.preventDefault();
+}
+
+function capturePhonePreviewPointer(event) {
+  try {
+    beginnerUi.phonePreviewCanvas.setPointerCapture(event.pointerId);
+  } catch (error) {
+    // Programmatic pointer events in tests may not own an active pointer.
+  }
+}
+
+function releasePhonePreviewPointer(event) {
+  try {
+    if (beginnerUi.phonePreviewCanvas && beginnerUi.phonePreviewCanvas.hasPointerCapture(event.pointerId)) {
+      beginnerUi.phonePreviewCanvas.releasePointerCapture(event.pointerId);
+    }
+  } catch (error) {
+    // Ignore missing pointer capture.
+  }
 }
 
 function boundsFromLine(line, settings = getSettings()) {
@@ -4290,6 +4674,7 @@ function renderThreeScene() {
   const { renderer, scene, camera } = state.three;
   if (!renderer || !scene || !camera) return;
   renderer.render(scene, camera);
+  if (state.beginnerPhonePreviewMode === "three") updateBeginnerPhonePreview();
 }
 
 function exportThreeRenderImage() {
@@ -5278,11 +5663,22 @@ function selectedRailing() {
 }
 
 function canvasPointFromEvent(event) {
+  if (event && event.phoneCanvasPoint) return event.phoneCanvasPoint;
   const rect = elements.previewCanvas.getBoundingClientRect();
   return {
     x: clamp(((event.clientX - rect.left) * elements.previewCanvas.width) / rect.width, 0, elements.previewCanvas.width),
     y: clamp(((event.clientY - rect.top) * elements.previewCanvas.height) / rect.height, 0, elements.previewCanvas.height),
   };
+}
+
+function capturePreviewPointer(event) {
+  if (event && event.phonePreviewProxy) return;
+  elements.previewCanvas.setPointerCapture(event.pointerId);
+}
+
+function releasePreviewPointer(event) {
+  if (event && event.phonePreviewProxy) return;
+  if (elements.previewCanvas.hasPointerCapture(event.pointerId)) elements.previewCanvas.releasePointerCapture(event.pointerId);
 }
 
 function findNearestLineIndex(point) {
@@ -6171,7 +6567,7 @@ function handleCanvasPointerDown(event) {
   const productResizeHandle = findSelectedProductResizeHandle(point);
   if (productResizeHandle) {
     beginSelectedProductResizeDrag(productResizeHandle, point);
-    elements.previewCanvas.setPointerCapture(event.pointerId);
+    capturePreviewPointer(event);
     elements.previewCanvas.style.cursor = productResizeCursor(productResizeHandle);
     event.preventDefault();
     return;
@@ -6189,7 +6585,7 @@ function handleCanvasPointerDown(event) {
   if (endpoint) {
     pushUndoSnapshot("move-endpoint");
     state.draggedEndpoint = endpoint;
-    elements.previewCanvas.setPointerCapture(event.pointerId);
+    capturePreviewPointer(event);
     elements.previewCanvas.style.cursor = "grabbing";
     event.preventDefault();
     return;
@@ -6204,7 +6600,7 @@ function handleCanvasPointerDown(event) {
     state.selectedProductId = productId;
     state.hoveredEndpoint = null;
     beginSelectedProductDrag(productId, point);
-    elements.previewCanvas.setPointerCapture(event.pointerId);
+    capturePreviewPointer(event);
     elements.previewCanvas.style.cursor = "grabbing";
     renderPreview();
     updateSelectedComponentInfo();
@@ -6221,7 +6617,7 @@ function handleCanvasPointerDown(event) {
     state.selectedProductId = null;
     state.hoveredEndpoint = null;
     beginSelectedOpeningDrag(openingIndex, point);
-    elements.previewCanvas.setPointerCapture(event.pointerId);
+    capturePreviewPointer(event);
     elements.previewCanvas.style.cursor = "grabbing";
     renderPreview();
     updateSelectedComponentInfo();
@@ -6239,7 +6635,7 @@ function handleCanvasPointerDown(event) {
     state.selectedProductId = null;
     state.hoveredEndpoint = null;
     beginSelectedRailingDrag(railingId, point);
-    elements.previewCanvas.setPointerCapture(event.pointerId);
+    capturePreviewPointer(event);
     elements.previewCanvas.style.cursor = "grabbing";
     renderPreview();
     updateSelectedComponentInfo();
@@ -6256,7 +6652,7 @@ function handleCanvasPointerDown(event) {
   state.hoveredEndpoint = null;
   if (state.selectedLineIndex !== null) {
     beginSelectedLineDrag(state.selectedLineIndex, point);
-    elements.previewCanvas.setPointerCapture(event.pointerId);
+    capturePreviewPointer(event);
     elements.previewCanvas.style.cursor = "grabbing";
     event.preventDefault();
   } else {
@@ -6408,9 +6804,7 @@ function handleCanvasPointerUp(event) {
   state.draggedProduct = null;
   state.draggedProductResize = null;
   state.hoveredEndpoint = null;
-  if (elements.previewCanvas.hasPointerCapture(event.pointerId)) {
-    elements.previewCanvas.releasePointerCapture(event.pointerId);
-  }
+  releasePreviewPointer(event);
   elements.previewCanvas.style.cursor = state.selectedLineIndex === null && !state.selectedRailingId && !state.selectedProductId ? "default" : "pointer";
   if (hadEndpointDrag || hadLineMove || hadOpeningMove || hadRailingMove) refreshAfterEdit();
   else if (hadProductMove || hadProductResize) {
@@ -6816,6 +7210,7 @@ function setExperienceMode(mode) {
   document.body.classList.toggle("mode-beginner", nextMode === "beginner");
   document.body.classList.toggle("mode-advanced", nextMode === "advanced");
   updateBeginnerSummary();
+  updateBeginnerPhonePreview();
 
   if (nextMode === "beginner") {
     window.setTimeout(() => {
@@ -6875,6 +7270,54 @@ function addAssistantMessage(text) {
   if (isBeginnerMode()) addChatMessage("assistant", text);
 }
 
+function addAssistantActionMessage(text, actionLabel, actionHandler) {
+  if (!isBeginnerMode() || !beginnerUi.chatMessages) return;
+  const message = document.createElement("article");
+  message.className = "chat-message assistant action";
+  const label = document.createElement("span");
+  label.textContent = "助手";
+  const body = document.createElement("p");
+  body.textContent = text;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = actionLabel;
+  button.addEventListener("click", actionHandler);
+  message.append(label, body, button);
+  beginnerUi.chatMessages.appendChild(message);
+  beginnerUi.chatMessages.scrollTop = beginnerUi.chatMessages.scrollHeight;
+}
+
+function addVoiceUploadFallbackMessage(text) {
+  addAssistantActionMessage(text, "选择平面图", openImagePicker);
+}
+
+function requestImageUploadFromVoice() {
+  addAssistantMessage("好的，请选择一张 PNG、JPG、WebP 或 SVG 平面图。选完后我会自动开始识别。");
+  const attemptId = state.beginnerVoice.uploadAttemptId + 1;
+  state.beginnerVoice.uploadAttemptId = attemptId;
+  window.clearTimeout(state.beginnerVoice.uploadFallbackTimer);
+
+  let pickerProbablyOpened = false;
+  const markPickerOpened = () => {
+    pickerProbablyOpened = true;
+  };
+  window.addEventListener("blur", markPickerOpened, { once: true });
+
+  try {
+    openImagePicker();
+  } catch (error) {
+    window.removeEventListener("blur", markPickerOpened);
+    addVoiceUploadFallbackMessage("浏览器没有允许语音直接打开文件选择窗口，请点下面按钮选择平面图。");
+    return;
+  }
+
+  state.beginnerVoice.uploadFallbackTimer = window.setTimeout(() => {
+    window.removeEventListener("blur", markPickerOpened);
+    if (attemptId !== state.beginnerVoice.uploadAttemptId || pickerProbablyOpened || !isBeginnerMode()) return;
+    addVoiceUploadFallbackMessage("如果文件选择窗口没有弹出，请点下面按钮选择平面图。");
+  }, 900);
+}
+
 function announceBeginnerImageLoaded(fileName) {
   if (!isBeginnerMode()) return;
   addChatMessage(
@@ -6915,7 +7358,7 @@ function setBeginnerRecognitionMode(mode) {
   if (state.analysisCanvas) runRecognition();
 }
 
-function runBeginnerCommand(input) {
+function runBeginnerCommand(input, source = "text") {
   const text = input.trim().toLowerCase();
   if (!text) return;
 
@@ -6936,29 +7379,54 @@ function runBeginnerCommand(input) {
     return;
   }
 
+  if (/关闭语音|停止语音|退出语音|关掉语音|静音/.test(text)) {
+    setBeginnerVoiceEnabled(false, true);
+    return;
+  }
+
+  if (/开启语音|打开语音|语音输入|麦克风|说话模式/.test(text)) {
+    setBeginnerVoiceEnabled(true, true);
+    return;
+  }
+
+  if (/3d|三维|模型画面|立体/.test(text)) {
+    setBeginnerPhonePreviewMode("three");
+    addAssistantMessage("已把手机屏幕切到 3D 画面。你也可以说“漫游”进入第一人称查看。");
+    return;
+  }
+
   if (/ai|cv|智能|模型|后端|精细/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setBeginnerRecognitionMode("ai-cv");
     return;
   }
 
   if (/普通|浏览器|规则|快速/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setBeginnerRecognitionMode("browser");
     return;
   }
 
   if (/样例|示例|demo|试试/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     addAssistantMessage("好的，我先加载内置样例。加载后会自动生成，你可以用它熟悉流程。");
     loadDemoPlan();
     return;
   }
 
   if (/上传|导入|图片|图纸|平面图|户型/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
+    if (source === "voice") {
+      requestImageUploadFromVoice();
+      return;
+    }
     addAssistantMessage("好的，请选择一张 PNG、JPG、WebP 或 SVG 平面图。选完后我会自动开始识别。");
     openImagePicker();
     return;
   }
 
   if (/重新|再生成|重跑|识别/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     if (!state.analysisCanvas) {
       addAssistantMessage("还没有图纸。先上传一张平面图，或者加载样例，我再帮你重新生成。");
       return;
@@ -6995,30 +7463,35 @@ function runBeginnerCommand(input) {
   }
 
   if (/画墙|补墙|加墙/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setTool("draw-wall");
     addAssistantMessage("已进入画墙模式。请在右侧图纸上点一下作为起点，再点一下作为终点；适合补识别漏掉的墙。");
     return;
   }
 
   if (/门/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setTool("draw-door");
     addAssistantMessage("已进入画门模式。请在右侧墙线上点门洞的起点和终点；门会和墙体一起参与导出。");
     return;
   }
 
   if (/窗/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setTool("draw-window");
     addAssistantMessage("已进入画窗模式。请在右侧墙线上点窗洞两端；选中窗以后还能改成高窗、落地窗或飘窗。");
     return;
   }
 
   if (/测量|量尺|尺寸/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setTool("measure");
     addAssistantMessage("已进入测量模式。请在右侧图纸上点两个位置，我会按当前比例给出尺寸。");
     return;
   }
 
   if (/标定|比例/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     const metricMatch = text.match(/(\d+(?:\.\d+)?)\s*(米|m|毫米|mm)?/i);
     if (metricMatch) {
       const unit = metricMatch[2] || "mm";
@@ -7032,30 +7505,35 @@ function runBeginnerCommand(input) {
   }
 
   if (/线框|只看线/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setView("vector");
     addAssistantMessage("已切到线框模式。现在右侧主要显示识别出的墙体中心线和构件关系。");
     return;
   }
 
   if (/叠加|原图|覆盖/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
     setView("overlay");
     addAssistantMessage("已切到叠加模式。现在可以对照原图检查墙线是否贴合。");
     return;
   }
 
   if (/重置视角|恢复视角|视角重置/.test(text)) {
+    setBeginnerPhonePreviewMode("three");
     resetThreeCamera();
     addAssistantMessage("3D 视角已重置。");
     return;
   }
 
   if (/退出漫游|俯视/.test(text)) {
+    setBeginnerPhonePreviewMode("three");
     setThreeMode("orbit");
     addAssistantMessage("已回到 3D 俯视模式。");
     return;
   }
 
   if (/漫游|走进|第一人称/.test(text)) {
+    setBeginnerPhonePreviewMode("three");
     setThreeMode("roam");
     addAssistantMessage("已进入 3D 漫游模式。你可以用键盘方向键或 WASD 在模型里移动。");
     return;
@@ -7064,14 +7542,136 @@ function runBeginnerCommand(input) {
   addAssistantMessage("我可以帮你做这些事：上传图纸、加载样例、切换 AI/CV 或普通识别、重新生成、导出 JSON、保存项目、打开项目、画墙、画门窗、测量、标定比例、线框模式、叠加模式、重置视角、进入详细界面、返回选择页。");
 }
 
+function submitBeginnerChatValue(value, source = "text") {
+  if (!beginnerUi.chatInput) return;
+  const command = value.trim();
+  if (!command) return;
+  addChatMessage("user", command);
+  beginnerUi.chatInput.value = "";
+  runBeginnerCommand(command, source);
+}
+
+function voiceRecognitionConstructor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function updateBeginnerVoiceUi() {
+  const button = beginnerUi.voiceToggleButton;
+  if (!button) return;
+  button.classList.toggle("is-enabled", state.beginnerVoice.enabled);
+  button.classList.toggle("is-listening", state.beginnerVoice.listening);
+  button.setAttribute("aria-pressed", state.beginnerVoice.enabled ? "true" : "false");
+  button.textContent = state.beginnerVoice.listening ? "听写中" : "语音";
+}
+
+function ensureBeginnerVoiceRecognition() {
+  if (state.beginnerVoice.recognition) return state.beginnerVoice.recognition;
+  const SpeechRecognition = voiceRecognitionConstructor();
+  if (!SpeechRecognition) return null;
+  const recognition = new SpeechRecognition();
+  recognition.lang = "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.onstart = () => {
+    state.beginnerVoice.listening = true;
+    updateBeginnerVoiceUi();
+  };
+  recognition.onend = () => {
+    state.beginnerVoice.listening = false;
+    updateBeginnerVoiceUi();
+    if (!state.beginnerVoice.enabled) return;
+    window.clearTimeout(state.beginnerVoice.restartTimer);
+    state.beginnerVoice.restartTimer = window.setTimeout(() => startBeginnerVoiceRecognition(false), 220);
+  };
+  recognition.onerror = (event) => {
+    state.beginnerVoice.listening = false;
+    state.beginnerVoice.lastError = event.error || "unknown";
+    window.clearTimeout(state.beginnerVoice.restartTimer);
+    updateBeginnerVoiceUi();
+    if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+      state.beginnerVoice.enabled = false;
+      updateBeginnerVoiceUi();
+      addVoiceUploadFallbackMessage("浏览器没有麦克风权限，语音输入已关闭。需要上传图纸时，可以点下面按钮选择文件。");
+    } else if (event.error === "audio-capture") {
+      state.beginnerVoice.enabled = false;
+      updateBeginnerVoiceUi();
+      addVoiceUploadFallbackMessage("没有检测到可用麦克风，语音输入已关闭。需要上传图纸时，可以点下面按钮选择文件。");
+    } else if (event.error === "network") {
+      state.beginnerVoice.enabled = false;
+      updateBeginnerVoiceUi();
+      addVoiceUploadFallbackMessage("浏览器语音识别服务连接失败，语音输入已关闭。需要上传图纸时，可以点下面按钮选择文件。");
+    } else if (event.error !== "no-speech" && event.error !== "aborted") {
+      state.beginnerVoice.enabled = false;
+      updateBeginnerVoiceUi();
+      addVoiceUploadFallbackMessage("语音识别暂时不可用，已停止听写，避免反复中断。需要上传图纸时，可以点下面按钮选择文件。");
+    }
+  };
+  recognition.onresult = (event) => {
+    let interimText = "";
+    let finalText = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const transcript = event.results[index][0]?.transcript || "";
+      if (event.results[index].isFinal) finalText += transcript;
+      else interimText += transcript;
+    }
+    if (interimText && beginnerUi.chatInput) beginnerUi.chatInput.value = interimText.trim();
+    if (finalText.trim()) submitBeginnerChatValue(finalText, "voice");
+  };
+  state.beginnerVoice.recognition = recognition;
+  return recognition;
+}
+
+function startBeginnerVoiceRecognition(announce = true) {
+  const recognition = ensureBeginnerVoiceRecognition();
+  if (!recognition) {
+    state.beginnerVoice.enabled = false;
+    updateBeginnerVoiceUi();
+    addAssistantMessage("当前浏览器不支持语音识别，请继续用文字输入。");
+    return;
+  }
+  state.beginnerVoice.enabled = true;
+  updateBeginnerVoiceUi();
+  if (announce) addAssistantMessage("语音输入已开启。说出“加载样例”“切到 3D”“画窗”等指令，我会自动执行。");
+  if (state.beginnerVoice.listening) return;
+  try {
+    recognition.start();
+  } catch (error) {
+    if (error.name !== "InvalidStateError") {
+      state.beginnerVoice.enabled = false;
+      updateBeginnerVoiceUi();
+      addAssistantMessage("语音输入启动失败，请检查浏览器麦克风权限。");
+    }
+  }
+}
+
+function stopBeginnerVoiceRecognition(announce = true) {
+  state.beginnerVoice.enabled = false;
+  window.clearTimeout(state.beginnerVoice.restartTimer);
+  if (state.beginnerVoice.recognition) {
+    try {
+      state.beginnerVoice.recognition.stop();
+    } catch (error) {
+      // Ignore stop calls while the recognizer is already idle.
+    }
+  }
+  state.beginnerVoice.listening = false;
+  updateBeginnerVoiceUi();
+  if (announce) addAssistantMessage("语音输入已关闭。");
+}
+
+function setBeginnerVoiceEnabled(enabled, announce = true) {
+  if (enabled) startBeginnerVoiceRecognition(announce);
+  else stopBeginnerVoiceRecognition(announce);
+}
+
+function toggleBeginnerVoice() {
+  setBeginnerVoiceEnabled(!state.beginnerVoice.enabled, true);
+}
+
 function handleChatSubmit(event) {
   event.preventDefault();
   if (!beginnerUi.chatInput) return;
-  const value = beginnerUi.chatInput.value.trim();
-  if (!value) return;
-  addChatMessage("user", value);
-  beginnerUi.chatInput.value = "";
-  runBeginnerCommand(value);
+  submitBeginnerChatValue(beginnerUi.chatInput.value);
 }
 
 function bindExperienceUi() {
@@ -7107,6 +7707,19 @@ function bindExperienceUi() {
     exportJson();
   });
   beginnerUi.chatForm?.addEventListener("submit", handleChatSubmit);
+  beginnerUi.voiceToggleButton?.addEventListener("click", toggleBeginnerVoice);
+  beginnerUi.phonePreviewCanvas?.addEventListener("wheel", handlePhonePreviewWheel, { passive: false });
+  beginnerUi.phonePreviewCanvas?.addEventListener("pointerdown", handlePhonePreviewPointerDown);
+  beginnerUi.phonePreviewCanvas?.addEventListener("pointermove", handlePhonePreviewPointerMove);
+  beginnerUi.phonePreviewCanvas?.addEventListener("pointerup", handlePhonePreviewPointerUp);
+  beginnerUi.phonePreviewCanvas?.addEventListener("pointercancel", handlePhonePreviewPointerUp);
+  beginnerUi.phonePreviewCanvas?.addEventListener("keydown", handlePhonePreviewKeyDown);
+  beginnerUi.phonePreviewCanvas?.addEventListener("contextmenu", (event) => event.preventDefault());
+  beginnerUi.phoneChatResizer?.addEventListener("pointerdown", handlePhoneChatResizePointerDown);
+  beginnerUi.phoneChatResizer?.addEventListener("pointermove", handlePhoneChatResizePointerMove);
+  beginnerUi.phoneChatResizer?.addEventListener("pointerup", handlePhoneChatResizePointerUp);
+  beginnerUi.phoneChatResizer?.addEventListener("pointercancel", handlePhoneChatResizePointerUp);
+  beginnerUi.phoneChatResizer?.addEventListener("keydown", handlePhoneChatResizeKeyDown);
 }
 
 elements.uploadButton.addEventListener("click", openImagePicker);
@@ -7213,4 +7826,5 @@ document.addEventListener("keydown", handleDocumentKeyDown);
 bindExperienceUi();
 syncControlLabels();
 updateBeginnerSummary();
+updateBeginnerPhonePreview();
 initThreeViewer();

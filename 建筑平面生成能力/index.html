@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>建筑平面生成能力</title>
-    <link rel="stylesheet" href="./styles.css?v=20260605-font2" />
+    <link rel="stylesheet" href="./styles.css?v=20260609-voice-upload4" />
   </head>
   <body class="mode-launch">
     <section id="modeLauncher" class="mode-launcher" aria-label="选择使用方式">
@@ -54,6 +54,13 @@
             </div>
           </header>
 
+          <div class="phone-preview" aria-label="实时画布预览">
+            <canvas id="phonePreviewCanvas" width="320" height="220" tabindex="0"></canvas>
+            <span id="phonePreviewLabel">等待图纸</span>
+          </div>
+
+          <div id="phoneChatResizer" class="phone-chat-resizer" role="separator" aria-orientation="horizontal" aria-label="调整画布和对话区高度" tabindex="0"></div>
+
           <div class="assistant-intro">
             <div class="assistant-avatar">AI</div>
             <div>
@@ -98,6 +105,7 @@
 
           <form id="chatForm" class="chat-composer">
             <input id="chatInput" type="text" autocomplete="off" placeholder="输入一句话，例如：帮我上传图纸 / 加载样例 / 用AI识别 / 导出JSON" />
+            <button id="voiceToggleButton" class="voice-toggle" type="button" aria-pressed="false" title="语音输入">语音</button>
             <button type="submit">发送</button>
           </form>
         </section>
@@ -350,6 +358,6 @@
         </div>
       </div>
     </section>
-    <script src="./app.js?v=20260609-free-resize1"></script>
+    <script src="./app.js?v=20260609-voice-upload4"></script>
   </body>
 </html>

@@ -4,6 +4,31 @@
 
 Double-click `start-windows.bat`, then open the page in the browser window it starts.
 
+## Floor-plan AI inference service
+
+The furniture-layout test page can call a local Python service at:
+
+```text
+POST http://127.0.0.1:8787/api/floorplan/recognize
+```
+
+Install dependencies and start it:
+
+```text
+pip install -r requirements-floorplan-ai.txt
+start-floorplan-ai-service.bat
+```
+
+Optional model files:
+
+```text
+models/deepfloorplan.onnx
+models/floorplan-unet.onnx
+models/cubicasa5k.onnx
+```
+
+When no model file is present, the service returns the same `floorplan-ai-v1` JSON schema using an OpenCV fallback.
+
 ## Site photo display model
 
 Use `现场图片` to upload one or more JPG / PNG / WEBP photos from the job site, then click `生成展示模型`.

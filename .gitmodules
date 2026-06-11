@@ -1,0 +1,3 @@
+[submodule "third_party/CubiCasa5k"]
+	path = third_party/CubiCasa5k
+	url = https://github.com/CubiCasa/CubiCasa5k.git

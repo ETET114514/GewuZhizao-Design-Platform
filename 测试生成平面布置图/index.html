@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>测试生成平面布置图</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="plan-stage" aria-label="家具布置平面图测试画布">
+        <header class="stage-toolbar">
+          <div>
+            <h1>测试生成平面布置图</h1>
+            <p>基于墙体平面自动推断房间功能，并生成家具布置方案。</p>
+          </div>
+          <div class="toolbar-actions">
+            <label class="upload-button" for="sourcePlanInput">上传原平面图</label>
+            <input id="sourcePlanInput" class="hidden-input" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg" />
+            <label class="source-toggle">
+              <input id="showSourcePlan" type="checkbox" checked />
+              显示原图
+            </label>
+            <label class="source-toggle">
+              <input id="showBinaryPlan" type="checkbox" />
+              显示二值图
+            </label>
+            <label class="source-toggle">
+              <input id="showStructuralWall" type="checkbox" checked />
+              结构墙模式
+            </label>
+            <label class="opacity-control">
+              <span>原图透明度</span>
+              <input id="sourceOpacity" type="range" min="0" max="100" value="70" />
+            </label>
+            <button id="clearSourcePlan" type="button" disabled>清除原图</button>
+            <select id="layoutStyle" aria-label="布置风格">
+              <option value="balanced">均衡布置</option>
+              <option value="compact">紧凑布置</option>
+              <option value="comfort">舒适布置</option>
+            </select>
+            <button id="regenerateButton" type="button">生成布置</button>
+            <button id="exportButton" type="button" disabled>导出 JSON</button>
+          </div>
+        </header>
+
+        <section class="scheme-strip" aria-label="方案快速切换">
+          <div>
+            <strong>方案预览</strong>
+            <span id="schemeStripStatus">生成后可在这里切换多个方案</span>
+          </div>
+          <div id="schemeTabs" class="scheme-tabs"></div>
+        </section>
+
+        <div class="canvas-frame">
+          <div class="canvas-sheet">
+            <img id="sourcePlanPreview" class="source-plan-preview" alt="上传的原平面图" />
+            <svg id="floorPlanSvg" viewBox="0 0 1000 1040" role="img" aria-label="自动生成的家具平面布置图"></svg>
+          </div>
+        </div>
+      </section>
+
+      <aside class="inspector" aria-label="生成结果">
+        <section class="summary-band">
+          <div>
+            <span>房间</span>
+            <strong id="roomCount">0</strong>
+          </div>
+          <div>
+            <span>家具</span>
+            <strong id="furnitureCount">0</strong>
+          </div>
+          <div>
+            <span>通行风险</span>
+            <strong id="riskCount">0</strong>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>原图状态</h2>
+          <p id="sourcePlanStatus" class="source-status">尚未上传原平面图</p>
+        </section>
+
+        <section class="panel">
+          <h2>AI识别接口</h2>
+          <div class="ai-tools">
+            <label>
+              模型通路
+              <select id="aiModelProvider">
+                <option value="mock">Mock标准输出</option>
+                <option value="deepfloorplan">DeepFloorplan</option>
+                <option value="unet">U-Net</option>
+                <option value="cubicasa">CubiCasa5K体系</option>
+              </select>
+            </label>
+            <button id="runAiRecognition" type="button" disabled>运行AI识别</button>
+          </div>
+          <p id="aiRecognitionStatus" class="source-status">上传图纸后，可先跑通标准AI识别输出。</p>
+        </section>
+
+        <section class="panel">
+          <h2>MVP确认</h2>
+          <p id="mvpStatus" class="source-status">上传平面图后，先确认入户门、厨房、卫生间等关键点。</p>
+          <div class="confirm-tools" id="confirmTools">
+            <button type="button" data-confirm-type="planMin">平面左上</button>
+            <button type="button" data-confirm-type="planMax">平面右下</button>
+            <button type="button" data-confirm-type="entrance">入户门</button>
+            <button type="button" data-confirm-type="kitchen">厨房</button>
+            <button type="button" data-confirm-type="bath">卫生间</button>
+            <button type="button" data-confirm-type="living">客餐厅</button>
+            <button type="button" data-confirm-type="bedroom">卧室</button>
+            <button type="button" data-confirm-type="balcony">阳台</button>
+          </div>
+          <div class="measurement-tools">
+            <label>
+              标定长度(mm)
+              <input id="calibrationLengthMm" type="number" min="100" step="50" value="3000" />
+            </label>
+            <div class="inline-tools" id="calibrationTools">
+              <button type="button" data-calibration-point="start">标定起点</button>
+              <button type="button" data-calibration-point="end">标定终点</button>
+            </div>
+            <p id="calibrationStatus" class="tool-status">未标定时，家具仍按功能区比例换算。</p>
+          </div>
+          <div class="measurement-tools">
+            <strong>房间轮廓确认</strong>
+            <div class="outline-tools" id="outlineTools">
+              <button type="button" data-outline-type="kitchen">框选厨房</button>
+              <button type="button" data-outline-type="bath">框选卫生间</button>
+              <button type="button" data-outline-type="living">框选客餐厅</button>
+              <button type="button" data-outline-type="bedroom">框选卧室</button>
+              <button type="button" data-outline-type="balcony">框选阳台</button>
+            </div>
+            <p id="outlineStatus" class="tool-status">点击一个轮廓按钮后，在画布上点左上和右下两点。</p>
+          </div>
+          <div id="confirmationList" class="confirmation-list"></div>
+          <button id="clearConfirmations" class="clear-confirmations" type="button">清空确认</button>
+        </section>
+
+        <section class="panel">
+          <h2>方案选择</h2>
+          <div id="schemeList" class="scheme-list"></div>
+        </section>
+
+        <section class="panel">
+          <h2>生成策略</h2>
+          <ul id="strategyList"></ul>
+        </section>
+
+        <section class="panel">
+          <h2>房间识别</h2>
+          <div id="roomList" class="room-list"></div>
+        </section>
+
+        <section class="panel">
+          <h2>测试数据</h2>
+          <pre id="resultJson"></pre>
+        </section>
+      </aside>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

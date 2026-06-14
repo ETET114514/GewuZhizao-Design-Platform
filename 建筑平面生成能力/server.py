@@ -2,17 +2,41 @@ import base64
 import json
 import mimetypes
 import os
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parent
+CUBICASA_ROOT = REPO_ROOT / "third_party" / "CubiCasa5k"
+CUBICASA_CHECKPOINT = (
+    CUBICASA_ROOT
+    / "runs_cubi"
+    / "finetune_20epoch_lr1e-4"
+    / "2026-06-14-14-53-24"
+    / "model_best_val_loss_var.pkl"
+)
+CUBICASA_ONNX_CANDIDATES = [
+    ROOT / "models" / "cubicasa5k-floorplan.onnx",
+    ROOT / "models" / "cubicasa5k.onnx",
+    ROOT / "floorplan_models" / "cubicasa5k-floorplan.onnx",
+]
 MODEL_CANDIDATES = [
     ROOT / "models" / "wall-segmentation.onnx",
     ROOT / "floorplan_models" / "wall-segmentation.onnx",
 ]
 MAX_IMAGE_SIZE = 1400
+CUBICASA_IMAGE_SIZE = 256
+CUBICASA_INPUT_SLICE = (21, 12, 11)
+CUBICASA_WALL_ROOM_CLASSES = (2, 8)
+CUBICASA_WALL_PROB_THRESHOLD = 0.30
+CUBICASA_ONNX_SESSION = None
+CUBICASA_ONNX_ERROR = None
+CUBICASA_MODEL = None
+CUBICASA_DEVICE = None
+CUBICASA_LOAD_ERROR = None
 
 
 class FloorPlanHandler(BaseHTTPRequestHandler):
@@ -119,7 +143,17 @@ def model_path():
     return next((path for path in MODEL_CANDIDATES if path.exists()), None)
 
 
+def cubicasa_onnx_path():
+    return next((path for path in CUBICASA_ONNX_CANDIDATES if path.exists()), None)
+
+
 def infer_wall_mask(image, cv2, np):
+    cubicasa_onnx = infer_cubicasa_onnx_mask(image, cv2, np)
+    if cubicasa_onnx is not None:
+        return cubicasa_onnx, "cubicasa5k-onnx"
+    cubicasa = infer_cubicasa_mask(image, cv2, np)
+    if cubicasa is not None:
+        return cubicasa, "cubicasa5k-rtx5080"
     path = model_path()
     if path:
         try:
@@ -129,10 +163,151 @@ def infer_wall_mask(image, cv2, np):
     return infer_cv_mask(image, cv2), "opencv-fallback"
 
 
+def infer_cubicasa_onnx_mask(image, cv2, np):
+    session = load_cubicasa_onnx_session()
+    if session is None:
+        if CUBICASA_ONNX_ERROR:
+            print(f"CubiCasa ONNX unavailable, falling back: {CUBICASA_ONNX_ERROR}")
+        return None
+
+    height, width = image.shape[:2]
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    resized = cv2.resize(rgb, (CUBICASA_IMAGE_SIZE, CUBICASA_IMAGE_SIZE), interpolation=cv2.INTER_AREA)
+    tensor = resized.astype(np.float32)
+    tensor = 2 * (tensor / 255.0) - 1
+    tensor = np.transpose(tensor, (2, 0, 1))[None, ...]
+
+    input_name = session.get_inputs()[0].name
+    output = session.run(None, {input_name: tensor})[0]
+    room_logits = output[
+        :,
+        CUBICASA_INPUT_SLICE[0]:CUBICASA_INPUT_SLICE[0] + CUBICASA_INPUT_SLICE[1],
+    ][0].astype(np.float32)
+    room_logits = room_logits - room_logits.max(axis=0, keepdims=True)
+    room_probs = np.exp(room_logits)
+    room_probs = room_probs / np.maximum(room_probs.sum(axis=0, keepdims=True), 1e-6)
+    room_pred = np.argmax(room_probs, axis=0).astype(np.uint8)
+    wall_score = room_probs[list(CUBICASA_WALL_ROOM_CLASSES)].sum(axis=0)
+
+    wall_mask = (
+        np.isin(room_pred, CUBICASA_WALL_ROOM_CLASSES)
+        | (wall_score >= CUBICASA_WALL_PROB_THRESHOLD)
+    ).astype(np.uint8) * 255
+    wall_mask = cv2.resize(wall_mask, (width, height), interpolation=cv2.INTER_NEAREST)
+    wall_mask = cv2.bitwise_or(wall_mask, infer_cv_mask(image, cv2))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    return cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+
+def load_cubicasa_onnx_session():
+    global CUBICASA_ONNX_SESSION, CUBICASA_ONNX_ERROR
+    if CUBICASA_ONNX_SESSION is not None:
+        return CUBICASA_ONNX_SESSION
+    if CUBICASA_ONNX_ERROR is not None:
+        return None
+
+    path = cubicasa_onnx_path()
+    if path is None:
+        CUBICASA_ONNX_ERROR = "CubiCasa ONNX model not found"
+        return None
+
+    try:
+        import onnxruntime as ort
+
+        available = ort.get_available_providers()
+        providers = [
+            provider
+            for provider in ("CUDAExecutionProvider", "CPUExecutionProvider")
+            if provider in available
+        ] or available
+        CUBICASA_ONNX_SESSION = ort.InferenceSession(path.read_bytes(), providers=providers)
+        print(f"CubiCasa5k ONNX model loaded from {path} with {providers}")
+        return CUBICASA_ONNX_SESSION
+    except Exception as exc:
+        CUBICASA_ONNX_ERROR = str(exc)
+        return None
+
+
+def infer_cubicasa_mask(image, cv2, np):
+    model = load_cubicasa_model()
+    if model is None:
+        if CUBICASA_LOAD_ERROR:
+            print(f"CubiCasa model unavailable, falling back: {CUBICASA_LOAD_ERROR}")
+        return None
+
+    import torch
+
+    height, width = image.shape[:2]
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    resized = cv2.resize(rgb, (CUBICASA_IMAGE_SIZE, CUBICASA_IMAGE_SIZE), interpolation=cv2.INTER_AREA)
+    tensor = resized.astype(np.float32)
+    tensor = 2 * (tensor / 255.0) - 1
+    tensor = np.transpose(tensor, (2, 0, 1))[None, ...]
+    with torch.no_grad():
+        x = torch.from_numpy(tensor).to(CUBICASA_DEVICE)
+        output = model(x)
+        room_logits = output[:, CUBICASA_INPUT_SLICE[0]:CUBICASA_INPUT_SLICE[0] + CUBICASA_INPUT_SLICE[1]]
+        room_probs = torch.softmax(room_logits, dim=1)[0]
+        room_pred = torch.argmax(room_probs, dim=0).detach().cpu().numpy().astype(np.uint8)
+        wall_score = room_probs[list(CUBICASA_WALL_ROOM_CLASSES)].sum(dim=0).detach().cpu().numpy()
+
+    wall_mask = (
+        np.isin(room_pred, CUBICASA_WALL_ROOM_CLASSES)
+        | (wall_score >= CUBICASA_WALL_PROB_THRESHOLD)
+    ).astype(np.uint8) * 255
+    wall_mask = cv2.resize(wall_mask, (width, height), interpolation=cv2.INTER_NEAREST)
+    wall_mask = cv2.bitwise_or(wall_mask, infer_cv_mask(image, cv2))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    return cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+
+def load_cubicasa_model():
+    global CUBICASA_MODEL, CUBICASA_DEVICE, CUBICASA_LOAD_ERROR
+    if CUBICASA_MODEL is not None:
+        return CUBICASA_MODEL
+    if CUBICASA_LOAD_ERROR is not None:
+        return None
+    if not CUBICASA_CHECKPOINT.exists():
+        CUBICASA_LOAD_ERROR = f"checkpoint not found: {CUBICASA_CHECKPOINT}"
+        return None
+    if not (CUBICASA_ROOT / "floortrans").exists():
+        CUBICASA_LOAD_ERROR = f"CubiCasa source not found: {CUBICASA_ROOT}"
+        return None
+
+    try:
+        import PIL.Image  # noqa: F401 - initialize Pillow before torchvision/torch stack on Windows.
+        import torch
+
+        sys.path.insert(0, str(CUBICASA_ROOT))
+        cwd = os.getcwd()
+        os.chdir(CUBICASA_ROOT)
+        try:
+            from floortrans.models import get_model
+
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            checkpoint = torch.load(CUBICASA_CHECKPOINT, map_location=device, weights_only=False)
+            model = get_model("hg_furukawa_original", 51)
+            model.conv4_ = torch.nn.Conv2d(256, 44, bias=True, kernel_size=1)
+            model.upsample = torch.nn.ConvTranspose2d(44, 44, kernel_size=4, stride=4)
+            model.load_state_dict(checkpoint["model_state"])
+            model.to(device)
+            model.eval()
+        finally:
+            os.chdir(cwd)
+
+        CUBICASA_MODEL = model
+        CUBICASA_DEVICE = device
+        print(f"CubiCasa5k model loaded from {CUBICASA_CHECKPOINT} on {device}")
+        return CUBICASA_MODEL
+    except Exception as exc:
+        CUBICASA_LOAD_ERROR = str(exc)
+        return None
+
+
 def infer_onnx_mask(image, path, cv2, np):
     import onnxruntime as ort
 
-    session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(path.read_bytes(), providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
     input_shape = session.get_inputs()[0].shape
     target_h = int(input_shape[2]) if isinstance(input_shape[2], int) else 512

@@ -2,6 +2,13 @@
 cd /d "%~dp0"
 set URL=http://127.0.0.1:8010/index.html
 
+if exist "%USERPROFILE%\miniforge3\_conda.exe" if exist "%~dp0..\.conda-cubicasa" (
+  start "GewuZhizao FloorPlan CubiCasa" cmd /k ""%USERPROFILE%\miniforge3\_conda.exe" run -p "%~dp0..\.conda-cubicasa" python server.py"
+  timeout /t 2 /nobreak >nul
+  start "" "%URL%"
+  exit /b
+)
+
 where py >nul 2>nul
 if %errorlevel%==0 (
   start "建筑平面生成能力" cmd /k py server.py

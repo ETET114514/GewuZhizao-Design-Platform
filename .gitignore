@@ -2,3 +2,13 @@
 *.log
 .venv/
 **/.venv/
+.venv-cubicasa/
+.conda-cubicasa/
+datasets/
+**/__pycache__/
+*.pyc
+*.pkl
+*.pth
+*.pt
+*.ckpt
+*.onnx.data

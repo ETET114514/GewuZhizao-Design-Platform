@@ -1,0 +1,826 @@
+{
+  "schemaVersion": "floorplan-annotation-v1",
+  "image": "color_0011.png",
+  "sourcePrediction": "color_0011跑1.json",
+  "rooms": [
+    {
+      "id": "torch-cubicasa-semantic-segmentation-room-1",
+      "type": "bath",
+      "polygon": [
+        [
+          403,
+          661
+        ],
+        [
+          511,
+          661
+        ],
+        [
+          511,
+          808
+        ],
+        [
+          403,
+          808
+        ]
+      ]
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-room-3",
+      "type": "unknown",
+      "polygon": [
+        [
+          130,
+          184
+        ],
+        [
+          248,
+          184
+        ],
+        [
+          248,
+          310
+        ],
+        [
+          130,
+          310
+        ]
+      ]
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-room-2",
+      "type": "unknown",
+      "polygon": [
+        [
+          45,
+          182
+        ],
+        [
+          116,
+          182
+        ],
+        [
+          116,
+          328
+        ],
+        [
+          45,
+          328
+        ]
+      ]
+    },
+    {
+      "id": "room_4",
+      "type": "kitchen",
+      "polygon": [
+        [
+          259.2,
+          183.3
+        ],
+        [
+          258.7,
+          277.3
+        ],
+        [
+          389.4,
+          277.3
+        ],
+        [
+          390.4,
+          184.7
+        ]
+      ]
+    },
+    {
+      "id": "room_5",
+      "type": "kitchen",
+      "polygon": [
+        [
+          284.3,
+          35.8
+        ],
+        [
+          282.4,
+          172.1
+        ],
+        [
+          388.5,
+          168.4
+        ],
+        [
+          387.6,
+          121
+        ],
+        [
+          400.6,
+          121.4
+        ],
+        [
+          402.9,
+          292.2
+        ],
+        [
+          512.7,
+          290.3
+        ],
+        [
+          515.5,
+          307.5
+        ],
+        [
+          772.3,
+          308.4
+        ],
+        [
+          766.7,
+          34
+        ]
+      ]
+    },
+    {
+      "id": "room_6",
+      "type": "kitchen",
+      "polygon": [
+        [
+          784.4,
+          306.6
+        ],
+        [
+          776.5,
+          34.9
+        ],
+        [
+          879.7,
+          35.8
+        ],
+        [
+          881.1,
+          302.4
+        ],
+        [
+          789.5,
+          305.2
+        ]
+      ]
+    },
+    {
+      "id": "room_7",
+      "type": "kitchen",
+      "polygon": [
+        [
+          518.3,
+          322.9
+        ],
+        [
+          517.4,
+          533.6
+        ],
+        [
+          775.1,
+          537.3
+        ],
+        [
+          776,
+          498.2
+        ],
+        [
+          802,
+          495.4
+        ],
+        [
+          801.1,
+          357.7
+        ],
+        [
+          774.6,
+          359.6
+        ],
+        [
+          770.9,
+          322.9
+        ]
+      ]
+    },
+    {
+      "id": "room_8",
+      "type": "kitchen",
+      "polygon": [
+        [
+          46.6,
+          332.6
+        ],
+        [
+          43.4,
+          648
+        ],
+        [
+          168.9,
+          646.6
+        ],
+        [
+          165.2,
+          338.2
+        ]
+      ]
+    },
+    {
+      "id": "room_9",
+      "type": "unknown",
+      "polygon": [
+        [
+          182,
+          317.3
+        ],
+        [
+          182.9,
+          572.2
+        ],
+        [
+          501.1,
+          574
+        ],
+        [
+          501.5,
+          298.2
+        ],
+        [
+          188.9,
+          301.9
+        ]
+      ]
+    },
+    {
+      "id": "room_10",
+      "type": "unknown",
+      "polygon": [
+        [
+          182,
+          592.7
+        ],
+        [
+          181.5,
+          807.1
+        ],
+        [
+          224.8,
+          808.5
+        ],
+        [
+          224.2,
+          850.3
+        ],
+        [
+          342.9,
+          848
+        ],
+        [
+          344.2,
+          809.4
+        ],
+        [
+          387.9,
+          808.9
+        ],
+        [
+          386.6,
+          596.4
+        ]
+      ]
+    },
+    {
+      "id": "room_11",
+      "type": "unknown",
+      "polygon": [
+        [
+          400.1,
+          594.5
+        ],
+        [
+          400.6,
+          645.7
+        ],
+        [
+          518.3,
+          647.1
+        ],
+        [
+          518.2,
+          809.9
+        ],
+        [
+          673.1,
+          808
+        ],
+        [
+          676.3,
+          852.2
+        ],
+        [
+          808,
+          850.8
+        ],
+        [
+          807.1,
+          681
+        ],
+        [
+          773.1,
+          680.1
+        ],
+        [
+          772.7,
+          551.3
+        ],
+        [
+          517.8,
+          552.2
+        ],
+        [
+          517.4,
+          593.1
+        ]
+      ]
+    }
+  ],
+  "walls": [
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-1",
+      "x1": 31,
+      "y1": 326,
+      "x2": 181.9,
+      "y2": 327,
+      "thickness": 8
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-2",
+      "x1": 269,
+      "y1": 29,
+      "x2": 893,
+      "y2": 29,
+      "thickness": 13
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-3",
+      "x1": 37,
+      "y1": 171,
+      "x2": 37,
+      "y2": 671,
+      "thickness": 20
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-4",
+      "x1": 30,
+      "y1": 178,
+      "x2": 399,
+      "y2": 178,
+      "thickness": 23
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-5",
+      "x1": 169,
+      "y1": 586,
+      "x2": 514,
+      "y2": 586,
+      "thickness": 14
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-6",
+      "x1": 510,
+      "y1": 297,
+      "x2": 510,
+      "y2": 594,
+      "thickness": 14
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-7",
+      "x1": 504,
+      "y1": 544,
+      "x2": 792,
+      "y2": 544,
+      "thickness": 14
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-8",
+      "x1": 174,
+      "y1": 551,
+      "x2": 174,
+      "y2": 822,
+      "thickness": 25
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-9",
+      "x1": 889.4,
+      "y1": 27.5,
+      "x2": 889,
+      "y2": 316,
+      "thickness": 4
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-11",
+      "x1": 172,
+      "y1": 289,
+      "x2": 399,
+      "y2": 289,
+      "thickness": 14
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-12",
+      "x1": 276,
+      "y1": 12,
+      "x2": 276,
+      "y2": 187,
+      "thickness": 21
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-13",
+      "x1": 510,
+      "y1": 653,
+      "x2": 510,
+      "y2": 824,
+      "thickness": 21
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-14",
+      "x1": 395,
+      "y1": 128,
+      "x2": 395,
+      "y2": 297,
+      "thickness": 13
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-15",
+      "x1": 119,
+      "y1": 171,
+      "x2": 119,
+      "y2": 338,
+      "thickness": 17
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-16",
+      "x1": 34,
+      "y1": 657,
+      "x2": 183,
+      "y2": 657,
+      "thickness": 13
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-17",
+      "x1": 668,
+      "y1": 858,
+      "x2": 811,
+      "y2": 858,
+      "thickness": 3
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-18",
+      "x1": 389,
+      "y1": 657,
+      "x2": 519,
+      "y2": 657,
+      "thickness": 3
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-19",
+      "x1": 250,
+      "y1": 171,
+      "x2": 250,
+      "y2": 295,
+      "thickness": 13
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-20",
+      "x1": 672.2,
+      "y1": 805.2,
+      "x2": 672.2,
+      "y2": 859.6,
+      "thickness": 3
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-21",
+      "x1": 772,
+      "y1": 16,
+      "x2": 772,
+      "y2": 73,
+      "thickness": 26
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-22",
+      "x1": 174,
+      "y1": 286,
+      "x2": 174,
+      "y2": 338,
+      "thickness": 20
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-23",
+      "x1": 216,
+      "y1": 808,
+      "x2": 216,
+      "y2": 856,
+      "thickness": 9
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-24",
+      "x1": 351,
+      "y1": 809,
+      "x2": 351,
+      "y2": 856,
+      "thickness": 11
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-25",
+      "x1": 780.1,
+      "y1": 508.9,
+      "x2": 781,
+      "y2": 677.8,
+      "thickness": 27
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-26",
+      "x1": 354.9,
+      "y1": 816.4,
+      "x2": 673.6,
+      "y2": 814.5,
+      "thickness": 31
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-wall-27",
+      "x1": 215.8,
+      "y1": 856.4,
+      "x2": 351.2,
+      "y2": 856.4,
+      "thickness": 27
+    },
+    {
+      "id": "wall_28",
+      "x1": 504.8,
+      "y1": 315.4,
+      "x2": 889.4,
+      "y2": 314.9,
+      "thickness": 8
+    },
+    {
+      "id": "wall_29",
+      "x1": 777.8,
+      "y1": 255.4,
+      "x2": 777.4,
+      "y2": 354.5,
+      "thickness": 8
+    },
+    {
+      "id": "wall_30",
+      "x1": 167.5,
+      "y1": 815.5,
+      "x2": 222,
+      "y2": 816.4,
+      "thickness": 8
+    },
+    {
+      "id": "wall_31",
+      "x1": 394,
+      "y1": 586.6,
+      "x2": 394.5,
+      "y2": 817.3,
+      "thickness": 8
+    },
+    {
+      "id": "wall_31",
+      "x1": 813.1,
+      "y1": 674.5,
+      "x2": 813.1,
+      "y2": 860.6,
+      "thickness": 8
+    },
+    {
+      "id": "wall_32",
+      "x1": 816.8,
+      "y1": 676.4,
+      "x2": 776.4,
+      "y2": 675.9,
+      "thickness": 8
+    },
+    {
+      "id": "wall_33",
+      "x1": 806.2,
+      "y1": 504.7,
+      "x2": 776.9,
+      "y2": 503.8,
+      "thickness": 8
+    },
+    {
+      "id": "wall_34",
+      "x1": 808.1,
+      "y1": 352.2,
+      "x2": 773.2,
+      "y2": 350.3,
+      "thickness": 8
+    },
+    {
+      "id": "wall_35",
+      "x1": 808,
+      "y1": 506.6,
+      "x2": 807.5,
+      "y2": 352.1,
+      "thickness": 8
+    }
+  ],
+  "doors": [
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-1",
+      "x1": 319,
+      "y1": 586,
+      "x2": 382,
+      "y2": 586,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-2",
+      "x1": 294,
+      "y1": 24,
+      "x2": 355,
+      "y2": 24,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-3",
+      "x1": 440,
+      "y1": 586,
+      "x2": 497,
+      "y2": 586,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-4",
+      "x1": 262,
+      "y1": 289,
+      "x2": 312,
+      "y2": 289,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-5",
+      "x1": 119,
+      "y1": 228,
+      "x2": 119,
+      "y2": 278,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-6",
+      "x1": 506,
+      "y1": 436,
+      "x2": 506,
+      "y2": 486,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-7",
+      "x1": 456,
+      "y1": 657,
+      "x2": 504,
+      "y2": 657,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-door-8",
+      "x1": 195,
+      "y1": 289,
+      "x2": 241,
+      "y2": 289,
+      "thickness": 6
+    }
+  ],
+  "windows": [
+    {
+      "id": "torch-cubicasa-semantic-segmentation-window-1",
+      "x1": 426,
+      "y1": 815,
+      "x2": 490,
+      "y2": 815,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-window-2",
+      "x1": 812.2,
+      "y1": 673.1,
+      "x2": 814,
+      "y2": 856.9,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-window-3",
+      "x1": 51.6,
+      "y1": 656.8,
+      "x2": 166.5,
+      "y2": 658.2,
+      "thickness": 6
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-window-4",
+      "x1": 777.3,
+      "y1": 353.5,
+      "x2": 807.5,
+      "y2": 354,
+      "thickness": 6
+    },
+    {
+      "id": "window_5",
+      "x1": 810.8,
+      "y1": 506.1,
+      "x2": 781,
+      "y2": 507,
+      "thickness": 5
+    },
+    {
+      "id": "window_6",
+      "x1": 805.7,
+      "y1": 351.2,
+      "x2": 808.9,
+      "y2": 504.7,
+      "thickness": 5
+    },
+    {
+      "id": "window_7",
+      "x1": 780.1,
+      "y1": 314,
+      "x2": 889.9,
+      "y2": 313.5,
+      "thickness": 5
+    },
+    {
+      "id": "window_8",
+      "x1": 775.9,
+      "y1": 28.9,
+      "x2": 888.9,
+      "y2": 28.9,
+      "thickness": 5
+    },
+    {
+      "id": "window_9",
+      "x1": 888.5,
+      "y1": 29.3,
+      "x2": 888.5,
+      "y2": 311.7,
+      "thickness": 5
+    },
+    {
+      "id": "window_10",
+      "x1": 813.1,
+      "y1": 857.8,
+      "x2": 672.6,
+      "y2": 855.5,
+      "thickness": 5
+    },
+    {
+      "id": "window_11",
+      "x1": 214.9,
+      "y1": 855,
+      "x2": 349.8,
+      "y2": 856.9,
+      "thickness": 5
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "torch-cubicasa-semantic-segmentation-fixture-1",
+      "type": "toilet",
+      "bounds": {
+        "x": 408,
+        "y": 705,
+        "width": 50,
+        "height": 32
+      }
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-fixture-1",
+      "type": "sink",
+      "bounds": {
+        "x": 150,
+        "y": 184,
+        "width": 41,
+        "height": 41
+      }
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-fixture-2",
+      "type": "sink",
+      "bounds": {
+        "x": 106,
+        "y": 621,
+        "width": 35,
+        "height": 6
+      }
+    },
+    {
+      "id": "torch-cubicasa-semantic-segmentation-fixture-3",
+      "type": "sink",
+      "bounds": {
+        "x": 412,
+        "y": 670,
+        "width": 28,
+        "height": 28
+      }
+    }
+  ],
+  "savedAt": "2026-06-15T02:16:09.963Z"
+}

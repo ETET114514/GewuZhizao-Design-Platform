@@ -1,0 +1,141 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="686" height="809" viewBox="0 0 686 809">
+  <g class="Space LivingRoom">
+    <polygon points="317,419 317,636 781,636 781,419 " />
+  </g>
+  <g class="Space Bedroom">
+    <polygon points="503,255 503,419 734,419 734,255 " />
+  </g>
+  <g class="Space Bedroom">
+    <polygon points="263,116 263,318 426,318 426,116 " />
+  </g>
+  <g class="Space Storage">
+    <polygon points="26,415 26,544 157,544 157,415 " />
+  </g>
+  <g class="Space Bath">
+    <polygon points="432,45 432,171 544,171 544,45 " />
+  </g>
+  <g class="Space HallWay">
+    <polygon points="430,257 430,419 500,419 500,257 " />
+  </g>
+  <g class="Space HallWay">
+    <polygon points="206,544 206,634 323,634 323,544 " />
+  </g>
+  <g class="Space Bath">
+    <polygon points="267.1,323 268.9,415.4 424,415 424,318 " />
+  </g>
+  <g class="Space Kitchen">
+    <polygon points="115.3,324.4 248.1,324.1 247.1,427.8 310.7,424.6 311,538.1 169.8,538.5 170.5,394 116.3,391.9 " />
+  </g>
+  <g class="Space Bedroom">
+    <polygon points="552.1,43.6 740.1,43.3 741.6,66.5 777.4,64.4 777,222.5 741.9,223.2 742.3,243.6 428.4,244.3 428.8,187 552.1,183.5 " />
+  </g>
+  <g id="Wall">
+    <polygon points="28,426 428,426 428,410 28,410 " />
+  </g>
+  <g id="Wall">
+    <polygon points="24,419 24,799 44,799 44,419 " />
+  </g>
+  <g id="Wall">
+    <polygon points="250.5,417.91 252.2,787.91 255.2,787.89 253.5,417.89 " />
+  </g>
+  <g id="Wall">
+    <polygon points="98,284 428,284 428,240 98,240 " />
+  </g>
+  <g id="Wall">
+    <polygon points="536.5,14 536.5,322 553.5,322 553.5,14 " />
+  </g>
+  <g id="Wall">
+    <polygon points="311.5,108.26 310,430.96 326,431.04 327.5,108.34 " />
+  </g>
+  <g id="Wall">
+    <polygon points="29,785.5 255,785.5 255,782.5 29,782.5 " />
+  </g>
+  <g id="Wall">
+    <polygon points="239,737.5 427,737.5 427,734.5 239,734.5 " />
+  </g>
+  <g id="Wall">
+    <polygon points="243,505 430,505 430,497 243,497 " />
+  </g>
+  <g id="Wall">
+    <polygon points="410,251 410,434 424,434 424,251 " />
+  </g>
+  <g id="Wall">
+    <polygon points="119.5,252 119.5,430 122.5,430 122.5,252 " />
+  </g>
+  <g id="Wall">
+    <polygon points="392.5,14 392.5,171 407.5,171 407.5,14 " />
+  </g>
+  <g id="Wall">
+    <polygon points="28,549.5 182,549.5 182,540.5 28,540.5 " />
+  </g>
+  <g id="Wall">
+    <polygon points="400,25.5 553,25.5 553,12.5 400,12.5 " />
+  </g>
+  <g id="Wall">
+    <polygon points="400,168.5 553,168.5 553,155.5 400,155.5 " />
+  </g>
+  <g id="Wall">
+    <polygon points="172,423 172,550 180,550 180,423 " />
+  </g>
+  <g id="Wall">
+    <polygon points="537,208.5 648,208.5 648,189.5 537,189.5 " />
+  </g>
+  <g id="Wall">
+    <polygon points="312.38,115.2 416.98,115.5 417.02,104.5 312.42,104.2 " />
+  </g>
+  <g id="Wall">
+    <polygon points="56.5,743 56.5,797 59.5,797 59.5,743 " />
+  </g>
+  <g id="Wall">
+    <polygon points="631,193 631,801 655,801 655,193 " />
+  </g>
+  <g id="Wall">
+    <polygon points="407.7,500.08 407.2,770.98 433.2,771.02 433.7,500.12 " />
+  </g>
+  <g id="Door">
+    <polygon points="265.03,428.6 309.33,428.2 309.27,422.2 264.97,422.6 " />
+  </g>
+  <g id="Door">
+    <polygon points="248,426 248,492 254,492 254,426 " />
+  </g>
+  <g id="Door">
+    <polygon points="573,200 628,200 628,194 573,194 " />
+  </g>
+  <g id="Door">
+    <polygon points="362,505 410,505 410,499 362,499 " />
+  </g>
+  <g id="Door">
+    <polygon points="174,500 174,536 180,536 180,500 " />
+  </g>
+  <g id="Door">
+    <polygon points="331.5,428.8 374.4,427 374.2,422 331.3,423.8 " />
+  </g>
+  <g id="Window">
+    <polygon points="62.17,786 219.57,787.4 219.63,781.4 62.23,780 " />
+  </g>
+  <g id="Window">
+    <polygon points="331,261 381,261 381,255 331,255 " />
+  </g>
+  <g id="Window">
+    <polygon points="33,437 33,487 39,487 39,437 " />
+  </g>
+  <g id="Window">
+    <polygon points="107.3,287.11 107.7,401.71 113.7,401.69 113.3,287.09 " />
+  </g>
+  <g id="Window">
+    <polygon points="429.26,758.89 452.06,760.69 452.54,754.71 429.74,752.91 " />
+  </g>
+  <g id="Window">
+    <polygon points="387.6,732.6 268.1,732.6 268.1,738.6 387.6,738.6 " />
+  </g>
+  <g id="Window">
+    <polygon points="482.82,784.69 450.52,754.09 447.08,757.71 479.38,788.31 " />
+  </g>
+  <g id="Window">
+    <polygon points="479.02,788.3 620.62,787.3 620.58,782.3 478.98,783.3 " />
+  </g>
+  <g id="Window">
+    <polygon points="312,136.03 313.4,246.43 318.4,246.37 317,135.97 " />
+  </g>
+</svg>

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>建筑平面生成能力</title>
-    <link rel="stylesheet" href="./styles.css?v=20260609-voice-upload4" />
+    <link rel="stylesheet" href="./styles.css?v=20260615-deep-read2" />
   </head>
   <body class="mode-launch">
     <section id="modeLauncher" class="mode-launcher" aria-label="选择使用方式">
@@ -131,9 +131,11 @@
           <label class="select-control">
             <span>识别方式</span>
             <select id="recognitionModeSelect">
-              <option value="browser">浏览器规则</option>
+              <option value="deep-learning" selected>智能读图 / 深度学习</option>
               <option value="ai-cv">AI/CV 分割</option>
+              <option value="browser">浏览器规则</option>
             </select>
+            <small class="recognition-hint">已接入 CubiCasa5K 深度学习读图，上传后优先调用本地模型服务。</small>
           </label>
           <label class="control">
             <span>最短墙线</span>
@@ -358,6 +360,6 @@
         </div>
       </div>
     </section>
-    <script src="./app.js?v=20260609-voice-upload4"></script>
+    <script src="./app.js?v=20260615-deep-read2"></script>
   </body>
 </html>

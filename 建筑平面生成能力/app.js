@@ -10,6 +10,12 @@ const SNAP_POINT_DISTANCE_MM = 50;
 const MANUAL_WALL_MIN_LENGTH_MM = 20;
 const RAILING_DEFAULT_HEIGHT_MM = 1100;
 const RAILING_DEFAULT_THICKNESS_MM = 50;
+const FLOOR_PLAN_AI_PROVIDER = "cubicasa";
+const FLOOR_PLAN_AI_PROVIDER_LABELS = {
+  cubicasa: "CubiCasa5K 深度学习",
+  deepfloorplan: "DeepFloorPlan 深度学习",
+  unet: "U-Net 深度学习",
+};
 const PRODUCT_ROTATE_STEP_DEGREES = 90;
 const OPENING_VARIANTS = {
   door: { kind: "door", label: "门", sill: 0, height: 2100 },
@@ -136,6 +142,7 @@ const state = {
   hoveredEndpoint: null,
   removedPixels: 0,
   recognitionMode: "-",
+  deepLearningInfo: null,
   view: "overlay",
   tool: "select",
   drawingLine: null,
@@ -445,6 +452,7 @@ function undoLastEdit() {
   state.calibrationLine = null;
   state.measurementLine = null;
   state.recognitionMode = snapshot.recognitionMode;
+  state.deepLearningInfo = null;
   state.topology = analyzeTopology(state.lines, getSettings());
   syncControlLabels();
   updateStats();
@@ -493,6 +501,7 @@ function ensureDrawingCanvas() {
   state.undoStack = [];
   state.removedPixels = 0;
   state.recognitionMode = "manual";
+  state.deepLearningInfo = null;
   state.sourceName = "manual-floor-plan";
   state.projectFileHandle = null;
   fitCanvasToImage(state.analysisCanvas);
@@ -512,6 +521,7 @@ async function loadImageFromFile(file) {
     const canvas = await fileToCanvas(file);
     state.analysisCanvas = createScaledCanvas(canvas);
     state.maskImage = null;
+    state.deepLearningInfo = null;
     state.lines = [];
     state.topology = createEmptyTopology();
     state.selectedLineIndex = null;
@@ -617,14 +627,19 @@ function runRecognition() {
   state.hiddenOpeningKeys = [];
   state.undoStack = [];
   const settings = getSettings();
-  if (settings.recognitionMode === "ai-cv") {
+  if (settings.recognitionMode === "deep-learning") {
+    runDeepLearningRecognition(settings).catch((error) => {
+      console.warn("Floor-plan deep learning recognition unavailable, falling back to AI/CV segmentation.", error);
+      runBackendRecognition(settings, "deep-learning-fallback").catch(() => runBrowserRecognition(settings, "browser-fallback"));
+    });
+  } else if (settings.recognitionMode === "ai-cv") {
     runBackendRecognition(settings).catch(() => runBrowserRecognition(settings, "browser-fallback"));
   } else {
     runBrowserRecognition(settings, "browser-rules");
   }
 }
 
-async function runBackendRecognition(settings) {
+async function runBackendRecognition(settings, fallbackMode = null) {
   const response = await fetch("/api/segment", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -634,7 +649,153 @@ async function runBackendRecognition(settings) {
   const result = await response.json();
   if (result.error) throw new Error(result.error);
   state.maskImage = result.mask ? await loadImage(result.mask) : null;
-  finishRecognition(result.walls || [], settings, result.mode || "ai-cv");
+  finishRecognition(result.walls || [], settings, fallbackMode || result.mode || "ai-cv");
+}
+
+async function runDeepLearningRecognition(settings) {
+  const response = await fetch(floorPlanDeepLearningEndpoint(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      schemaVersion: "floorplan-ai-v1",
+      provider: FLOOR_PLAN_AI_PROVIDER,
+      image: state.analysisCanvas.toDataURL("image/png"),
+      imageMeta: {
+        width: state.analysisCanvas.width,
+        height: state.analysisCanvas.height,
+      },
+      settings,
+    }),
+  });
+  if (!response.ok) throw new Error(`深度学习读图服务返回 ${response.status}`);
+  const result = await response.json();
+  if (result.error) throw new Error(result.error);
+  state.maskImage = result.debug?.wallMask ? await loadImage(result.debug.wallMask) : result.masks?.wall ? await loadImage(result.masks.wall) : null;
+  const converted = convertDeepLearningRecognitionResult(result, settings);
+  finishRecognition(converted.lines, settings, result.mode || "deep-learning", {
+    openings: converted.openings,
+    deepLearning: {
+      provider: result.provider || FLOOR_PLAN_AI_PROVIDER,
+      model: result.model || result.debug?.model?.name || result.mode || "deep-learning",
+      status: result.status || "unknown",
+      active: result.status === "ok" || Boolean(result.debug?.model?.active),
+      confidence: result.confidence?.overall,
+      rooms: result.rooms?.length || 0,
+      fixtures: result.fixtures?.length || 0,
+    },
+  });
+}
+
+function floorPlanDeepLearningEndpoint() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:"
+    ? "/api/floorplan/recognize"
+    : "http://127.0.0.1:8787/api/floorplan/recognize";
+}
+
+function floorPlanAiProviderLabel(provider = FLOOR_PLAN_AI_PROVIDER) {
+  return FLOOR_PLAN_AI_PROVIDER_LABELS[provider] || `${provider} 深度学习`;
+}
+
+function floorPlanAiCoordinateScale(payload) {
+  const image = payload?.image || {};
+  return {
+    x: state.analysisCanvas.width / Math.max(1, Number(image.width) || state.analysisCanvas.width),
+    y: state.analysisCanvas.height / Math.max(1, Number(image.height) || state.analysisCanvas.height),
+  };
+}
+
+function scaleDeepLearningLine(item, scale) {
+  const source = item?.line || item;
+  return {
+    x1: Number(source?.x1 || 0) * scale.x,
+    y1: Number(source?.y1 || 0) * scale.y,
+    x2: Number(source?.x2 || 0) * scale.x,
+    y2: Number(source?.y2 || 0) * scale.y,
+  };
+}
+
+function deepLearningWallToLine(item, scale, index) {
+  const line = scaleDeepLearningLine(item, scale);
+  if (![line.x1, line.y1, line.x2, line.y2].every(Number.isFinite)) return null;
+  const horizontal = Math.abs(line.x2 - line.x1) >= Math.abs(line.y2 - line.y1);
+  const thickness = Math.max(3, Number(item?.thickness || 0) * (horizontal ? scale.y : scale.x) || 5);
+  const wall = horizontal
+    ? makeLine("horizontal", Math.min(line.x1, line.x2), (line.y1 + line.y2) / 2, Math.max(line.x1, line.x2), (line.y1 + line.y2) / 2, thickness)
+    : makeLine("vertical", (line.x1 + line.x2) / 2, Math.min(line.y1, line.y2), (line.x1 + line.x2) / 2, Math.max(line.y1, line.y2), thickness);
+  wall.id = item?.id || `deep-wall-${index + 1}`;
+  wall.confidence = Number(item?.confidence || 0.72);
+  wall.source = item?.source || "deep-learning";
+  return wall;
+}
+
+function deepLearningOpeningToManualOpening(item, scale, kind, index, lines, settings) {
+  const line = scaleDeepLearningLine(item, scale);
+  if (![line.x1, line.y1, line.x2, line.y2].every(Number.isFinite)) return null;
+  const horizontal = Math.abs(line.x2 - line.x1) >= Math.abs(line.y2 - line.y1);
+  const orientation = horizontal ? "horizontal" : "vertical";
+  const opening = horizontal
+    ? {
+        orientation,
+        x1: Math.min(line.x1, line.x2),
+        y1: (line.y1 + line.y2) / 2,
+        x2: Math.max(line.x1, line.x2),
+        y2: (line.y1 + line.y2) / 2,
+      }
+    : {
+        orientation,
+        x1: (line.x1 + line.x2) / 2,
+        y1: Math.min(line.y1, line.y2),
+        x2: (line.x1 + line.x2) / 2,
+        y2: Math.max(line.y1, line.y2),
+      };
+  opening.width = Math.max(1, getLineEnd(opening, orientation) - getLineStart(opening, orientation));
+  if (opening.width < Math.max(8, settings.minWallThickness * 3)) return null;
+  const hostWall = nearestLineForOpening(opening, lines, settings);
+  const variant = defaultOpeningVariant(kind);
+  return {
+    ...opening,
+    id: item?.id || `deep-${kind}-${index + 1}`,
+    kind,
+    variant,
+    hostWall: hostWall?.id || null,
+    leftWall: null,
+    rightWall: null,
+    leftThickness: hostWall?.thickness || settings.maxThickness,
+    rightThickness: hostWall?.thickness || settings.maxThickness,
+    sillHeightMillimeters: OPENING_VARIANTS[variant].sill,
+    openingHeightMillimeters: OPENING_VARIANTS[variant].height,
+    confidence: Number(item?.confidence || 0.62),
+    widthMm: round(pxToMillimeters(opening.width, settings)),
+    source: item?.source || "deep-learning",
+  };
+}
+
+function nearestLineForOpening(opening, lines, settings) {
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness) * 1.4;
+  let best = null;
+  for (const line of lines) {
+    if (line.orientation !== opening.orientation) continue;
+    const axisDelta = opening.orientation === "horizontal" ? Math.abs(opening.y1 - line.y1) : Math.abs(opening.x1 - line.x1);
+    if (axisDelta > tolerance) continue;
+    const overlap = Math.min(getLineEnd(line, line.orientation), getLineEnd(opening, opening.orientation)) - Math.max(getLineStart(line, line.orientation), getLineStart(opening, opening.orientation));
+    if (overlap <= 0) continue;
+    const score = overlap - axisDelta;
+    if (!best || score > best.score) best = { line, score };
+  }
+  return best?.line || null;
+}
+
+function convertDeepLearningRecognitionResult(payload, settings) {
+  const scale = floorPlanAiCoordinateScale(payload);
+  const lines = (payload?.walls || [])
+    .map((wall, index) => deepLearningWallToLine(wall, scale, index))
+    .filter(Boolean)
+    .filter((line) => line.length >= recognitionSupportMinLength(settings));
+  const openings = [
+    ...(payload?.doors || []).map((door, index) => deepLearningOpeningToManualOpening(door, scale, "door", index, lines, settings)),
+    ...(payload?.windows || []).map((windowItem, index) => deepLearningOpeningToManualOpening(windowItem, scale, "window", index, lines, settings)),
+  ].filter(Boolean);
+  return { lines, openings };
 }
 
 function loadImage(src) {
@@ -657,7 +818,7 @@ function runBrowserRecognition(settings, mode) {
   finishRecognition(detectAndMergeWalls(mask, settings), settings, mode);
 }
 
-function finishRecognition(lines, settings, mode) {
+function finishRecognition(lines, settings, mode, options = {}) {
   const supportMinLength = recognitionSupportMinLength(settings);
   state.lines = lines
     .filter((line) => line.length >= supportMinLength)
@@ -678,12 +839,13 @@ function finishRecognition(lines, settings, mode) {
   state.calibrationLine = null;
   state.measurementLine = null;
   state.measurements = [];
-  state.manualOpenings = [];
+  state.manualOpenings = (options.openings || []).map(cloneOpening);
   state.manualRailings = [];
   state.hiddenOpeningKeys = [];
   state.undoStack = [];
   state.topology = analyzeTopology(state.lines, settings);
   state.recognitionMode = mode;
+  state.deepLearningInfo = options.deepLearning || null;
   updateStats();
   renderPreview();
   updateThreeModel(true);
@@ -1437,7 +1599,7 @@ function updateStats() {
   elements.openingStat.textContent = String(constructibleOpenings().length);
   elements.pierStat.textContent = String(state.topology.endPiers.length);
   elements.roomStat.textContent = String(state.topology.rooms.length);
-  elements.modeStat.textContent = state.recognitionMode;
+  elements.modeStat.textContent = recognitionModeLabel();
   updateSelectedComponentInfo();
   updateBeginnerSummary();
 }
@@ -7031,6 +7193,7 @@ async function restoreProjectArchive(archive) {
   state.undoStack = [];
   state.removedPixels = 0;
   state.recognitionMode = archive.recognitionMode || "project";
+  state.deepLearningInfo = null;
   state.sourceName = archive.sourceName || "floor-plan-project";
 
   applySettings(archive.settings || {});
@@ -7231,6 +7394,12 @@ function setExperienceMode(mode) {
 
 function recognitionModeLabel() {
   const selected = elements.recognitionModeSelect.value;
+  if (state.deepLearningInfo) {
+    const provider = floorPlanAiProviderLabel(state.deepLearningInfo.provider || FLOOR_PLAN_AI_PROVIDER);
+    const model = state.deepLearningInfo.model ? ` · ${state.deepLearningInfo.model}` : "";
+    return state.deepLearningInfo.active ? `${provider}${model}` : `${provider} fallback`;
+  }
+  if (state.recognitionMode === "deep-learning" || state.recognitionMode === "torch-cubicasa-semantic-segmentation" || selected === "deep-learning") return floorPlanAiProviderLabel();
   if (state.recognitionMode === "opencv-fallback") return "AI/CV 后端";
   if (state.recognitionMode === "onnx-wall-segmentation") return "ONNX 模型";
   if (state.recognitionMode === "browser-rules" || selected === "browser") return "普通识别";
@@ -7350,7 +7519,9 @@ function announceBeginnerRecognition() {
 function setBeginnerRecognitionMode(mode) {
   elements.recognitionModeSelect.value = mode;
   syncControlLabels();
-  if (mode === "ai-cv") {
+  if (mode === "deep-learning") {
+    addAssistantMessage(`我已切到智能读图 / 深度学习识别。它会请求 /api/floorplan/recognize，并优先使用 ${floorPlanAiProviderLabel()} 模型。`);
+  } else if (mode === "ai-cv") {
     addAssistantMessage("我已切到 AI/CV 识别。它会请求同一个后端接口 `/api/segment`，适合线条复杂、噪点多的图。");
   } else {
     addAssistantMessage("我已切到普通识别。它直接在浏览器里按线条规则处理，速度快，适合清晰的黑白平面图。");
@@ -7392,6 +7563,12 @@ function runBeginnerCommand(input, source = "text") {
   if (/3d|三维|模型画面|立体/.test(text)) {
     setBeginnerPhonePreviewMode("three");
     addAssistantMessage("已把手机屏幕切到 3D 画面。你也可以说“漫游”进入第一人称查看。");
+    return;
+  }
+
+  if (/深度学习|智能读图|cubicasa|户型识别|语义识别/.test(text)) {
+    setBeginnerPhonePreviewMode("plan");
+    setBeginnerRecognitionMode("deep-learning");
     return;
   }
 

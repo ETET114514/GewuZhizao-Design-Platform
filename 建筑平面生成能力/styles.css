@@ -157,6 +157,13 @@ p {
   grid-template-columns: 82px minmax(0, 1fr);
 }
 
+.recognition-hint {
+  grid-column: 2;
+  color: #1f7a68;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .control output {
   text-align: right;
   color: var(--ink);

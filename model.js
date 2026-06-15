@@ -107,6 +107,16 @@ const modelBomTotal = document.querySelector("#modelBomTotal");
 const modelBomSummary = document.querySelector("#modelBomSummary");
 const modelBomRows = document.querySelector("#modelBomRows");
 const modelBootStatus = document.querySelector("#modelBootStatus");
+const FLOOR_PLAN_AI_PROVIDER = "cubicasa";
+const FLOOR_PLAN_AI_PROVIDER_LABELS = {
+  cubicasa: "CubiCasa5K 深度学习",
+  deepfloorplan: "DeepFloorPlan 深度学习",
+  unet: "U-Net 深度学习",
+};
+
+function floorPlanAiProviderLabel(provider = FLOOR_PLAN_AI_PROVIDER) {
+  return FLOOR_PLAN_AI_PROVIDER_LABELS[provider] ?? `${provider} 深度学习`;
+}
 
 const roomNames = {
   living: "客餐厅模型",
@@ -6150,7 +6160,7 @@ async function requestFloorPlanRecognition(sourceCanvas, options = {}) {
       signal: controller.signal,
       body: JSON.stringify({
         schemaVersion: "floorplan-ai-v1",
-        provider: options.provider ?? "cubicasa",
+        provider: options.provider ?? FLOOR_PLAN_AI_PROVIDER,
         image: sourceCanvas.toDataURL("image/png"),
         imageMeta: {
           width: sourceCanvas.width,
@@ -6220,6 +6230,9 @@ function buildWallRecognitionResultFromFloorPlanAiPayload(sourceCanvas, payload,
     roomCount: draft.rooms.length,
     floorPlanAiMode: payload?.mode ?? "remote",
     floorPlanAiProvider: payload?.provider ?? "unknown",
+    floorPlanAiStatus: payload?.status ?? "unknown",
+    floorPlanAiModel: payload?.model ?? payload?.debug?.model?.name ?? "unknown",
+    floorPlanAiActive: payload?.status === "ok" || Boolean(payload?.debug?.model?.active),
     architectureConvertedDoors: architectural.quality?.architectureConvertedDoors ?? 0,
     architectureInferredWindows: architectural.quality?.architectureInferredWindows ?? 0,
     architectureRejectedOpenings: architectural.quality?.architectureRejectedOpenings ?? 0,
@@ -8613,6 +8626,11 @@ function recognitionQualityText(result = detectedWallResult) {
   if (result.quality.architectureConvertedDoors > 0) details.push(`门窗校正 ${result.quality.architectureConvertedDoors} 处`);
   if (result.quality.architectureInferredWindows > 0) details.push(`外墙补窗 ${result.quality.architectureInferredWindows} 处`);
   if (result.quality.architectureRejectedOpenings > 0) details.push(`过滤疑似误识别 ${result.quality.architectureRejectedOpenings} 处`);
+  if (result.quality.floorPlanAiProvider) {
+    const providerLabel = floorPlanAiProviderLabel(result.quality.floorPlanAiProvider);
+    const modelLabel = result.quality.floorPlanAiModel && result.quality.floorPlanAiModel !== "unknown" ? result.quality.floorPlanAiModel : providerLabel;
+    details.push(result.quality.floorPlanAiActive ? `${providerLabel}: ${modelLabel}` : `${providerLabel} fallback`);
+  }
   if (result.quality.layoutLogicSignals > 0) details.push(`户型逻辑 ${result.quality.layoutLogicSignals} 项`);
   return `识别置信 ${result.quality.score}%${details.length ? ` · ${details.join(" · ")}` : ""}`;
 }
@@ -11251,7 +11269,7 @@ async function detectWallsFromPlan() {
   try {
     const aiResult = await estimateWallSegmentsWithFloorPlanAi(source.canvas, {
       sourceRect: source.sourceRect,
-      provider: "cubicasa",
+      provider: FLOOR_PLAN_AI_PROVIDER,
     });
     aiResult.sourceRect = source.sourceRect;
     aiResult.sourceLabel = source.label;

@@ -19,6 +19,7 @@ CUBICASA_CHECKPOINT = (
     / "model_best_val_loss_var.pkl"
 )
 CUBICASA_ONNX_CANDIDATES = [
+    ROOT / "models" / "cubicasa5k-web-annotations-5epoch.onnx",
     ROOT / "models" / "cubicasa5k-floorplan.onnx",
     ROOT / "models" / "cubicasa5k.onnx",
     ROOT / "floorplan_models" / "cubicasa5k-floorplan.onnx",
@@ -33,6 +34,7 @@ CUBICASA_INPUT_SLICE = (21, 12, 11)
 CUBICASA_WALL_ROOM_CLASSES = (2, 8)
 CUBICASA_WALL_PROB_THRESHOLD = 0.30
 CUBICASA_ONNX_SESSION = None
+CUBICASA_ONNX_PATH = None
 CUBICASA_ONNX_ERROR = None
 CUBICASA_MODEL = None
 CUBICASA_DEVICE = None
@@ -150,7 +152,8 @@ def cubicasa_onnx_path():
 def infer_wall_mask(image, cv2, np):
     cubicasa_onnx = infer_cubicasa_onnx_mask(image, cv2, np)
     if cubicasa_onnx is not None:
-        return cubicasa_onnx, "cubicasa5k-onnx"
+        mode = "cubicasa5k-web-annotations-onnx" if CUBICASA_ONNX_PATH and "web-annotations" in CUBICASA_ONNX_PATH.name else "cubicasa5k-onnx"
+        return cubicasa_onnx, mode
     cubicasa = infer_cubicasa_mask(image, cv2, np)
     if cubicasa is not None:
         return cubicasa, "cubicasa5k-rtx5080"
@@ -200,7 +203,7 @@ def infer_cubicasa_onnx_mask(image, cv2, np):
 
 
 def load_cubicasa_onnx_session():
-    global CUBICASA_ONNX_SESSION, CUBICASA_ONNX_ERROR
+    global CUBICASA_ONNX_SESSION, CUBICASA_ONNX_PATH, CUBICASA_ONNX_ERROR
     if CUBICASA_ONNX_SESSION is not None:
         return CUBICASA_ONNX_SESSION
     if CUBICASA_ONNX_ERROR is not None:
@@ -221,6 +224,7 @@ def load_cubicasa_onnx_session():
             if provider in available
         ] or available
         CUBICASA_ONNX_SESSION = ort.InferenceSession(path.read_bytes(), providers=providers)
+        CUBICASA_ONNX_PATH = path
         print(f"CubiCasa5k ONNX model loaded from {path} with {providers}")
         return CUBICASA_ONNX_SESSION
     except Exception as exc:

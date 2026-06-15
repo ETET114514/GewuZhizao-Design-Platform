@@ -1,0 +1,30 @@
+{
+  "appRoot": "D:\\新建文件夹\\11111\\GewuZhizao-Design-Platform\\建筑平面生成能力",
+  "modelPath": "D:\\新建文件夹\\11111\\GewuZhizao-Design-Platform\\建筑平面生成能力\\models\\cubicasa5k-web-annotations-5epoch.onnx",
+  "dataRoot": "D:\\新建文件夹\\11111\\GewuZhizao-Design-Platform\\training_data\\cubicasa_web_annotations",
+  "split": "holdout",
+  "unsupportedMetrics": {
+    "doorCountAbsError": "Current 建筑平面生成能力 ONNX backend outputs walls only.",
+    "windowCountAbsError": "Current 建筑平面生成能力 ONNX backend outputs walls only.",
+    "roomCountAbsError": "Current 建筑平面生成能力 ONNX backend outputs walls only."
+  },
+  "summary": {
+    "sampleCount": 4,
+    "iou": 0.369937,
+    "dice": 0.537751,
+    "wallCountAbsError": 6.25,
+    "doorCountAbsError": null,
+    "windowCountAbsError": null,
+    "roomCountAbsError": null,
+    "areaRatio": 1.753111,
+    "averageInferenceSeconds": 0.188109,
+    "config": {
+      "threshold": 0.4,
+      "minLength": 84,
+      "maxThickness": 42,
+      "mergeGap": 6,
+      "minNoiseArea": 220,
+      "minWallThickness": 4
+    }
+  }
+}

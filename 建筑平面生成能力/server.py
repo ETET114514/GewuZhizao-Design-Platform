@@ -32,7 +32,7 @@ MAX_IMAGE_SIZE = 1400
 CUBICASA_IMAGE_SIZE = 256
 CUBICASA_INPUT_SLICE = (21, 12, 11)
 CUBICASA_WALL_ROOM_CLASSES = (2, 8)
-CUBICASA_WALL_PROB_THRESHOLD = 0.30
+CUBICASA_WALL_PROB_THRESHOLD = 0.40
 CUBICASA_ONNX_SESSION = None
 CUBICASA_ONNX_PATH = None
 CUBICASA_ONNX_ERROR = None
@@ -354,9 +354,9 @@ def infer_cv_mask(image, cv2):
 
 
 def postprocess_mask(mask, settings, cv2, np):
-    min_area = int(settings.get("minNoiseArea", 96))
+    min_area = int(settings.get("minNoiseArea", 220))
     min_thickness = int(settings.get("minWallThickness", 4))
-    min_length = int(settings.get("minLength", 72))
+    min_length = int(settings.get("minLength", 84))
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     cleaned = np.zeros(mask.shape, dtype=np.uint8)
     for label in range(1, count):
@@ -375,9 +375,9 @@ def postprocess_mask(mask, settings, cv2, np):
 
 
 def vectorize_mask(mask, settings, cv2):
-    min_length = int(settings.get("minLength", 72))
-    merge_gap = int(settings.get("mergeGap", 10))
-    max_thickness = int(settings.get("maxThickness", 34))
+    min_length = int(settings.get("minLength", 84))
+    merge_gap = int(settings.get("mergeGap", 6))
+    max_thickness = int(settings.get("maxThickness", 42))
     min_thickness = int(settings.get("minWallThickness", 4))
     horizontal = extract_runs(mask, "horizontal", min_length, max_thickness, min_thickness, cv2)
     vertical = extract_runs(mask, "vertical", min_length, max_thickness, min_thickness, cv2)

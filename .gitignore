@@ -5,10 +5,17 @@
 .venv-cubicasa/
 .conda-cubicasa/
 datasets/
+__pycache__/
 **/__pycache__/
 *.pyc
 *.pkl
 *.pth
 *.pt
 *.ckpt
+*.onnx
 *.onnx.data
+models/*.onnx
+models/*.pt
+models/*.pth
+models/*.pkl
+models/*.download

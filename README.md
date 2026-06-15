@@ -25,9 +25,15 @@ Optional model files:
 models/deepfloorplan.onnx
 models/floorplan-unet.onnx
 models/cubicasa5k.onnx
+models/cubicasa5k.pth
+models/model_best_val_loss_var.pkl
 ```
 
-When no model file is present, the service returns the same `floorplan-ai-v1` JSON schema using an OpenCV fallback.
+The app now requests the `cubicasa` provider by default. A complete CubiCasa5K floor-plan checkpoint
+must include the trained segmentation head (`conv4_` / `upsample` weights). The bundled
+`third_party/CubiCasa5k/floortrans/models/model_1427.pth` is only the pretrained backbone; when it is
+the only model file present, the service reports that in `debug.model` and returns the same
+`floorplan-ai-v1` JSON schema using the OpenCV fallback.
 
 ## Site photo display model
 

@@ -30,7 +30,15 @@ const mvpStatus = document.querySelector("#mvpStatus");
 const aiModelProviderInput = document.querySelector("#aiModelProvider");
 const runAiRecognitionButton = document.querySelector("#runAiRecognition");
 const aiRecognitionStatus = document.querySelector("#aiRecognitionStatus");
+const openAnnotationToolButton = document.querySelector("#openAnnotationTool");
+const closeAnnotationToolButton = document.querySelector("#closeAnnotationTool");
+const annotationToolOverlay = document.querySelector("#annotationToolOverlay");
+const annotationToolFrame = document.querySelector("#annotationToolFrame");
 const resultJson = document.querySelector("#resultJson");
+
+if (aiModelProviderInput) {
+  aiModelProviderInput.value = "cubicasa";
+}
 
 const ns = "http://www.w3.org/2000/svg";
 
@@ -1110,7 +1118,13 @@ function makeMockAiRecognition(provider = "mock") {
 function recognitionEndpoint() {
   return window.location.protocol === "http:" || window.location.protocol === "https:"
     ? "/api/floorplan/recognize"
-    : "http://127.0.0.1:8787/api/floorplan/recognize";
+    : "http://127.0.0.1:8796/api/floorplan/recognize";
+}
+
+function annotationToolUrl() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:"
+    ? "../annotation.html"
+    : "http://127.0.0.1:8796/annotation.html";
 }
 
 async function requestRemoteAiRecognition(provider) {
@@ -1238,6 +1252,19 @@ async function runAiRecognition() {
     setAiRecognitionBusy(false);
     updateAiRecognitionStatus(`AI识别失败：${error.message}`);
   }
+}
+
+function openAnnotationTool() {
+  if (!annotationToolOverlay || !annotationToolFrame) return;
+  if (!annotationToolFrame.src) {
+    annotationToolFrame.src = annotationToolUrl();
+  }
+  annotationToolOverlay.hidden = false;
+}
+
+function closeAnnotationTool() {
+  if (!annotationToolOverlay) return;
+  annotationToolOverlay.hidden = true;
 }
 
 function padBounds(bounds, ratio = 0.03) {
@@ -4343,6 +4370,16 @@ clearConfirmationsButton?.addEventListener("click", () => {
 });
 regenerateButton.addEventListener("click", generateLayout);
 runAiRecognitionButton?.addEventListener("click", runAiRecognition);
+openAnnotationToolButton?.addEventListener("click", openAnnotationTool);
+closeAnnotationToolButton?.addEventListener("click", closeAnnotationTool);
+annotationToolOverlay?.addEventListener("click", (event) => {
+  if (event.target === annotationToolOverlay) closeAnnotationTool();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && annotationToolOverlay && !annotationToolOverlay.hidden) {
+    closeAnnotationTool();
+  }
+});
 styleSelect.addEventListener("change", () => {
   if (latestResult) {
     generateLayout();

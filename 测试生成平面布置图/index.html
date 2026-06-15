@@ -94,6 +94,7 @@
               </select>
             </label>
             <button id="runAiRecognition" type="button" disabled>运行AI识别</button>
+            <button id="openAnnotationTool" type="button">网页标注工具</button>
           </div>
           <p id="aiRecognitionStatus" class="source-status">上传图纸后，可先跑通标准AI识别输出。</p>
         </section>
@@ -158,6 +159,19 @@
         </section>
       </aside>
     </main>
+
+    <div id="annotationToolOverlay" class="annotation-tool-overlay" hidden>
+      <div class="annotation-tool-shell" role="dialog" aria-modal="true" aria-label="网页标注工具">
+        <header class="annotation-tool-header">
+          <div>
+            <strong>网页标注工具</strong>
+            <span>读取训练平面图目录，修正墙线、门窗、房间 polygon，并保存为 标注.json。</span>
+          </div>
+          <button id="closeAnnotationTool" type="button">关闭</button>
+        </header>
+        <iframe id="annotationToolFrame" title="网页标注工具"></iframe>
+      </div>
+    </div>
 
     <script src="./app.js"></script>
   </body>

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>训练平面图标注工具</title>
+    <link rel="stylesheet" href="./annotation.css" />
+  </head>
+  <body>
+    <main class="annotation-app">
+      <aside class="case-panel">
+        <header>
+          <h1>训练标注</h1>
+          <p id="datasetRoot">正在读取训练目录</p>
+        </header>
+        <div class="case-filters">
+          <select id="folderFilter" aria-label="按目录筛选"></select>
+          <label>
+            <input id="onlyUnlabeled" type="checkbox" />
+            仅未标注
+          </label>
+        </div>
+        <div id="caseList" class="case-list" role="list"></div>
+      </aside>
+
+      <section class="workbench">
+        <header class="toolbar">
+          <div>
+            <strong id="caseTitle">未选择图纸</strong>
+            <span id="caseStatus">请选择左侧文件开始</span>
+          </div>
+          <div class="tool-group" role="toolbar" aria-label="标注工具">
+            <button type="button" data-tool="select" class="active">选择元素</button>
+            <button type="button" data-tool="room">房间</button>
+            <button type="button" data-tool="wall">墙线</button>
+            <button type="button" data-tool="door">门</button>
+            <button type="button" data-tool="window">窗</button>
+            <button type="button" data-tool="fixture">设施</button>
+          </div>
+          <div class="toolbar-actions">
+            <select id="caseQuickSelect" class="case-quick-select" aria-label="选择图纸"></select>
+            <select id="roomTypeSelect" aria-label="房间类型">
+              <option value="living">living</option>
+              <option value="bedroom">bedroom</option>
+              <option value="kitchen">kitchen</option>
+              <option value="bath">bath</option>
+              <option value="balcony">balcony</option>
+              <option value="corridor">corridor</option>
+              <option value="storage">storage</option>
+              <option value="study">study</option>
+              <option value="unknown">unknown</option>
+            </select>
+            <button id="deleteSelected" type="button">删除</button>
+            <button id="saveAnnotation" type="button">保存标注</button>
+          </div>
+        </header>
+
+        <div class="stage-shell">
+          <div id="stage" class="stage">
+            <img id="sourceImage" alt="训练平面图" />
+            <svg id="overlaySvg" aria-label="标注层"></svg>
+          </div>
+          <div id="emptyState" class="empty-state">选择一张图纸后开始修正标注</div>
+        </div>
+
+        <footer class="hint-bar">
+          <span id="selectionInfo">未选择元素</span>
+          <span>房间：逐点点击，双击或 Enter 结束。线/门/窗：点起点再点终点。设施：点两个角生成矩形。</span>
+        </footer>
+      </section>
+    </main>
+    <script src="./annotation.js"></script>
+  </body>
+</html>

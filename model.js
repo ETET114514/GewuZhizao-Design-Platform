@@ -1692,6 +1692,10 @@ function showModelBootIssue(title, detail) {
 function disposeMaterial(material) {
   if (!material) return;
   material.map?.dispose?.();
+  material.alphaMap?.dispose?.();
+  material.normalMap?.dispose?.();
+  material.roughnessMap?.dispose?.();
+  material.metalnessMap?.dispose?.();
   material.dispose?.();
 }
 
@@ -2400,6 +2404,24 @@ async function renderImagePlan(file) {
   };
 }
 
+async function renderSvgPlan(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const node = new Image();
+      node.onload = () => resolve(node);
+      node.onerror = reject;
+      node.src = url;
+    });
+    return {
+      canvas: canvasFromBitmap(image),
+      meta: `${image.naturalWidth || image.width} x ${image.naturalHeight || image.height} px SVG`,
+    };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function renderPdfPlan(file) {
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjsLib.getDocument({ data }).promise;
@@ -2767,6 +2789,7 @@ async function importPlanFile(file) {
   if (!file) return;
 
   const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isSvg = file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
   const isImage = file.type.startsWith("image/");
   if (!isPdf && !isImage) {
     setPlanStatus("Unsupported file format", "JPG / PNG / PDF");
@@ -2776,7 +2799,7 @@ async function importPlanFile(file) {
   setPlanStatus("读取中...", file.name);
 
   try {
-    const result = isPdf ? await renderPdfPlan(file) : await renderImagePlan(file);
+    const result = isPdf ? await renderPdfPlan(file) : isSvg ? await renderSvgPlan(file) : await renderImagePlan(file);
     disposePlan();
     resetPlanRegionState();
     resetScaleCalibrationState();
@@ -2790,6 +2813,13 @@ async function importPlanFile(file) {
     renderPlanPhotoQuality(analyzePlanPhotoQuality(planCanvas));
     setRecognitionStatus("图纸已导入，可在读图工具中识别墙线");
     setView("top");
+    setRecognitionStatus("图纸已导入，正在发送到 /api/floorplan/recognize...");
+    try {
+      await recognizeCurrentPlanWithFloorPlanAi({ provider: "cubicasa", auto: true });
+    } catch (recognitionError) {
+      console.warn("Floor-plan AI recognition failed after upload.", recognitionError);
+      setRecognitionStatus("图纸已导入，/api/floorplan/recognize 暂不可用，可在读图工具中手动识别墙线");
+    }
   } catch (error) {
     console.error(error);
     clearPlan();
@@ -3875,9 +3905,159 @@ function collapseParallelWallSides(segments, width, height, options = {}) {
   return collapsed;
 }
 
+function canCollapseAsDoubleWallSide(first, second, width, height, options = {}) {
+  if (first.orientation !== second.orientation) return false;
+  const gapRange = wallSideGapRangeForOrientation(first.orientation, width, height, options.sourceRect);
+  const axisGap = Math.abs(first.axisCenter - second.axisCenter);
+  if (axisGap < gapRange.min || axisGap > gapRange.max) return false;
+
+  const overlap = overlapLength(first, second);
+  const shortest = Math.min(segmentLength(first), segmentLength(second));
+  const longest = Math.max(segmentLength(first), segmentLength(second));
+  if (shortest <= 0 || longest <= 0) return false;
+
+  const overlapRatio = overlap / shortest;
+  const similarSpan = shortest / longest >= 0.28;
+  const endpointsClose =
+    Math.abs(first.start - second.start) <= Math.max(axisGap * 1.8, gapRange.min * 2.2) &&
+    Math.abs(first.end - second.end) <= Math.max(axisGap * 1.8, gapRange.min * 2.2);
+  const strongWallSource =
+    isCodexFloorPlanSegment(first) ||
+    isCodexFloorPlanSegment(second) ||
+    first.source?.includes("floorplan-ai") ||
+    second.source?.includes("floorplan-ai") ||
+    first.source?.includes("paired") ||
+    second.source?.includes("paired") ||
+    first.source?.includes("outline") ||
+    second.source?.includes("outline");
+
+  return overlapRatio >= (strongWallSource ? 0.42 : 0.58) && (similarSpan || endpointsClose);
+}
+
+function collapseWallSidePair(first, second) {
+  const firstLength = Math.max(1, segmentLength(first));
+  const secondLength = Math.max(1, segmentLength(second));
+  const weight = firstLength + secondLength;
+  const axisGap = Math.abs(first.axisCenter - second.axisCenter);
+  const startDelta = Math.abs(first.start - second.start);
+  const endDelta = Math.abs(first.end - second.end);
+  const useUnion = startDelta <= axisGap * 2.2 && endDelta <= axisGap * 2.2;
+  const start = useUnion ? Math.min(first.start, second.start) : Math.max(first.start, second.start);
+  const end = useUnion ? Math.max(first.end, second.end) : Math.min(first.end, second.end);
+
+  return {
+    ...first,
+    start,
+    end,
+    axisCenter: (first.axisCenter * firstLength + second.axisCenter * secondLength) / weight,
+    thicknessPx: Math.max(first.thicknessPx ?? 4, second.thicknessPx ?? 4, axisGap),
+    confidence: Math.min(1, Math.max(first.confidence ?? 0.5, second.confidence ?? 0.5) + 0.1),
+    source: "double-wall-centerline",
+    collapsedCount: (first.collapsedCount ?? 1) + (second.collapsedCount ?? 1),
+    doubleWallCenterline: true,
+    codexFloorPlanPrimary: first.codexFloorPlanPrimary || second.codexFloorPlanPrimary,
+  };
+}
+
+function centerlineDoubleWallSides(segments, width, height, options = {}) {
+  const output = [];
+  const consumed = new Set();
+  const sorted = snapParallelWallAxes(segments, Math.max(4, Math.round(Math.max(width, height) * 0.006))).sort((a, b) => {
+    if (a.orientation !== b.orientation) return a.orientation.localeCompare(b.orientation);
+    if (a.axisCenter !== b.axisCenter) return a.axisCenter - b.axisCenter;
+    return a.start - b.start;
+  });
+
+  sorted.forEach((segment, index) => {
+    if (consumed.has(index)) return;
+    let bestIndex = -1;
+    let bestScore = 0;
+
+    for (let cursor = index + 1; cursor < sorted.length; cursor += 1) {
+      if (consumed.has(cursor)) continue;
+      const candidate = sorted[cursor];
+      if (candidate.orientation !== segment.orientation) {
+        if (bestIndex >= 0) break;
+        continue;
+      }
+      const axisGap = Math.abs(candidate.axisCenter - segment.axisCenter);
+      const gapRange = wallSideGapRangeForOrientation(segment.orientation, width, height, options.sourceRect);
+      if (axisGap > gapRange.max * 1.2) break;
+      if (!canCollapseAsDoubleWallSide(segment, candidate, width, height, options)) continue;
+
+      const overlap = overlapLength(segment, candidate);
+      const score = overlap / Math.max(1, Math.min(segmentLength(segment), segmentLength(candidate))) - axisGap / Math.max(1, gapRange.max) * 0.08;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = cursor;
+      }
+    }
+
+    if (bestIndex >= 0) {
+      consumed.add(index);
+      consumed.add(bestIndex);
+      const collapsed = collapseWallSidePair(segment, sorted[bestIndex]);
+      if (segmentLength(collapsed) > 0) output.push(collapsed);
+      return;
+    }
+
+    output.push({ ...segment });
+  });
+
+  return output;
+}
+
+function dedupeOverlappingWallCenterlines(segments, width, height, options = {}) {
+  const tolerance = Math.max(4, Math.round(Math.max(width, height) * 0.006));
+  const deduped = [];
+  mergeCollinearWallSpans(segments, width, height, {
+    ...options,
+    axisTolerance: tolerance,
+    maxGap: Math.max(4, Math.round(Math.max(width, height) * 0.006)),
+  })
+    .sort((a, b) => {
+      if (a.orientation !== b.orientation) return a.orientation.localeCompare(b.orientation);
+      if (a.axisCenter !== b.axisCenter) return a.axisCenter - b.axisCenter;
+      return b.end - b.start - (a.end - a.start);
+    })
+    .forEach((segment) => {
+      const existing = deduped.find((item) => {
+        if (item.orientation !== segment.orientation) return false;
+        if (Math.abs(item.axisCenter - segment.axisCenter) > Math.max(tolerance, item.thicknessPx ?? 4, segment.thicknessPx ?? 4)) return false;
+        return overlapLength(item, segment) >= Math.min(segmentLength(item), segmentLength(segment)) * 0.72;
+      });
+
+      if (!existing) {
+        deduped.push({ ...segment });
+        return;
+      }
+
+      const existingPriority = wallCandidatePriority(existing);
+      const segmentPriority = wallCandidatePriority(segment);
+      existing.start = Math.min(existing.start, segment.start);
+      existing.end = Math.max(existing.end, segment.end);
+      if (segmentPriority >= existingPriority) {
+        existing.axisCenter = (existing.axisCenter + segment.axisCenter) / 2;
+      }
+      existing.thicknessPx = Math.max(existing.thicknessPx ?? 4, segment.thicknessPx ?? 4);
+      existing.confidence = Math.max(existing.confidence ?? 0.5, segment.confidence ?? 0.5);
+      existing.collapsedCount = Math.max(existing.collapsedCount ?? 1, segment.collapsedCount ?? 1);
+      existing.doubleWallCenterline = existing.doubleWallCenterline || segment.doubleWallCenterline;
+      existing.source = existing.source === segment.source ? existing.source : "deduped-centerline";
+    });
+
+  return deduped;
+}
+
+function normalizeWallCenterlines(segments, width, height, options = {}) {
+  const centered = centerlineDoubleWallSides(segments, width, height, options);
+  return dedupeOverlappingWallCenterlines(centered, width, height, options);
+}
+
 function cleanWallSegments(segments, width, height, options = {}) {
   const optimizer = options.optimizer ?? planOptimizerSettings();
   let cleaned = mergeCollinearWallSpans(bridgeTinyWallBreaks(segments, width, height, options), width, height);
+  cleaned = normalizeWallCenterlines(cleaned, width, height, options);
   if (optimizer.collapseWalls) {
     cleaned = collapseParallelWallSides(cleaned, width, height, options);
   }
@@ -3885,7 +4065,7 @@ function cleanWallSegments(segments, width, height, options = {}) {
     cleaned = extendWallsToIntersections(cleaned, width, height, options);
     cleaned = closeWallTopology(cleaned, width, height, options);
   }
-  cleaned = mergeCollinearWallSpans(bridgeTinyWallBreaks(cleaned, width, height, options), width, height);
+  cleaned = normalizeWallCenterlines(mergeCollinearWallSpans(bridgeTinyWallBreaks(cleaned, width, height, options), width, height), width, height, options);
   return pruneTinyWallSegments(cleaned, width, height, options);
 }
 
@@ -4811,10 +4991,12 @@ function splitOpeningsByArchitecture(result, map) {
       return;
     }
     const role = roles.get(wall) ?? architecturalWallRole(wall, result);
+    const trustedAiDoor = opening.source?.includes("floorplan-ai") || opening.source?.includes("gap-estimate");
     const wideExteriorGap =
       role === "exterior" &&
       !opening.source?.startsWith("manual") &&
       !opening.source?.includes("swing") &&
+      !trustedAiDoor &&
       segmentLength(normalized) >= Math.max(20, Math.max(map.width, map.height) * 0.045);
     if (wideExteriorGap) {
       windows.push({
@@ -4861,6 +5043,7 @@ function splitOpeningsByArchitecture(result, map) {
 }
 
 function inferExteriorWindows(result, map, existingWindows, existingDoors) {
+  if (result.floorPlanAiBackend && existingWindows.length > 0) return [];
   const candidates = [];
   const maxDimension = Math.max(map.width, map.height);
   const minWallLength = Math.max(42, maxDimension * 0.09);
@@ -4888,7 +5071,9 @@ function inferExteriorWindows(result, map, existingWindows, existingDoors) {
     candidates.push(opening);
   });
 
-  return candidates;
+  return candidates
+    .sort((a, b) => segmentLength(b) - segmentLength(a))
+    .slice(0, result.floorPlanAiBackend ? 4 : 10);
 }
 
 function applyArchitecturalOpeningLogic(result, map) {
@@ -5000,13 +5185,30 @@ function wallCoverageOnBoundary(segments, orientation, axis, start, end, toleran
   return mergedIntervalCoverage(intervals, start, end) / Math.max(1, end - start);
 }
 
+function roomInteriorWallCoverage(segments, minX, maxX, minY, maxY, tolerance) {
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const innerMinX = minX + tolerance * 1.5;
+  const innerMaxX = maxX - tolerance * 1.5;
+  const innerMinY = minY + tolerance * 1.5;
+  const innerMaxY = maxY - tolerance * 1.5;
+  if (innerMaxX <= innerMinX || innerMaxY <= innerMinY) return 0;
+
+  return segments.reduce((sum, segment) => {
+    if (segment.orientation === "horizontal") {
+      if (segment.axisCenter <= innerMinY || segment.axisCenter >= innerMaxY) return sum;
+      const overlap = Math.max(0, Math.min(segment.end, innerMaxX) - Math.max(segment.start, innerMinX));
+      return sum + overlap / width;
+    }
+
+    if (segment.axisCenter <= innerMinX || segment.axisCenter >= innerMaxX) return sum;
+    const overlap = Math.max(0, Math.min(segment.end, innerMaxY) - Math.max(segment.start, innerMinY));
+    return sum + overlap / height;
+  }, 0);
+}
+
 function roomWorldArea(region, result) {
-  const corners = [
-    worldPositionForPixel(region.minX, region.minY, result.width, result.height, result),
-    worldPositionForPixel(region.maxX, region.minY, result.width, result.height, result),
-    worldPositionForPixel(region.maxX, region.maxY, result.width, result.height, result),
-    worldPositionForPixel(region.minX, region.maxY, result.width, result.height, result),
-  ];
+  const corners = roomPolygonPoints(region).map((point) => worldPositionForPixel(point.x, point.y, result.width, result.height, result));
   let area = 0;
   corners.forEach((point, index) => {
     const next = corners[(index + 1) % corners.length];
@@ -5015,48 +5217,287 @@ function roomWorldArea(region, result) {
   return Math.abs(area) / 2;
 }
 
+function roomPolygonPoints(region) {
+  if (Array.isArray(region.polygonPoints) && region.polygonPoints.length >= 3) {
+    return region.polygonPoints;
+  }
+  return [
+    { x: region.minX, y: region.minY },
+    { x: region.maxX, y: region.minY },
+    { x: region.maxX, y: region.maxY },
+    { x: region.minX, y: region.maxY },
+  ];
+}
+
+function polygonPixelArea(points) {
+  if (!Array.isArray(points) || points.length < 3) return 0;
+  let area = 0;
+  points.forEach((point, index) => {
+    const next = points[(index + 1) % points.length];
+    area += point.x * next.y - next.x * point.y;
+  });
+  return Math.abs(area) / 2;
+}
+
+function polygonBounds(points) {
+  return points.reduce(
+    (bounds, point) => ({
+      minX: Math.min(bounds.minX, point.x),
+      maxX: Math.max(bounds.maxX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+      maxY: Math.max(bounds.maxY, point.y),
+    }),
+    {
+      minX: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+    },
+  );
+}
+
+function normalizedAxisValues(values, minValue, maxValue, tolerance) {
+  const clustered = clusteredAxisValues(
+    [...values, minValue, maxValue].filter((value) => Number.isFinite(value) && value >= minValue - tolerance && value <= maxValue + tolerance),
+    tolerance,
+  )
+    .map((value) => THREE.MathUtils.clamp(value, minValue, maxValue))
+    .sort((a, b) => a - b);
+  const output = [];
+  clustered.forEach((value) => {
+    if (output.length === 0 || Math.abs(value - output[output.length - 1]) > tolerance * 0.55) {
+      output.push(value);
+      return;
+    }
+    output[output.length - 1] = (output[output.length - 1] + value) / 2;
+  });
+  if (output[0] !== minValue) output.unshift(minValue);
+  if (output[output.length - 1] !== maxValue) output.push(maxValue);
+  return output;
+}
+
+function cellKey(xIndex, yIndex) {
+  return `${xIndex}:${yIndex}`;
+}
+
+function roomCellBoundaryCoverage(cell, direction, segments, axisTolerance) {
+  if (direction === "top") return wallCoverageOnBoundary(segments, "horizontal", cell.minY, cell.minX, cell.maxX, axisTolerance);
+  if (direction === "bottom") return wallCoverageOnBoundary(segments, "horizontal", cell.maxY, cell.minX, cell.maxX, axisTolerance);
+  if (direction === "left") return wallCoverageOnBoundary(segments, "vertical", cell.minX, cell.minY, cell.maxY, axisTolerance);
+  return wallCoverageOnBoundary(segments, "vertical", cell.maxX, cell.minY, cell.maxY, axisTolerance);
+}
+
+function isRoomCellBlocked(cell, direction, segments, axisTolerance) {
+  return roomCellBoundaryCoverage(cell, direction, segments, axisTolerance) >= 0.52;
+}
+
+function componentBoundaryQuality(cells, componentSet, segments, axisTolerance) {
+  let wallWeightedCoverage = 0;
+  let boundaryLength = 0;
+  let openOuterBoundary = false;
+
+  cells.forEach((cell) => {
+    [
+      ["top", cell.xIndex, cell.yIndex - 1, cell.maxX - cell.minX],
+      ["bottom", cell.xIndex, cell.yIndex + 1, cell.maxX - cell.minX],
+      ["left", cell.xIndex - 1, cell.yIndex, cell.maxY - cell.minY],
+      ["right", cell.xIndex + 1, cell.yIndex, cell.maxY - cell.minY],
+    ].forEach(([direction, nx, ny, length]) => {
+      const neighborKey = cellKey(nx, ny);
+      if (componentSet.has(neighborKey)) return;
+      const coverage = roomCellBoundaryCoverage(cell, direction, segments, axisTolerance);
+      boundaryLength += length;
+      wallWeightedCoverage += coverage * length;
+      const outerBoundary =
+        (direction === "top" && cell.isMinY) ||
+        (direction === "bottom" && cell.isMaxY) ||
+        (direction === "left" && cell.isMinX) ||
+        (direction === "right" && cell.isMaxX);
+      if (outerBoundary && coverage < 0.42) openOuterBoundary = true;
+    });
+  });
+
+  return {
+    coverage: wallWeightedCoverage / Math.max(1, boundaryLength),
+    openOuterBoundary,
+  };
+}
+
+function polygonFromRoomCells(cells) {
+  const edges = new Map();
+  const addEdge = (from, to) => {
+    const key = `${from.x},${from.y}|${to.x},${to.y}`;
+    const reverseKey = `${to.x},${to.y}|${from.x},${from.y}`;
+    if (edges.has(reverseKey)) {
+      edges.delete(reverseKey);
+      return;
+    }
+    edges.set(key, { from, to, used: false });
+  };
+
+  cells.forEach((cell) => {
+    addEdge({ x: cell.minX, y: cell.minY }, { x: cell.maxX, y: cell.minY });
+    addEdge({ x: cell.maxX, y: cell.minY }, { x: cell.maxX, y: cell.maxY });
+    addEdge({ x: cell.maxX, y: cell.maxY }, { x: cell.minX, y: cell.maxY });
+    addEdge({ x: cell.minX, y: cell.maxY }, { x: cell.minX, y: cell.minY });
+  });
+
+  const starts = new Map();
+  edges.forEach((edge) => {
+    const key = `${edge.from.x},${edge.from.y}`;
+    if (!starts.has(key)) starts.set(key, []);
+    starts.get(key).push(edge);
+  });
+
+  const polygons = [];
+  edges.forEach((startEdge) => {
+    if (startEdge.used) return;
+    const points = [startEdge.from];
+    let edge = startEdge;
+    edge.used = true;
+    let guard = 0;
+    while (guard < edges.size + 4) {
+      guard += 1;
+      points.push(edge.to);
+      const startKey = `${startEdge.from.x},${startEdge.from.y}`;
+      const nextKey = `${edge.to.x},${edge.to.y}`;
+      if (nextKey === startKey) break;
+      const next = (starts.get(nextKey) ?? []).find((candidate) => !candidate.used);
+      if (!next) break;
+      edge = next;
+      edge.used = true;
+    }
+    if (points.length >= 4) polygons.push(simplifyOrthogonalPolygon(points));
+  });
+
+  return polygons.sort((a, b) => polygonPixelArea(b) - polygonPixelArea(a))[0] ?? null;
+}
+
+function simplifyOrthogonalPolygon(points) {
+  const closed = points.slice();
+  if (closed.length > 1) {
+    const first = closed[0];
+    const last = closed[closed.length - 1];
+    if (first.x === last.x && first.y === last.y) closed.pop();
+  }
+  const simplified = [];
+  closed.forEach((point) => {
+    const previous = simplified[simplified.length - 1];
+    if (previous && previous.x === point.x && previous.y === point.y) return;
+    simplified.push({ x: Math.round(point.x * 100) / 100, y: Math.round(point.y * 100) / 100 });
+  });
+
+  let changed = true;
+  while (changed && simplified.length >= 3) {
+    changed = false;
+    for (let index = 0; index < simplified.length; index += 1) {
+      const previous = simplified[(index - 1 + simplified.length) % simplified.length];
+      const current = simplified[index];
+      const next = simplified[(index + 1) % simplified.length];
+      const collinear = (previous.x === current.x && current.x === next.x) || (previous.y === current.y && current.y === next.y);
+      if (!collinear) continue;
+      simplified.splice(index, 1);
+      changed = true;
+      break;
+    }
+  }
+  return simplified;
+}
+
 function estimateRoomRegions(segments, result) {
   const axisTolerance = Math.max(8, Math.round(Math.max(result.width, result.height) * 0.01));
   const minRoomSide = Math.max(24, Math.round(Math.min(result.width, result.height) * 0.035));
-  const xs = clusteredAxisValues(
+  const bounds = result.architecturalBounds ?? planBoundsForSegments(segments, result.width, result.height);
+  const xs = normalizedAxisValues(
     segments.filter((segment) => segment.orientation === "vertical").map((segment) => segment.axisCenter),
+    bounds.minX,
+    bounds.maxX,
     axisTolerance,
   );
-  const ys = clusteredAxisValues(
+  const ys = normalizedAxisValues(
     segments.filter((segment) => segment.orientation === "horizontal").map((segment) => segment.axisCenter),
+    bounds.minY,
+    bounds.maxY,
     axisTolerance,
   );
-  const rooms = [];
-
+  const cells = [];
+  const cellMap = new Map();
   for (let xIndex = 0; xIndex < xs.length - 1; xIndex += 1) {
     for (let yIndex = 0; yIndex < ys.length - 1; yIndex += 1) {
-      const minX = xs[xIndex];
-      const maxX = xs[xIndex + 1];
-      const minY = ys[yIndex];
-      const maxY = ys[yIndex + 1];
-      if (maxX - minX < minRoomSide || maxY - minY < minRoomSide) continue;
-
-      const top = wallCoverageOnBoundary(segments, "horizontal", minY, minX, maxX, axisTolerance);
-      const bottom = wallCoverageOnBoundary(segments, "horizontal", maxY, minX, maxX, axisTolerance);
-      const left = wallCoverageOnBoundary(segments, "vertical", minX, minY, maxY, axisTolerance);
-      const right = wallCoverageOnBoundary(segments, "vertical", maxX, minY, maxY, axisTolerance);
-      if (Math.min(top, bottom, left, right) < 0.58) continue;
-
-      const region = {
-        minX,
-        maxX,
-        minY,
-        maxY,
-        centerX: (minX + maxX) / 2,
-        centerY: (minY + maxY) / 2,
-        confidence: Math.min(1, (top + bottom + left + right) / 4),
-        source: "closed-wall-cell",
+      const cell = {
+        xIndex,
+        yIndex,
+        minX: xs[xIndex],
+        maxX: xs[xIndex + 1],
+        minY: ys[yIndex],
+        maxY: ys[yIndex + 1],
+        isMinX: xIndex === 0,
+        isMaxX: xIndex === xs.length - 2,
+        isMinY: yIndex === 0,
+        isMaxY: yIndex === ys.length - 2,
       };
-      region.worldArea = roomWorldArea(region, result);
-      if (region.worldArea < 0.55) continue;
-      rooms.push(region);
+      if (cell.maxX - cell.minX < minRoomSide * 0.42 || cell.maxY - cell.minY < minRoomSide * 0.42) continue;
+      cells.push(cell);
+      cellMap.set(cellKey(xIndex, yIndex), cell);
     }
   }
+
+  const visited = new Set();
+  const rooms = [];
+
+  const neighborsForCell = (cell) =>
+    [
+      ["left", cell.xIndex - 1, cell.yIndex],
+      ["right", cell.xIndex + 1, cell.yIndex],
+      ["top", cell.xIndex, cell.yIndex - 1],
+      ["bottom", cell.xIndex, cell.yIndex + 1],
+    ]
+      .map(([direction, nx, ny]) => ({ direction, cell: cellMap.get(cellKey(nx, ny)) }))
+      .filter((item) => item.cell && !isRoomCellBlocked(cell, item.direction, segments, axisTolerance));
+
+  cells.forEach((startCell) => {
+    const startKey = cellKey(startCell.xIndex, startCell.yIndex);
+    if (visited.has(startKey)) return;
+    const queue = [startCell];
+    const component = [];
+    visited.add(startKey);
+
+    while (queue.length > 0) {
+      const cell = queue.shift();
+      component.push(cell);
+      neighborsForCell(cell).forEach(({ cell: neighbor }) => {
+        const key = cellKey(neighbor.xIndex, neighbor.yIndex);
+        if (visited.has(key)) return;
+        visited.add(key);
+        queue.push(neighbor);
+      });
+    }
+
+    if (component.length === 0) return;
+    const componentSet = new Set(component.map((cell) => cellKey(cell.xIndex, cell.yIndex)));
+    const quality = componentBoundaryQuality(component, componentSet, segments, axisTolerance);
+    if (quality.openOuterBoundary || quality.coverage < 0.42) return;
+
+    const polygonPoints = polygonFromRoomCells(component);
+    if (!polygonPoints || polygonPoints.length < 3) return;
+    const pixelArea = polygonPixelArea(polygonPoints);
+    if (pixelArea < minRoomSide * minRoomSide) return;
+    const box = polygonBounds(polygonPoints);
+
+    const region = {
+      ...box,
+      centerX: (box.minX + box.maxX) / 2,
+      centerY: (box.minY + box.maxY) / 2,
+      polygonPoints,
+      pixelArea,
+      confidence: Math.min(1, quality.coverage),
+      source: "polygonized-wall-space",
+      cellCount: component.length,
+    };
+    region.worldArea = roomWorldArea(region, result);
+    if (region.worldArea < 0.55) return;
+    rooms.push(region);
+  });
 
   return rooms.sort((a, b) => b.worldArea - a.worldArea).slice(0, 32);
 }
@@ -5443,6 +5884,379 @@ function buildWallRecognitionResultFromCodexDefaultPayload(sourceCanvas, payload
     codexDefaultBackendMode: mode,
     codexDefaultBackendWalls: primaryWalls.length,
   });
+}
+
+function floorPlanRecognitionEndpoint() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:"
+    ? "/api/floorplan/recognize"
+    : "http://127.0.0.1:8787/api/floorplan/recognize";
+}
+
+function floorPlanAiCoordinateScale(payload, sourceCanvas) {
+  const coordinateSystem = payload?.coordinateSystem ?? "image-pixels";
+  if (coordinateSystem === "image-pixels") {
+    const image = payload?.image ?? {};
+    return {
+      x: sourceCanvas.width / Math.max(1, Number(image.width) || sourceCanvas.width),
+      y: sourceCanvas.height / Math.max(1, Number(image.height) || sourceCanvas.height),
+    };
+  }
+  const match = /^svg-(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$/i.exec(coordinateSystem);
+  if (match) {
+    return {
+      x: sourceCanvas.width / Math.max(1, Number(match[1])),
+      y: sourceCanvas.height / Math.max(1, Number(match[2])),
+    };
+  }
+  return { x: 1, y: 1 };
+}
+
+function scaleFloorPlanAiLine(line, scale) {
+  const source = line?.line ?? line;
+  return {
+    x1: Number(source?.x1 ?? 0) * scale.x,
+    y1: Number(source?.y1 ?? 0) * scale.y,
+    x2: Number(source?.x2 ?? 0) * scale.x,
+    y2: Number(source?.y2 ?? 0) * scale.y,
+  };
+}
+
+function floorPlanAiLineToSegment(item, scale, kind = "wall") {
+  const line = scaleFloorPlanAiLine(item, scale);
+  if (![line.x1, line.y1, line.x2, line.y2].every(Number.isFinite)) return null;
+  const horizontal = Math.abs(line.x2 - line.x1) >= Math.abs(line.y2 - line.y1);
+  const thickness = Math.max(3, Number(item?.thickness) * (horizontal ? scale.y : scale.x) || 5);
+  const segment = codexDefaultBackendLineToSegment(
+    {
+      ...line,
+      orientation: horizontal ? "horizontal" : "vertical",
+      thickness,
+    },
+    `floorplan-ai-${kind}`,
+  );
+  if (!segment) return null;
+  return {
+    ...segment,
+    confidence: Number(item?.confidence ?? 0.62),
+    source: item?.source ?? `floorplan-ai-${kind}`,
+    codexFloorPlanPrimary: kind === "wall",
+    windowType: kind === "window" ? (item?.windowType ?? "standard") : undefined,
+  };
+}
+
+function floorPlanAiRoomToRegion(room, scale, index) {
+  const bounds = room?.bounds ?? {};
+  const minX = Number(bounds.x ?? 0) * scale.x;
+  const minY = Number(bounds.y ?? 0) * scale.y;
+  const width = Number(bounds.width ?? 0) * scale.x;
+  const height = Number(bounds.height ?? 0) * scale.y;
+  if (![minX, minY, width, height].every(Number.isFinite) || width <= 1 || height <= 1) return null;
+  return {
+    id: room.id ?? `floorplan-ai-room-${index + 1}`,
+    minX,
+    minY,
+    maxX: minX + width,
+    maxY: minY + height,
+    centerX: minX + width / 2,
+    centerY: minY + height / 2,
+    area: width * height,
+    logicalType: room.type ?? "flexible",
+    logicalLabel: room.label ?? room.name ?? room.type ?? "AI space",
+    confidence: Number(room.confidence ?? 0.5),
+    maskClass: room.maskClass ?? room.type ?? "unknown",
+    source: room.source ?? "floorplan-ai-room",
+  };
+}
+
+function roomPixelArea(region) {
+  return Math.max(0, region.maxX - region.minX) * Math.max(0, region.maxY - region.minY);
+}
+
+function roomOverlapRatio(a, b) {
+  const overlapX = Math.max(0, Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX));
+  const overlapY = Math.max(0, Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY));
+  const overlap = overlapX * overlapY;
+  return overlap / Math.max(1, Math.min(roomPixelArea(a), roomPixelArea(b)));
+}
+
+function isReliableFloorPlanAiRoom(room, result) {
+  const planArea = Math.max(1, result.width * result.height);
+  const areaRatio = roomPixelArea(room) / planArea;
+  const confidence = Number(room.confidence ?? 0);
+  const type = String(room.logicalType ?? room.maskClass ?? "unknown").toLowerCase();
+  const generic = ["unknown", "flexible", "room", "space"].includes(type);
+  if (areaRatio < 0.006 || areaRatio > 0.34) return false;
+  if (generic && areaRatio <= 0.07 && confidence >= 0.38) return true;
+  if (generic && confidence < 0.62) return false;
+  if (generic && areaRatio > 0.16) return false;
+  return true;
+}
+
+function mergeFloorPlanAiRooms(aiRooms, wallRooms, result) {
+  const accepted = aiRooms.filter((room) => isReliableFloorPlanAiRoom(room, result));
+  const typedAiRooms = accepted.filter((room) => !["unknown", "flexible", "room", "space"].includes(String(room.logicalType ?? room.maskClass ?? "").toLowerCase()));
+  const genericAiRooms = accepted.filter((room) => !typedAiRooms.includes(room));
+  const merged = [];
+  [...typedAiRooms, ...wallRooms, ...genericAiRooms].forEach((room) => {
+    if (merged.some((kept) => roomOverlapRatio(room, kept) > 0.58)) return;
+    merged.push(room);
+  });
+  return merged.sort((a, b) => roomPixelArea(b) - roomPixelArea(a)).slice(0, 24);
+}
+
+function floorPlanAiFixtureToRegion(fixture, scale, index) {
+  const bounds = fixture?.bounds ?? {};
+  const minX = Number(bounds.x ?? 0) * scale.x;
+  const minY = Number(bounds.y ?? 0) * scale.y;
+  const width = Number(bounds.width ?? 0) * scale.x;
+  const height = Number(bounds.height ?? 0) * scale.y;
+  if (![minX, minY, width, height].every(Number.isFinite) || width <= 1 || height <= 1) return null;
+  return {
+    id: fixture.id ?? `floorplan-ai-fixture-${index + 1}`,
+    type: fixture.type ?? "fixture",
+    label: fixture.label ?? fixture.type ?? "fixture",
+    minX,
+    minY,
+    maxX: minX + width,
+    maxY: minY + height,
+    centerX: minX + width / 2,
+    centerY: minY + height / 2,
+    bounds: { x: minX, y: minY, width, height },
+    confidence: Number(fixture.confidence ?? 0.5),
+    source: fixture.source ?? "floorplan-ai-fixture",
+  };
+}
+
+function semanticMaskColor(key) {
+  const colorsByKey = {
+    wall: 0x143a3a,
+    door: colors.coral,
+    window: colors.glass,
+    fixture: 0x7a579a,
+    living: 0x7fb59f,
+    bedroom: 0x7aa9d8,
+    kitchen: 0xd0ad77,
+    bath: 0x77a9c4,
+    balcony: 0x84bf9a,
+    study: 0x9d90c9,
+    storage: 0xa7a88d,
+    corridor: 0xc9bf9a,
+    unknown: 0x8aa1a8,
+  };
+  return colorsByKey[key] ?? 0x8aa1a8;
+}
+
+function makeFloorPlanMaskOverlay(maskUrl, result, options = {}) {
+  if (!maskUrl || !result?.width || !result?.height) return null;
+  const corners = [
+    worldPositionForPixel(0, 0, result.width, result.height, result),
+    worldPositionForPixel(result.width, 0, result.width, result.height, result),
+    worldPositionForPixel(result.width, result.height, result.width, result.height, result),
+    worldPositionForPixel(0, result.height, result.width, result.height, result),
+  ];
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(
+      [
+        corners[0].x,
+        options.y ?? 0.018,
+        corners[0].z,
+        corners[1].x,
+        options.y ?? 0.018,
+        corners[1].z,
+        corners[2].x,
+        options.y ?? 0.018,
+        corners[2].z,
+        corners[3].x,
+        options.y ?? 0.018,
+        corners[3].z,
+      ],
+      3,
+    ),
+  );
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 0], 2));
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
+
+  const alphaMap = new THREE.TextureLoader().load(maskUrl);
+  if (THREE.NoColorSpace) alphaMap.colorSpace = THREE.NoColorSpace;
+  const material = new THREE.MeshBasicMaterial({
+    color: options.color ?? colors.blue,
+    alphaMap,
+    transparent: true,
+    opacity: options.opacity ?? 0.22,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.renderOrder = options.renderOrder ?? 3;
+  mesh.userData.featureKind = "floorplan-semantic-mask";
+  mesh.userData.maskKind = options.kind ?? "mask";
+  return mesh;
+}
+
+function addFloorPlanMaskOverlays(group, result) {
+  const masks = result?.floorPlanAiPayload?.masks;
+  if (!masks) return;
+
+  const roomTypes = masks.roomTypes ?? {};
+  const roomEntries = Object.entries(roomTypes);
+  if (roomEntries.length > 0) {
+    roomEntries.forEach(([type, url], index) => {
+      const overlay = makeFloorPlanMaskOverlay(url, result, {
+        kind: `room-${type}`,
+        color: semanticMaskColor(type),
+        opacity: 0.18,
+        y: 0.018 + index * 0.0005,
+        renderOrder: 3,
+      });
+      if (overlay) group.add(overlay);
+    });
+  } else if (masks.room && !(result.rooms?.length > 0)) {
+    const overlay = makeFloorPlanMaskOverlay(masks.room, result, {
+      kind: "room",
+      color: semanticMaskColor("unknown"),
+      opacity: 0.06,
+      y: 0.018,
+      renderOrder: 3,
+    });
+    if (overlay) group.add(overlay);
+  }
+
+  [
+    ["fixture", masks.fixture, 0.22, 0.028],
+    ["window", masks.window, 0.36, 0.034],
+    ["door", masks.door, 0.34, 0.04],
+  ].forEach(([kind, url, opacity, y]) => {
+    const overlay = makeFloorPlanMaskOverlay(url, result, {
+      kind,
+      color: semanticMaskColor(kind),
+      opacity,
+      y,
+      renderOrder: 5,
+    });
+    if (overlay) group.add(overlay);
+  });
+}
+
+async function requestFloorPlanRecognition(sourceCanvas, options = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? 10000);
+  try {
+    const response = await fetch(floorPlanRecognitionEndpoint(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        schemaVersion: "floorplan-ai-v1",
+        provider: options.provider ?? "cubicasa",
+        image: sourceCanvas.toDataURL("image/png"),
+        imageMeta: {
+          width: sourceCanvas.width,
+          height: sourceCanvas.height,
+          sourceRect: options.sourceRect ?? null,
+        },
+        settings: codexDefaultBackendSettings(sourceCanvas.width, sourceCanvas.height, options),
+      }),
+    });
+    if (!response.ok) throw new Error(`floorplan recognize returned ${response.status}`);
+    const payload = await response.json();
+    if (payload.error) throw new Error(payload.error);
+    return payload;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function buildWallRecognitionResultFromFloorPlanAiPayload(sourceCanvas, payload, options = {}) {
+  const scale = floorPlanAiCoordinateScale(payload, sourceCanvas);
+  const map = buildInkMap(sourceCanvas);
+  const optimizer = wallRecognitionOptimizerSettings();
+  const rawSegments = (payload?.walls ?? [])
+    .map((wall) => floorPlanAiLineToSegment(wall, scale, "wall"))
+    .filter(Boolean)
+    .filter((segment) => !isLikelySheetBorder(segment, map.width, map.height))
+    .map((segment) => ({
+      ...segment,
+      baseStart: segment.start,
+      baseEnd: segment.end,
+      startCorrectionMeters: 0,
+      endCorrectionMeters: 0,
+    }));
+  const segments = normalizeWallCenterlines(rawSegments, sourceCanvas.width, sourceCanvas.height, { ...options, optimizer });
+  if (segments.length === 0) throw new Error("floorplan recognize returned no wall lines");
+
+  const aiRooms = (payload?.rooms ?? [])
+    .map((room, index) => floorPlanAiRoomToRegion(room, scale, index))
+    .filter(Boolean);
+  const wallRooms = estimateRoomRegions(segments, { width: sourceCanvas.width, height: sourceCanvas.height });
+  const fixtures = (payload?.fixtures ?? [])
+    .map((fixture, index) => floorPlanAiFixtureToRegion(fixture, scale, index))
+    .filter(Boolean);
+  const draft = {
+    width: sourceCanvas.width,
+    height: sourceCanvas.height,
+    sourceRect: options.sourceRect ?? null,
+    segments,
+    doors: (payload?.doors ?? []).map((door) => floorPlanAiLineToSegment(door, scale, "door")).filter(Boolean),
+    windows: (payload?.windows ?? [])
+      .map((windowItem) => floorPlanAiLineToSegment(windowItem, scale, "window"))
+      .filter(Boolean),
+    fixtures,
+    rooms: mergeFloorPlanAiRooms(aiRooms, wallRooms, { width: sourceCanvas.width, height: sourceCanvas.height }),
+    optimizer,
+    inkMap: map,
+    architecturalBounds: planBoundsForSegments(segments, sourceCanvas.width, sourceCanvas.height),
+    floorPlanAiBackend: true,
+  };
+  const architectural = applyArchitecturalOpeningLogic(draft, map);
+  draft.doors = architectural.doors;
+  draft.windows = architectural.windows;
+  draft.layoutLogic = applyFloorPlanSpatialLogic(draft, map);
+  draft.quality = {
+    score: Math.round(THREE.MathUtils.clamp((payload?.confidence?.overall ?? 0.62) * 100, 0, 100)),
+    wallCount: segments.length,
+    roomCount: draft.rooms.length,
+    floorPlanAiMode: payload?.mode ?? "remote",
+    floorPlanAiProvider: payload?.provider ?? "unknown",
+    architectureConvertedDoors: architectural.quality?.architectureConvertedDoors ?? 0,
+    architectureInferredWindows: architectural.quality?.architectureInferredWindows ?? 0,
+    architectureRejectedOpenings: architectural.quality?.architectureRejectedOpenings ?? 0,
+    layoutLogicSignals: draft.layoutLogic?.fixedFeatureSignals ?? 0,
+  };
+  draft.floorPlanAiPayload = payload;
+  return draft;
+}
+
+async function estimateWallSegmentsWithFloorPlanAi(sourceCanvas, options = {}) {
+  const payload = await requestFloorPlanRecognition(sourceCanvas, options);
+  return buildWallRecognitionResultFromFloorPlanAiPayload(sourceCanvas, payload, options);
+}
+
+async function recognizeCurrentPlanWithFloorPlanAi(options = {}) {
+  if (!planCanvas) return null;
+  const source = recognitionSourceForPlan();
+  const result = await estimateWallSegmentsWithFloorPlanAi(source.canvas, { ...options, sourceRect: source.sourceRect });
+  result.sourceRect = source.sourceRect;
+  result.sourceLabel = source.label;
+  clearGenerated3D();
+  selectedDetectedWallIndex = null;
+  selectedLinearFeature = null;
+  renderDetectedWalls(result);
+  setRecognitionStatus(
+    wallSummaryText(
+      [
+        source.sourceRect ? "来自框选区域" : "",
+        "/api/floorplan/recognize",
+        result.quality?.floorPlanAiMode,
+        recognitionQualityText(result),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    ),
+  );
+  return result;
 }
 
 async function estimateWallSegmentsWithCodexDefault(sourceCanvas, options = {}) {
@@ -5844,40 +6658,27 @@ function addSelectedOpeningHandles(group, result) {
 }
 
 function makeRoomRegionMesh(region, result, index) {
-  const corners = [
-    worldPositionForPixel(region.minX, region.minY, result.width, result.height, result),
-    worldPositionForPixel(region.maxX, region.minY, result.width, result.height, result),
-    worldPositionForPixel(region.maxX, region.maxY, result.width, result.height, result),
-    worldPositionForPixel(region.minX, region.maxY, result.width, result.height, result),
-  ];
+  const polygon = roomPolygonPoints(region);
+  const corners = polygon.map((point) => worldPositionForPixel(point.x, point.y, result.width, result.height, result));
+  const shapePoints = corners.map((point) => new THREE.Vector2(point.x, point.z));
+  const triangles = THREE.ShapeUtils.triangulateShape(shapePoints, []);
+  if (corners.length < 3 || triangles.length === 0) return null;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute(
     "position",
-    new THREE.Float32BufferAttribute(
-      [
-        corners[0].x,
-        0.026,
-        corners[0].z,
-        corners[1].x,
-        0.026,
-        corners[1].z,
-        corners[2].x,
-        0.026,
-        corners[2].z,
-        corners[3].x,
-        0.026,
-        corners[3].z,
-      ],
-      3,
-    ),
+    new THREE.Float32BufferAttribute(corners.flatMap((corner) => [corner.x, 0.026, corner.z]), 3),
   );
-  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.setIndex(triangles.flat());
   geometry.computeVertexNormals();
   const roomColors = {
     living: 0xd9eee6,
     bedroom: 0x9fd4e8,
+    bath: 0x9fd4e8,
+    kitchen: 0xf3dfbd,
     balcony: 0xb8e6c8,
+    study: 0xd9d2ea,
     service: 0xf3dfbd,
+    corridor: 0xe5e1d8,
     circulation: 0xe5e1d8,
     flexible: 0xd9eee6,
   };
@@ -5896,13 +6697,79 @@ function makeRoomRegionMesh(region, result, index) {
 
 function makeRoomRegionLabel(region, result, index) {
   const center = worldPositionForPixel(region.centerX, region.centerY, result.width, result.height, result);
-  const labelText = `${region.logicalLabel ?? "空间"} ${index + 1} · ${(region.worldArea ?? 0).toFixed(1)}m²`;
+  const labelText = `${region.logicalLabel ?? "空间"} · ${(region.worldArea ?? 0).toFixed(1)}㎡`;
   const label = makeWallLengthSprite(labelText, {
     height: 0.22,
     renderOrder: 16,
   });
   label.position.set(center.x, 0.18, center.z);
   label.userData.featureKind = "room-region-label";
+  return label;
+}
+
+function makeSemanticFixtureRegionMesh(fixture, result, index) {
+  const bounds = fixture.bounds ?? {
+    x: fixture.minX,
+    y: fixture.minY,
+    width: fixture.maxX - fixture.minX,
+    height: fixture.maxY - fixture.minY,
+  };
+  if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return null;
+  const corners = [
+    worldPositionForPixel(bounds.x, bounds.y, result.width, result.height, result),
+    worldPositionForPixel(bounds.x + bounds.width, bounds.y, result.width, result.height, result),
+    worldPositionForPixel(bounds.x + bounds.width, bounds.y + bounds.height, result.width, result.height, result),
+    worldPositionForPixel(bounds.x, bounds.y + bounds.height, result.width, result.height, result),
+  ];
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(
+      [
+        corners[0].x,
+        0.072,
+        corners[0].z,
+        corners[1].x,
+        0.072,
+        corners[1].z,
+        corners[2].x,
+        0.072,
+        corners[2].z,
+        corners[3].x,
+        0.072,
+        corners[3].z,
+      ],
+      3,
+    ),
+  );
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshBasicMaterial({
+    color: semanticMaskColor(fixture.type ?? "fixture"),
+    transparent: true,
+    opacity: 0.34,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.renderOrder = 8 + index * 0.001;
+  mesh.userData.featureKind = "semantic-fixture-region";
+  mesh.userData.fixtureIndex = index;
+  return mesh;
+}
+
+function makeSemanticFixtureRegionLabel(fixture, result) {
+  const centerX = fixture.centerX ?? (fixture.bounds.x + fixture.bounds.width / 2);
+  const centerY = fixture.centerY ?? (fixture.bounds.y + fixture.bounds.height / 2);
+  if (![centerX, centerY].every(Number.isFinite)) return null;
+  const center = worldPositionForPixel(centerX, centerY, result.width, result.height, result);
+  const label = makeWallLengthSprite(fixture.label ?? fixture.type ?? "fixture", {
+    height: 0.18,
+    fontSize: 28,
+    renderOrder: 17,
+  });
+  label.position.set(center.x, 0.2, center.z);
+  label.userData.featureKind = "semantic-fixture-label";
   return label;
 }
 
@@ -5934,12 +6801,15 @@ function roomSemanticFloorColor(type) {
     living: 0xdbd7cf,
     dining: 0xe4dbcd,
     kitchen: 0xd9dde0,
+    bath: 0xd8dce0,
     primarySuite: 0xcbb894,
     secondarySuite: 0xd4c6a8,
     bedroom: floorFinishes.oak,
     balcony: 0xc6d6d1,
+    study: 0xd7d0e6,
     service: 0xd8dce0,
     storage: 0xd1d5d2,
+    corridor: 0xd7d4ca,
     circulation: 0xd7d4ca,
     flexible: 0xdedbd2,
   };
@@ -6087,6 +6957,33 @@ function addSemanticRoomFixtures(group, region, result, wallHeight) {
       });
       count += 1;
     }
+  } else if (type === "study") {
+    addSemanticBlock(group, bounds, 0.05, -0.34, bounds.width * 0.48, 0.72, 0.32, 0xc8b99c, {
+      featureKind: "study-desk",
+      name: "study desk placeholder",
+    });
+    addSemanticBlock(group, bounds, -0.4, 0.08, 0.28, Math.min(wallHeight * 0.72, 2.0), bounds.depth * 0.66, 0xb8a287, {
+      featureKind: "study-bookshelf",
+      name: "study bookshelf placeholder",
+    });
+    count += 2;
+  } else if (type === "bath") {
+    addSemanticBlock(group, bounds, -0.28, -0.32, bounds.width * 0.36, 0.62, 0.3, 0xddd5ca, {
+      featureKind: "bath-vanity",
+      name: "bath vanity placeholder",
+    });
+    addSemanticCylinder(group, bounds, 0.3, 0.18, 0.16, 0.38, 0xf4f1ea, {
+      featureKind: "toilet-placeholder",
+      name: "toilet placeholder",
+    });
+    addSemanticBlock(group, bounds, 0.22, -0.32, bounds.width * 0.3, 1.1, 0.06, colors.glass, {
+      featureKind: "shower-screen",
+      name: "shower screen placeholder",
+      transparent: true,
+      opacity: 0.42,
+      castShadow: false,
+    });
+    count += 3;
   } else if (type === "service" || type === "kitchen" || type === "storage") {
     const runLength = compact ? bounds.width * 0.62 : bounds.width * 0.78;
     addSemanticBlock(group, bounds, 0, -0.38, runLength, 0.86, 0.36, 0xddd5ca, {
@@ -6117,7 +7014,7 @@ function addSemanticRoomFixtures(group, region, result, wallHeight) {
       name: "balcony planter placeholder",
     });
     count += 2;
-  } else if (type === "circulation") {
+  } else if (type === "circulation" || type === "corridor") {
     addSemanticBlock(group, bounds, -0.42, 0, 0.16, 1.75, bounds.depth * 0.52, 0xc8b99c, {
       featureKind: "hall-storage",
       name: "hall storage placeholder",
@@ -6133,6 +7030,63 @@ function addSemanticRoomFixtures(group, region, result, wallHeight) {
   return count;
 }
 
+function addSemanticMaskFixture(group, fixture, result) {
+  const bounds = roomWorldBounds(fixture, result);
+  const type = fixture.type ?? "fixture";
+  const width = Math.max(0.18, Math.min(bounds.width * 0.9, 1.35));
+  const depth = Math.max(0.18, Math.min(bounds.depth * 0.9, 1.35));
+
+  if (type === "toilet") {
+    addSemanticCylinder(group, bounds, 0, 0, Math.min(width, depth) * 0.32, 0.38, 0xf4f1ea, {
+      featureKind: "mask-toilet",
+      name: "AI toilet fixture",
+    });
+    return 1;
+  }
+  if (type === "sink") {
+    addSemanticBlock(group, bounds, 0, 0, width, 0.42, Math.max(0.22, depth * 0.62), 0xddd5ca, {
+      featureKind: "mask-sink-cabinet",
+      name: "AI sink cabinet",
+    });
+    addSemanticCylinder(group, bounds, 0, 0, Math.min(width, depth) * 0.18, 0.05, colors.glass, {
+      featureKind: "mask-sink-basin",
+      name: "AI sink basin",
+      y: 0.46,
+      transparent: true,
+      opacity: 0.55,
+      castShadow: false,
+    });
+    return 2;
+  }
+  if (type === "shower" || type === "bathtub") {
+    addSemanticBlock(group, bounds, 0, 0, width, type === "shower" ? 1.15 : 0.32, depth, type === "shower" ? colors.glass : 0xf4f1ea, {
+      featureKind: `mask-${type}`,
+      name: `AI ${type} fixture`,
+      transparent: type === "shower",
+      opacity: type === "shower" ? 0.38 : 1,
+      castShadow: type !== "shower",
+    });
+    return 1;
+  }
+  if (type === "stove" || type === "counter") {
+    addSemanticBlock(group, bounds, 0, 0, width, 0.86, Math.max(0.3, depth * 0.72), 0xddd5ca, {
+      featureKind: `mask-${type}`,
+      name: `AI ${type} fixture`,
+    });
+    return 1;
+  }
+
+  addSemanticBlock(group, bounds, 0, 0, width, 0.48, depth, 0xc8b99c, {
+    featureKind: "mask-generic-fixture",
+    name: "AI fixture",
+  });
+  return 1;
+}
+
+function addSemanticMaskFixtures(group, result) {
+  return (result.fixtures ?? []).reduce((sum, fixture) => sum + addSemanticMaskFixture(group, fixture, result), 0);
+}
+
 function addSemanticRoomModeling(group, result, wallHeight) {
   let floors = 0;
   let fixtures = 0;
@@ -6141,6 +7095,7 @@ function addSemanticRoomModeling(group, result, wallHeight) {
     floors += 1;
     fixtures += addSemanticRoomFixtures(group, region, result, wallHeight);
   });
+  fixtures += addSemanticMaskFixtures(group, result);
   return { floors, fixtures };
 }
 
@@ -10064,6 +11019,7 @@ function build3DFromDetectedWalls(options = {}) {
   if (optimizer.showRooms) {
     (detectedWallResult.rooms ?? []).forEach((region, index) => {
       const roomMesh = makeRoomRegionMesh(region, detectedWallResult, index);
+      if (!roomMesh) return;
       roomMesh.material.opacity = 0.18;
       generatedModelGroup.add(roomMesh);
     });
@@ -10183,6 +11139,7 @@ function renderDetectedWalls(result) {
   detectedWallGroup = new THREE.Group();
   detectedWallMeshes = [];
   const optimizer = planOptimizerSettings();
+  addFloorPlanMaskOverlays(detectedWallGroup, result);
   result.rooms = (result.rooms ?? []).map((region) => ({
     ...region,
     worldArea: roomWorldArea(region, result),
@@ -10190,8 +11147,10 @@ function renderDetectedWalls(result) {
 
   if (optimizer.showRooms) {
     result.rooms.forEach((region, index) => {
-      detectedWallGroup.add(makeRoomRegionMesh(region, result, index));
-      detectedWallGroup.add(makeRoomRegionLabel(region, result, index));
+      const mesh = makeRoomRegionMesh(region, result, index);
+      if (mesh) detectedWallGroup.add(mesh);
+      const label = makeRoomRegionLabel(region, result, index);
+      if (label) detectedWallGroup.add(label);
     });
   }
 
@@ -10244,6 +11203,13 @@ function renderDetectedWalls(result) {
     detectedWallGroup.add(mesh);
   });
 
+  result.fixtures?.forEach((fixture, index) => {
+    const mesh = makeSemanticFixtureRegionMesh(fixture, result, index);
+    if (mesh) detectedWallGroup.add(mesh);
+    const label = makeSemanticFixtureRegionLabel(fixture, result, index);
+    if (label) detectedWallGroup.add(label);
+  });
+
   addSelectedWallHandles(detectedWallGroup, result);
   addSelectedOpeningHandles(detectedWallGroup, result);
 
@@ -10281,6 +11247,35 @@ async function detectWallsFromPlan() {
   setRecognitionStatus("CODEX 默认读图识别中...");
   const source = recognitionSourceForPlan();
   savePlanUndoSnapshot();
+  setRecognitionStatus("/api/floorplan/recognize 识别中...");
+  try {
+    const aiResult = await estimateWallSegmentsWithFloorPlanAi(source.canvas, {
+      sourceRect: source.sourceRect,
+      provider: "cubicasa",
+    });
+    aiResult.sourceRect = source.sourceRect;
+    aiResult.sourceLabel = source.label;
+    clearGenerated3D();
+    selectedDetectedWallIndex = null;
+    selectedLinearFeature = null;
+    renderDetectedWalls(aiResult);
+    setRecognitionStatus(
+      wallSummaryText(
+        [
+          source.sourceRect ? "来自框选区域" : "",
+          "/api/floorplan/recognize",
+          aiResult.quality?.floorPlanAiMode,
+          recognitionQualityText(aiResult),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ),
+    );
+    return;
+  } catch (error) {
+    console.warn("Floor-plan AI recognition unavailable, using CODEX wall recognition.", error);
+    setRecognitionStatus("/api/floorplan/recognize 不可用，正在使用 CODEX 墙线识别...");
+  }
   const result = await estimateWallSegmentsWithCodexDefault(source.canvas, { sourceRect: source.sourceRect });
   result.sourceRect = source.sourceRect;
   result.sourceLabel = source.label;

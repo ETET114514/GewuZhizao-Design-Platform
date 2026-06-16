@@ -18,7 +18,7 @@ const els = {
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const LOCAL_SERVER_ORIGIN = "http://127.0.0.1:8796";
+const LOCAL_SERVER_ORIGIN = "http://127.0.0.1:8000";
 const state = {
   cases: [],
   currentCase: null,
@@ -38,7 +38,9 @@ init();
 
 function apiUrl(path) {
   if (/^https?:\/\//i.test(path)) return path;
-  return window.location.protocol === "file:" ? `${LOCAL_SERVER_ORIGIN}${path}` : path;
+  const baseUrl = window.location.protocol === "file:" ? `${LOCAL_SERVER_ORIGIN}${path}` : path;
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${separator}_=${Date.now()}`;
 }
 
 async function init() {

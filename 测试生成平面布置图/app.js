@@ -1115,16 +1115,25 @@ function makeMockAiRecognition(provider = "mock") {
   );
 }
 
+function recognitionEndpoints() {
+  const endpoints = [];
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    endpoints.push("/api/floorplan/recognize");
+  }
+  endpoints.push("http://127.0.0.1:8000/api/floorplan/recognize");
+  endpoints.push("http://127.0.0.1:8787/api/floorplan/recognize");
+  endpoints.push("http://127.0.0.1:8796/api/floorplan/recognize");
+  return [...new Set(endpoints)];
+}
+
 function recognitionEndpoint() {
-  return window.location.protocol === "http:" || window.location.protocol === "https:"
-    ? "/api/floorplan/recognize"
-    : "http://127.0.0.1:8796/api/floorplan/recognize";
+  return recognitionEndpoints()[0];
 }
 
 function annotationToolUrl() {
   return window.location.protocol === "http:" || window.location.protocol === "https:"
     ? "../annotation.html"
-    : "http://127.0.0.1:8796/annotation.html";
+    : "http://127.0.0.1:8000/annotation.html";
 }
 
 async function requestRemoteAiRecognition(provider) {
@@ -1161,6 +1170,51 @@ async function requestRemoteAiRecognition(provider) {
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+async function requestRemoteAiRecognitionWithFallback(provider) {
+  const payload = {
+    schemaVersion: "floorplan-ai-v1",
+    provider,
+    image: uploadedSourcePlan.dataUrl,
+    imageMeta: {
+      name: uploadedSourcePlan.name,
+      width: uploadedSourcePlan.width,
+      height: uploadedSourcePlan.height,
+    },
+    hints: {
+      confirmations: serializeConfirmations(),
+      roomOutlines: serializeRoomOutlines(),
+      scaleCalibration: serializeScaleCalibration(),
+      cvAnalysis: {
+        planBoundsSvg: uploadedSourcePlan.analysis?.planBoundsSvg,
+        hough: uploadedSourcePlan.analysis?.hough?.parameters,
+        spaceRegions: uploadedSourcePlan.analysis?.spaceRegions?.parameters,
+      },
+    },
+  };
+  let lastError = null;
+  for (const endpoint of recognitionEndpoints()) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 9000);
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error(`AI service returned ${response.status}`);
+      const result = await response.json();
+      result.endpoint = endpoint;
+      return result;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+  throw lastError ?? new Error("AI recognition service unavailable");
 }
 
 function setAiRecognitionBusy(isBusy) {
@@ -1228,7 +1282,7 @@ async function runAiRecognition() {
       result = makeMockAiRecognition(provider);
     } else {
       try {
-        const raw = await requestRemoteAiRecognition(provider);
+        const raw = await requestRemoteAiRecognitionWithFallback(provider);
         result = normalizeAiRecognitionResult(raw, provider, "remote");
       } catch (error) {
         result = makeMockAiRecognition(provider);
@@ -1256,9 +1310,9 @@ async function runAiRecognition() {
 
 function openAnnotationTool() {
   if (!annotationToolOverlay || !annotationToolFrame) return;
-  if (!annotationToolFrame.src) {
-    annotationToolFrame.src = annotationToolUrl();
-  }
+  const url = annotationToolUrl();
+  const separator = url.includes("?") ? "&" : "?";
+  annotationToolFrame.src = `${url}${separator}_=${Date.now()}`;
   annotationToolOverlay.hidden = false;
 }
 

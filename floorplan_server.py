@@ -141,6 +141,7 @@ class FloorPlanHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -349,7 +350,7 @@ def public_annotation_case(case):
 def read_json_file(path):
     if not path:
         return None
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
 def segment_payload(payload):

@@ -19,6 +19,7 @@ CUBICASA_CHECKPOINT = (
     / "model_best_val_loss_var.pkl"
 )
 CUBICASA_ONNX_CANDIDATES = [
+    ROOT / "models" / "cubicasa5k-web-annotations-combined-57.onnx",
     ROOT / "models" / "cubicasa5k-web-annotations-5epoch.onnx",
     ROOT / "models" / "cubicasa5k-floorplan.onnx",
     ROOT / "models" / "cubicasa5k.onnx",
@@ -152,7 +153,7 @@ def cubicasa_onnx_path():
 def infer_wall_mask(image, cv2, np):
     cubicasa_onnx = infer_cubicasa_onnx_mask(image, cv2, np)
     if cubicasa_onnx is not None:
-        mode = "cubicasa5k-web-annotations-onnx" if CUBICASA_ONNX_PATH and "web-annotations" in CUBICASA_ONNX_PATH.name else "cubicasa5k-onnx"
+        mode = "cubicasa5k-web-annotations-combined-57-onnx" if CUBICASA_ONNX_PATH and "combined-57" in CUBICASA_ONNX_PATH.name else "cubicasa5k-web-annotations-onnx" if CUBICASA_ONNX_PATH and "web-annotations" in CUBICASA_ONNX_PATH.name else "cubicasa5k-onnx"
         return cubicasa_onnx, mode
     cubicasa = infer_cubicasa_mask(image, cv2, np)
     if cubicasa is not None:

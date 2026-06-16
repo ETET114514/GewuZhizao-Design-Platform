@@ -14,7 +14,7 @@ __pycache__/
 *.ckpt
 *.onnx
 !建筑平面生成能力/models/cubicasa5k-web-annotations-5epoch.onnx
-!建筑平面生成能力/models/cubicasa5k-web-annotations-combined-57.onnx
+!建筑平面生成能力/models/cubicasa5k-web-annotations-combined-57.onnx.part*
 *.onnx.data
 models/*.onnx
 models/*.pt

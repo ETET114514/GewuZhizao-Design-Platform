@@ -20,3 +20,4 @@ models/*.pt
 models/*.pth
 models/*.pkl
 models/*.download
+gaussian_splat_jobs/

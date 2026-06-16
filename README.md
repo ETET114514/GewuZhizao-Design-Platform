@@ -49,3 +49,37 @@ See `trellis2-service.example.py` for the local bridge service.
 The TRELLIS.2 source is expected at `../TRELLIS.2`.
 Run `check-trellis2.ps1` on Windows to verify whether the machine can run TRELLIS.2.
 On a Linux/WSL CUDA machine with an NVIDIA GPU >=24GB VRAM and Conda, run `install-trellis2-linux.sh`.
+
+## Gaussian Splatting photo-to-3D
+
+Upload multiple site photos, set the `GS` endpoint, then click `高斯泼溅生成`.
+The frontend sends all uploaded photos as repeated multipart `images` fields and requests `output=ply`.
+It can load direct binary `.ksplat` / `.splat` / `.ply` / `.spz` responses, or JSON containing
+`ksplat_url`, `splat_url`, `ply_url`, `spz_url`, `model_url`, or matching base64 fields.
+
+`gaussian-splat-service.example.py` includes a real local pipeline dispatcher:
+
+- If `GAUSSIAN_SPLAT_COMMAND` is set, it runs that command.
+- Otherwise it runs the built-in Nerfstudio Splatfacto flow:
+  `ns-process-data images` -> `ns-train splatfacto` -> `ns-export gaussian-splat`.
+
+The built-in flow requires COLMAP, Nerfstudio CLI commands, CUDA PyTorch, and an NVIDIA GPU.
+Check readiness at:
+
+```text
+http://127.0.0.1:7862/api/gaussian-splat/health
+```
+
+Start the bridge service:
+
+```text
+pip install -r requirements-gaussian-splat-service.txt
+start-gaussian-splat-service.bat
+```
+
+Optional external pipeline override:
+
+```text
+set GAUSSIAN_SPLAT_COMMAND=python train_and_export.py --images "{input_dir}" --out "{output_path}"
+start-gaussian-splat-service.bat
+```

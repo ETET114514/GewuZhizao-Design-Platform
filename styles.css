@@ -618,12 +618,14 @@ h2 {
   width: 58px;
 }
 
-.trellis-endpoint-field {
+.trellis-endpoint-field,
+.gaussian-splat-endpoint-field {
   flex: 1 1 260px;
   max-width: 420px;
 }
 
-.trellis-endpoint-field input[type="url"] {
+.trellis-endpoint-field input[type="url"],
+.gaussian-splat-endpoint-field input[type="url"] {
   width: 100%;
   min-width: 0;
   border: 0;
@@ -778,6 +780,32 @@ h2 {
 .plan-read-status strong {
   color: var(--green);
   font-size: 13px;
+}
+
+.plan-read-field {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 4px;
+}
+
+.plan-read-field span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.plan-read-field select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 30px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
 }
 
 .plan-read-menu .compact-action {

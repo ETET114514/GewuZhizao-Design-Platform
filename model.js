@@ -53,6 +53,8 @@ const cleanPlanPhotoButton = document.querySelector("#cleanPlanPhoto");
 const restoreOriginalPlanPhotoButton = document.querySelector("#restoreOriginalPlanPhoto");
 const photoQualitySummary = document.querySelector("#photoQualitySummary");
 const photoQualityMetrics = document.querySelector("#photoQualityMetrics");
+const smartFloorPlanAiButton = document.querySelector("#smartFloorPlanAi");
+const floorPlanAiProviderSelect = document.querySelector("#floorPlanAiProviderSelect");
 const detectWallsButton = document.querySelector("#detectWalls");
 const clearWallsButton = document.querySelector("#clearWalls");
 const recognitionStatus = document.querySelector("#recognitionStatus");
@@ -68,6 +70,8 @@ const refinePlanPhotoModelButton = document.querySelector("#refinePlanPhotoModel
 const matchSitePhotosButton = document.querySelector("#matchSitePhotos");
 const trellisEndpointInput = document.querySelector("#trellisEndpointInput");
 const generateTrellisModelButton = document.querySelector("#generateTrellisModel");
+const gaussianSplatEndpointInput = document.querySelector("#gaussianSplatEndpointInput");
+const generateGaussianSplatButton = document.querySelector("#generateGaussianSplatModel");
 const clearPhotoModelButton = document.querySelector("#clearPhotoModel");
 const wallEditor = document.querySelector("#wallEditor");
 const wallSelection = document.querySelector("#wallSelection");
@@ -108,6 +112,8 @@ const modelBomSummary = document.querySelector("#modelBomSummary");
 const modelBomRows = document.querySelector("#modelBomRows");
 const modelBootStatus = document.querySelector("#modelBootStatus");
 const FLOOR_PLAN_AI_PROVIDER = "cubicasa";
+const GAUSSIAN_SPLATS_MODULE_URL =
+  "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js";
 const FLOOR_PLAN_AI_PROVIDER_LABELS = {
   cubicasa: "CubiCasa5K 深度学习",
   deepfloorplan: "DeepFloorPlan 深度学习",
@@ -116,6 +122,10 @@ const FLOOR_PLAN_AI_PROVIDER_LABELS = {
 
 function floorPlanAiProviderLabel(provider = FLOOR_PLAN_AI_PROVIDER) {
   return FLOOR_PLAN_AI_PROVIDER_LABELS[provider] ?? `${provider} 深度学习`;
+}
+
+function currentFloorPlanAiProvider() {
+  return floorPlanAiProviderSelect?.value || FLOOR_PLAN_AI_PROVIDER;
 }
 
 const roomNames = {
@@ -255,6 +265,9 @@ let sitePhotoAnalysis;
 let sitePhotoMatches = [];
 let trellisModelGroup;
 let trellisAssetUrl;
+let gaussianSplatModulePromise;
+let gaussianSplatViewer;
+let gaussianSplatAssetUrl;
 let gltfLoader;
 let isDraggingModel = false;
 let dragPointerId = null;
@@ -1312,7 +1325,11 @@ function updateWorkflowBoard() {
   const hasPlan = Boolean(planCanvas);
   const hasLinearPlan = Boolean(detectedWallResult?.segments?.length);
   const hasStructure = generated3DActive || hasLinearPlan;
-  const hasReality = sitePhotoCanvases.length > 0 && (generated3DSource === "site-photo" || generated3DSource === "plan-photo-refined");
+  const hasReality =
+    sitePhotoCanvases.length > 0 &&
+    (generated3DSource === "site-photo" ||
+      generated3DSource === "plan-photo-refined" ||
+      generated3DSource === "gaussian-splat");
   const hasProcurement = modelObjects.length > 0 || hasStructure;
 
   setWorkflowState("plan", hasLinearPlan ? "done" : hasPlan ? "active" : "active");
@@ -1729,6 +1746,21 @@ function clearTrellisModel() {
   if (trellisAssetUrl) {
     URL.revokeObjectURL(trellisAssetUrl);
     trellisAssetUrl = null;
+  }
+}
+
+function clearGaussianSplatModel() {
+  if (gaussianSplatViewer) {
+    scene.remove(gaussianSplatViewer);
+    const disposePromise = gaussianSplatViewer.dispose?.();
+    disposePromise?.catch?.((error) => {
+      console.warn("Gaussian splat dispose failed.", error);
+    });
+    gaussianSplatViewer = null;
+  }
+  if (gaussianSplatAssetUrl) {
+    URL.revokeObjectURL(gaussianSplatAssetUrl);
+    gaussianSplatAssetUrl = null;
   }
 }
 
@@ -2825,7 +2857,7 @@ async function importPlanFile(file) {
     setView("top");
     setRecognitionStatus("图纸已导入，正在发送到 /api/floorplan/recognize...");
     try {
-      await recognizeCurrentPlanWithFloorPlanAi({ provider: "cubicasa", auto: true });
+      await recognizeCurrentPlanWithFloorPlanAi({ provider: currentFloorPlanAiProvider(), auto: true });
     } catch (recognitionError) {
       console.warn("Floor-plan AI recognition failed after upload.", recognitionError);
       setRecognitionStatus("图纸已导入，/api/floorplan/recognize 暂不可用，可在读图工具中手动识别墙线");
@@ -6272,6 +6304,42 @@ async function recognizeCurrentPlanWithFloorPlanAi(options = {}) {
   return result;
 }
 
+async function runSmartFloorPlanDeepLearning() {
+  if (!planCanvas) {
+    setRecognitionStatus("请先导入图纸");
+    return;
+  }
+
+  const provider = currentFloorPlanAiProvider();
+  const providerLabel = floorPlanAiProviderLabel(provider);
+  savePlanUndoSnapshot();
+  setRecognitionStatus(`${providerLabel} 智能读图中...`);
+  try {
+    const result = await recognizeCurrentPlanWithFloorPlanAi({
+      provider,
+      timeoutMs: 20000,
+      smartDeepLearning: true,
+    });
+    const active = result?.quality?.floorPlanAiActive;
+    const mode = result?.quality?.floorPlanAiMode ?? "unknown";
+    setRecognitionStatus(
+      wallSummaryText(
+        [
+          "智能读图深度学习",
+          providerLabel,
+          active ? mode : `${mode} 回退`,
+          recognitionQualityText(result),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ),
+    );
+  } catch (error) {
+    console.warn("Smart floor-plan deep learning failed.", error);
+    setRecognitionStatus(`${providerLabel} 暂不可用：${String(error?.message || error).slice(0, 48)}`);
+  }
+}
+
 async function estimateWallSegmentsWithCodexDefault(sourceCanvas, options = {}) {
   try {
     const payload = await requestCodexDefaultWallSegmentation(sourceCanvas, options);
@@ -7604,6 +7672,7 @@ function renderGeneratedOpeningHandles() {
 function clearGenerated3D(options = {}) {
   const resetPresentation = options.resetPresentation ?? true;
   clearTrellisModel();
+  clearGaussianSplatModel();
   if (generatedModelGroup) {
     scene.remove(generatedModelGroup);
     disposeObjectTree(generatedModelGroup);
@@ -8419,6 +8488,136 @@ function base64ToBlob(base64, contentType = "model/gltf-binary") {
   return new Blob([bytes], { type: contentType });
 }
 
+function loadGaussianSplatModule() {
+  if (!gaussianSplatModulePromise) {
+    gaussianSplatModulePromise = import(GAUSSIAN_SPLATS_MODULE_URL);
+  }
+  return gaussianSplatModulePromise;
+}
+
+function gaussianSplatFormatFromName(module, name = "", contentType = "") {
+  const lowerName = name.toLowerCase();
+  const lowerType = contentType.toLowerCase();
+  if (lowerName.endsWith(".ply") || lowerType.includes("ply")) return module.SceneFormat.Ply;
+  if (lowerName.endsWith(".splat") || lowerType.includes("x-splat")) return module.SceneFormat.Splat;
+  if (lowerName.endsWith(".spz") || lowerType.includes("spz")) return module.SceneFormat.Spz;
+  return module.SceneFormat.KSplat;
+}
+
+function gaussianSplatFileNameFromResponse(response, fallback = "scene.ksplat") {
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1].trim().replace(/^"|"$/g, ""));
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] ?? fallback;
+}
+
+function makeGaussianSplatViewer(module) {
+  const viewer = new module.DropInViewer({
+    gpuAcceleratedSort: true,
+    sharedMemoryForWorkers: false,
+  });
+  viewer.name = "gaussian-splat-generated-asset";
+  viewer.userData.selectName = "高斯泼溅 3D 场景";
+  viewer.position.set(0, 0, generated3DActive ? 0.9 : 0.15);
+  viewer.scale.setScalar(generated3DActive ? 0.9 : 1);
+  return viewer;
+}
+
+async function loadGaussianSplatFromUrl(url, options = {}) {
+  const module = await loadGaussianSplatModule();
+  clearGenerated3D({ resetPresentation: false });
+
+  gaussianSplatViewer = makeGaussianSplatViewer(module);
+  scene.add(gaussianSplatViewer);
+
+  const format = options.format ?? gaussianSplatFormatFromName(module, options.name ?? url, options.contentType);
+  const loadTask = gaussianSplatViewer.addSplatScene(url, {
+    format,
+    showLoadingUI: false,
+    splatAlphaRemovalThreshold: 5,
+    onProgress: (percent, label) => {
+      const progress = label ?? (Number.isFinite(percent) ? `${Math.round(percent)}%` : "处理中");
+      setSitePhotoStatus("高斯泼溅加载中", progress);
+    },
+  });
+
+  await (loadTask.promise ?? loadTask);
+  if (options.ownsUrl) gaussianSplatAssetUrl = url;
+
+  generated3DActive = true;
+  generated3DSource = "gaussian-splat";
+  if (roomLabel) roomLabel.textContent = "高斯泼溅 3D";
+  updateSelection("高斯泼溅 3D 场景已加载");
+  setSitePhotoStatus("高斯泼溅 3D 已加载", "可在当前视图中旋转、缩放查看真实场景");
+  setView(currentView);
+  return gaussianSplatViewer;
+}
+
+async function loadGaussianSplatFromResponse(response) {
+  const module = await loadGaussianSplatModule();
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const payload = await response.json();
+    const url =
+      payload.ksplat_url ??
+      payload.splat_url ??
+      payload.ply_url ??
+      payload.spz_url ??
+      payload.model_url ??
+      payload.url;
+    const base64 =
+      payload.ksplat_base64 ??
+      payload.splat_base64 ??
+      payload.ply_base64 ??
+      payload.spz_base64 ??
+      payload.model_base64;
+    const name = payload.filename ?? payload.name ?? url ?? "scene.ksplat";
+    const format = gaussianSplatFormatFromName(module, name, payload.content_type ?? "");
+
+    if (url) {
+      return loadGaussianSplatFromUrl(new URL(url, response.url).href, { name, format });
+    }
+    if (base64) {
+      const blob = base64ToBlob(base64, payload.content_type ?? "application/octet-stream");
+      const objectUrl = URL.createObjectURL(blob);
+      return loadGaussianSplatFromUrl(objectUrl, { ownsUrl: true, name, format, contentType: blob.type });
+    }
+    throw new Error("gaussian-splat-response-missing-model");
+  }
+
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new Error("gaussian-splat-empty-model");
+  }
+  const name = gaussianSplatFileNameFromResponse(response);
+  const format = gaussianSplatFormatFromName(module, name, contentType || blob.type);
+  const objectUrl = URL.createObjectURL(blob);
+  return loadGaussianSplatFromUrl(objectUrl, { ownsUrl: true, name, format, contentType: blob.type });
+}
+
+function gaussianSplatHealthUrl(endpoint) {
+  const url = new URL(endpoint, window.location.href);
+  url.pathname = url.pathname.replace(/\/photos-to-3d\/?$/, "/health");
+  return url.href;
+}
+
+async function checkGaussianSplatService(endpoint) {
+  const response = await fetch(gaussianSplatHealthUrl(endpoint), {
+    method: "GET",
+  });
+  if (!response.ok) {
+    throw new Error(`健康检查失败：${response.status}`);
+  }
+  const payload = await response.json();
+  if (payload.ready === false) {
+    const missing = Array.isArray(payload.missing) && payload.missing.length ? `缺少：${payload.missing.join("、")}` : "";
+    throw new Error(payload.message || missing || "高斯泼溅重建管线未就绪");
+  }
+  return payload;
+}
+
 function fitTrellisModelToScene(object) {
   const box3 = new THREE.Box3().setFromObject(object);
   const size = new THREE.Vector3();
@@ -8448,6 +8647,7 @@ function loadTrellisModelFromUrl(url, ownsUrl = false) {
       url,
       (gltf) => {
         clearTrellisModel();
+        clearGaussianSplatModel();
         trellisModelGroup = gltf.scene;
         trellisModelGroup.name = "trellis2-generated-asset";
         fitTrellisModelToScene(trellisModelGroup);
@@ -8543,6 +8743,68 @@ async function generateTrellisModelFromSitePhoto() {
     setSitePhotoStatus("TRELLIS.2 调用失败", "请确认服务已启动、地址正确，并允许跨域请求");
   } finally {
     generateTrellisModelButton.disabled = false;
+  }
+}
+
+async function generateGaussianSplatModelFromSitePhotos() {
+  const endpoint = gaussianSplatEndpointInput?.value?.trim();
+  if (!endpoint) {
+    setSitePhotoStatus("请填写高斯泼溅服务地址", "例如 http://127.0.0.1:7862/api/gaussian-splat/photos-to-3d");
+    return;
+  }
+
+  if (sitePhotoCanvases.length === 0) {
+    setSitePhotoStatus("请先上传现场图片", "高斯泼溅重建建议至少 12 张多角度照片");
+    return;
+  }
+
+  try {
+    localStorage.setItem("gaussianSplatEndpoint", endpoint);
+    if (generateGaussianSplatButton) generateGaussianSplatButton.disabled = true;
+    setSitePhotoStatus("正在检查高斯泼溅服务", "确认重建命令是否已配置");
+    await checkGaussianSplatService(endpoint);
+    setSitePhotoStatus("高斯泼溅正在生成", `${sitePhotoCanvases.length} 张现场图正在提交`);
+
+    const body = new FormData();
+    const blobs = await Promise.all(sitePhotoCanvases.map((item) => canvasToBlob(item)));
+    blobs.forEach((blob, index) => {
+      body.append("images", blob, `site-photo-${index + 1}.png`);
+    });
+    body.append("output", "ply");
+    body.append("image_count", String(blobs.length));
+    body.append("source", "GewuZhizao-Design-Platform");
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      body,
+    });
+
+    if (!response.ok) {
+      let detail = `${response.status} ${response.statusText}`;
+      try {
+        const payload = await response.json();
+        detail = payload.error ?? payload.message ?? detail;
+      } catch (parseError) {
+        try {
+          detail = (await response.text()) || detail;
+        } catch (textError) {
+          detail = `${response.status} ${response.statusText}`;
+        }
+      }
+      throw new Error(detail);
+    }
+
+    await loadGaussianSplatFromResponse(response);
+  } catch (error) {
+    console.error(error);
+    const message = String(error?.message || error);
+    const serviceOffline = error instanceof TypeError || message.includes("Failed to fetch") || message.includes("NetworkError");
+    setSitePhotoStatus(
+      serviceOffline ? "高斯泼溅服务未启动" : "高斯泼溅调用失败",
+      serviceOffline ? "请先启动 127.0.0.1:7862 的重建服务" : message.slice(0, 96),
+    );
+  } finally {
+    if (generateGaussianSplatButton) generateGaussianSplatButton.disabled = false;
   }
 }
 
@@ -11269,7 +11531,7 @@ async function detectWallsFromPlan() {
   try {
     const aiResult = await estimateWallSegmentsWithFloorPlanAi(source.canvas, {
       sourceRect: source.sourceRect,
-      provider: FLOOR_PLAN_AI_PROVIDER,
+      provider: currentFloorPlanAiProvider(),
     });
     aiResult.sourceRect = source.sourceRect;
     aiResult.sourceLabel = source.label;
@@ -12196,6 +12458,12 @@ async function init() {
     trellisEndpointInput.value =
       localStorage.getItem("trellis2Endpoint") || trellisEndpointInput.value || "http://127.0.0.1:7861/api/trellis/image-to-3d";
   }
+  if (gaussianSplatEndpointInput) {
+    gaussianSplatEndpointInput.value =
+      localStorage.getItem("gaussianSplatEndpoint") ||
+      gaussianSplatEndpointInput.value ||
+      "http://127.0.0.1:7862/api/gaussian-splat/photos-to-3d";
+  }
 
   resizeRenderer();
   loadRoom(activeRoom);
@@ -12411,6 +12679,14 @@ async function init() {
     restoreOriginalPlanPhoto();
   });
 
+  smartFloorPlanAiButton?.addEventListener("click", () => {
+    runSmartFloorPlanDeepLearning();
+  });
+
+  floorPlanAiProviderSelect?.addEventListener("change", () => {
+    setRecognitionStatus(`AI 模型已切换：${floorPlanAiProviderLabel(currentFloorPlanAiProvider())}`);
+  });
+
   detectWallsButton?.addEventListener("click", () => {
     detectWallsFromPlan();
   });
@@ -12495,6 +12771,10 @@ async function init() {
     generateTrellisModelFromSitePhoto();
   });
 
+  generateGaussianSplatButton?.addEventListener("click", () => {
+    generateGaussianSplatModelFromSitePhotos();
+  });
+
   clearPhotoModelButton?.addEventListener("click", () => {
     clearSitePhotoModel();
   });
@@ -12505,7 +12785,7 @@ async function init() {
       buildDisplayModelFromSitePhoto();
     } else if (generated3DSource === "plan-photo-refined") {
       applySitePhotosToPlanModel();
-    } else {
+    } else if (generated3DSource === "detected-walls") {
       build3DFromDetectedWalls({ preserveView: currentView === "top" });
     }
   });

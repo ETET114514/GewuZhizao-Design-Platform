@@ -235,6 +235,18 @@
                 <i data-lucide="box"></i>
                 <span>TRELLIS 生成</span>
               </button>
+              <label class="plan-field gaussian-splat-endpoint-field">
+                <span>GS</span>
+                <input
+                  id="gaussianSplatEndpointInput"
+                  type="url"
+                  value="http://127.0.0.1:7862/api/gaussian-splat/photos-to-3d"
+                />
+              </label>
+              <button class="secondary-button compact-action" id="generateGaussianSplatModel" type="button">
+                <i data-lucide="sparkles"></i>
+                <span>高斯泼溅生成</span>
+              </button>
               <button class="secondary-button compact-action" id="clearPhotoModel" type="button">
                 <i data-lucide="eraser"></i>
                 <span>清空展示模型</span>
@@ -277,9 +289,21 @@
                       <span>墙体训练</span>
                       <strong id="wallTrainingStatus">未训练</strong>
                     </div>
+                    <label class="plan-read-field">
+                      <span>AI 模型</span>
+                      <select id="floorPlanAiProviderSelect">
+                        <option value="cubicasa">CubiCasa5K</option>
+                        <option value="deepfloorplan">DeepFloorPlan</option>
+                        <option value="unet">U-Net</option>
+                      </select>
+                    </label>
+                    <button class="primary-button compact-action detect-action" id="smartFloorPlanAi" type="button">
+                      <i data-lucide="sparkles"></i>
+                      <span>智能读图深度学习</span>
+                    </button>
                     <button class="secondary-button compact-action detect-action" id="detectWalls" type="button">
                       <i data-lucide="scan-search"></i>
-                      <span>深度学习识别</span>
+                      <span>AI 优先识别墙线</span>
                     </button>
                     <button class="secondary-button compact-action detect-action" id="rerunOptimizedRecognition" type="button">
                       <i data-lucide="refresh-cw"></i>

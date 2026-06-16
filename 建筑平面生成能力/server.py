@@ -146,8 +146,21 @@ def model_path():
     return next((path for path in MODEL_CANDIDATES if path.exists()), None)
 
 
+def cubicasa_onnx_parts(path):
+    return sorted(path.parent.glob(path.name + ".part*"))
+
+
 def cubicasa_onnx_path():
-    return next((path for path in CUBICASA_ONNX_CANDIDATES if path.exists()), None)
+    return next((path for path in CUBICASA_ONNX_CANDIDATES if path.exists() or cubicasa_onnx_parts(path)), None)
+
+
+def read_cubicasa_onnx_bytes(path):
+    if path.exists():
+        return path.read_bytes()
+    parts = cubicasa_onnx_parts(path)
+    if not parts:
+        raise FileNotFoundError(f"CubiCasa ONNX model not found: {path}")
+    return b"".join(part.read_bytes() for part in parts)
 
 
 def infer_wall_mask(image, cv2, np):
@@ -224,7 +237,7 @@ def load_cubicasa_onnx_session():
             for provider in ("CUDAExecutionProvider", "CPUExecutionProvider")
             if provider in available
         ] or available
-        CUBICASA_ONNX_SESSION = ort.InferenceSession(path.read_bytes(), providers=providers)
+        CUBICASA_ONNX_SESSION = ort.InferenceSession(read_cubicasa_onnx_bytes(path), providers=providers)
         CUBICASA_ONNX_PATH = path
         print(f"CubiCasa5k ONNX model loaded from {path} with {providers}")
         return CUBICASA_ONNX_SESSION

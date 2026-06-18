@@ -13,17 +13,12 @@ REPO_ROOT = ROOT.parent
 CUBICASA_ROOT = REPO_ROOT / "third_party" / "CubiCasa5k"
 CUBICASA_CHECKPOINT = (
     CUBICASA_ROOT
-    / "runs_cubi"
-    / "finetune_20epoch_lr1e-4"
-    / "2026-06-14-14-53-24"
+    / "cubicassa5k_model"
+    / "2026-06-18-16-58-09"
     / "model_best_val_loss_var.pkl"
 )
 CUBICASA_ONNX_CANDIDATES = [
-    ROOT / "models" / "cubicasa5k-web-annotations-combined-57.onnx",
-    ROOT / "models" / "cubicasa5k-web-annotations-5epoch.onnx",
-    ROOT / "models" / "cubicasa5k-floorplan.onnx",
     ROOT / "models" / "cubicasa5k.onnx",
-    ROOT / "floorplan_models" / "cubicasa5k-floorplan.onnx",
 ]
 MODEL_CANDIDATES = [
     ROOT / "models" / "wall-segmentation.onnx",

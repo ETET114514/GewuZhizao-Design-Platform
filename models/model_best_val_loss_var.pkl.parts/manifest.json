@@ -1,0 +1,33 @@
+﻿{
+    "file":  "model_best_val_loss_var.pkl",
+    "size":  208651193,
+    "sha256":  "dd20b4e1bf1d670f2125107b079df06958b1ccd36e49a464ab739aeb00b8e7a2",
+    "chunkSize":  47185920,
+    "parts":  [
+                  {
+                      "name":  "model_best_val_loss_var.pkl.part001",
+                      "size":  47185920,
+                      "sha256":  "a64b9b4e8a0b5c67cdbc57a06700c27b3bb9b754f5cd751b9b89581c4b11f2e4"
+                  },
+                  {
+                      "name":  "model_best_val_loss_var.pkl.part002",
+                      "size":  47185920,
+                      "sha256":  "04c1c189b7058530f28f21970817cb4bd2f983ebe72d6ee1f316b14cb66ba192"
+                  },
+                  {
+                      "name":  "model_best_val_loss_var.pkl.part003",
+                      "size":  47185920,
+                      "sha256":  "a87cdef261b92d3d00b49c52f1c30d3a25c55c69e9c5308f162e829235f3fe42"
+                  },
+                  {
+                      "name":  "model_best_val_loss_var.pkl.part004",
+                      "size":  47185920,
+                      "sha256":  "8e8a0b1b67ed18b5f508c6455950586143ea0ba0910e8006031bcb7c92461609"
+                  },
+                  {
+                      "name":  "model_best_val_loss_var.pkl.part005",
+                      "size":  19907513,
+                      "sha256":  "f89a3253742d0a6b71c9d962f456f5ab14de479c669860c0c922d4dab1b22dcd"
+                  }
+              ]
+}

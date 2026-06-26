@@ -7,3 +7,9 @@ wall-segmentation.onnx
 ```
 
 当前项目没有内置模型。缺少模型时，服务端会使用 OpenCV fallback，前端也会使用浏览器规则识别兜底。
+
+Additional local model folders:
+
+```text
+depth-anything-v2-small/
+```

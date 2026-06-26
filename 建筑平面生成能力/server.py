@@ -11,12 +11,13 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
 CUBICASA_ROOT = REPO_ROOT / "third_party" / "CubiCasa5k"
-CUBICASA_CHECKPOINT = (
+CUBICASA_CHECKPOINT_CANDIDATES = [
+    ROOT / "models" / "model_best_val_loss_var.pkl",
     CUBICASA_ROOT
     / "cubicassa5k_model"
     / "2026-06-18-16-58-09"
-    / "model_best_val_loss_var.pkl"
-)
+    / "model_best_val_loss_var.pkl",
+]
 CUBICASA_ONNX_CANDIDATES = [
     ROOT / "models" / "cubicasa5k.onnx",
 ]
@@ -280,8 +281,10 @@ def load_cubicasa_model():
         return CUBICASA_MODEL
     if CUBICASA_LOAD_ERROR is not None:
         return None
-    if not CUBICASA_CHECKPOINT.exists():
-        CUBICASA_LOAD_ERROR = f"checkpoint not found: {CUBICASA_CHECKPOINT}"
+    checkpoint_path = next((path for path in CUBICASA_CHECKPOINT_CANDIDATES if path.exists()), None)
+    expected_paths = ", ".join(str(path) for path in CUBICASA_CHECKPOINT_CANDIDATES)
+    if checkpoint_path is None:
+        CUBICASA_LOAD_ERROR = f"checkpoint not found: {expected_paths}"
         return None
     if not (CUBICASA_ROOT / "floortrans").exists():
         CUBICASA_LOAD_ERROR = f"CubiCasa source not found: {CUBICASA_ROOT}"
@@ -298,7 +301,7 @@ def load_cubicasa_model():
             from floortrans.models import get_model
 
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            checkpoint = torch.load(CUBICASA_CHECKPOINT, map_location=device, weights_only=False)
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
             model = get_model("hg_furukawa_original", 51)
             model.conv4_ = torch.nn.Conv2d(256, 44, bias=True, kernel_size=1)
             model.upsample = torch.nn.ConvTranspose2d(44, 44, kernel_size=4, stride=4)
@@ -310,7 +313,7 @@ def load_cubicasa_model():
 
         CUBICASA_MODEL = model
         CUBICASA_DEVICE = device
-        print(f"CubiCasa5k model loaded from {CUBICASA_CHECKPOINT} on {device}")
+        print(f"CubiCasa5k model loaded from {checkpoint_path} on {device}")
         return CUBICASA_MODEL
     except Exception as exc:
         CUBICASA_LOAD_ERROR = str(exc)

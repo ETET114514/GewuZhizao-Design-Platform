@@ -6,10 +6,10 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $floorplanDirName = -join ([char[]](0x5efa, 0x7b51, 0x5e73, 0x9762, 0x751f, 0x6210, 0x80fd, 0x529b))
-$modelsDir = Join-Path $repoRoot (Join-Path $floorplanDirName "models")
-$partsDir = Join-Path $modelsDir "model_best_val_loss_var.pkl.parts"
+$modelDir = Join-Path $repoRoot (Join-Path $floorplanDirName "models/depth-anything-v2-small")
+$partsDir = Join-Path $modelDir "depth_anything_v2_vits.pth.parts"
 $manifestPath = Join-Path $partsDir "manifest.json"
-$outputPath = Join-Path $modelsDir "model_best_val_loss_var.pkl"
+$outputPath = Join-Path $modelDir "depth_anything_v2_vits.pth"
 
 if (-not (Test-Path -LiteralPath $manifestPath)) {
   throw "Missing manifest: $manifestPath"
@@ -50,7 +50,7 @@ try {
 
 $modelHash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($modelHash -ne $manifest.sha256) {
-  throw "Rebuilt model hash mismatch: $modelHash"
+  throw "Restored model hash mismatch: $modelHash"
 }
 
 Write-Host "Restored model: $outputPath"

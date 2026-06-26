@@ -11,7 +11,7 @@ To restore the model after cloning:
 The script rebuilds:
 
 ```text
-models/model_best_val_loss_var.pkl
+建筑平面生成能力/models/model_best_val_loss_var.pkl
 ```
 
 It validates every part and the final checkpoint with SHA-256 hashes from `manifest.json`.

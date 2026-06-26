@@ -2,6 +2,7 @@
 *.log
 .venv/
 **/.venv/
+.venv-depth/
 .venv-cubicasa/
 .conda-cubicasa/
 datasets/
@@ -22,3 +23,6 @@ models/*.pth
 models/*.pkl
 models/*.download
 gaussian_splat_jobs/
+third_party/zind/
+third_party/zind-*.zip
+third_party/Depth-Anything-V2/

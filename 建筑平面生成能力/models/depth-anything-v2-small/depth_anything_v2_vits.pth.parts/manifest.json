@@ -1,0 +1,23 @@
+﻿{
+    "file":  "depth_anything_v2_vits.pth",
+    "size":  99218434,
+    "sha256":  "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378",
+    "partSize":  47185920,
+    "parts":  [
+                  {
+                      "name":  "depth_anything_v2_vits.pth.part001",
+                      "size":  47185920,
+                      "sha256":  "61dd2344af483b14cb076b8eaa37e76cfd9275e1a6ed7cd4f2f2e0650a89f075"
+                  },
+                  {
+                      "name":  "depth_anything_v2_vits.pth.part002",
+                      "size":  47185920,
+                      "sha256":  "c9bb4959396c69c94e25e54e042bb2fc121180e645eeb37fbcd305b5019e2dae"
+                  },
+                  {
+                      "name":  "depth_anything_v2_vits.pth.part003",
+                      "size":  4846594,
+                      "sha256":  "957c7e73411d568510842f221790b870de88a9bb571a20f0e9d545e95dcf1c5b"
+                  }
+              ]
+}

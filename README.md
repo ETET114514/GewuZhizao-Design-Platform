@@ -22,11 +22,11 @@ start-floorplan-ai-service.bat
 Optional model files:
 
 ```text
-models/deepfloorplan.onnx
-models/floorplan-unet.onnx
-models/cubicasa5k.onnx
-models/cubicasa5k.pth
-models/model_best_val_loss_var.pkl
+建筑平面生成能力/models/deepfloorplan.onnx
+建筑平面生成能力/models/floorplan-unet.onnx
+建筑平面生成能力/models/cubicasa5k.onnx
+建筑平面生成能力/models/cubicasa5k.pth
+建筑平面生成能力/models/model_best_val_loss_var.pkl
 ```
 
 The app now requests the `cubicasa` provider by default. A complete CubiCasa5K floor-plan checkpoint
@@ -39,6 +39,26 @@ the only model file present, the service reports that in `debug.model` and retur
 
 Use `现场图片` to upload one or more JPG / PNG / WEBP photos from the job site, then click `生成展示模型`.
 The current version automatically matches photos to model surfaces, reads rough content signals from each photo, then creates an approximate presentation model in the browser: room shell, reference photo walls, ceiling/floor/wall colors, window and door hints, and furniture blocks optimized from the detected photo content.
+
+## Site photo depth model
+
+Depth Anything V2 Small is stored under:
+
+```text
+建筑平面生成能力/models/depth-anything-v2-small/depth_anything_v2_vits.pth
+```
+
+Run local depth inference with:
+
+```powershell
+.\.venv-depth\Scripts\python.exe tools\run_depth_anything_v2_small.py path\to\site-photo.jpg
+```
+
+The script writes normalized grayscale and color depth PNGs to:
+
+```text
+datasets/site_photos/derived/depth/
+```
 
 ## TRELLIS.2 integration
 

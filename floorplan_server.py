@@ -11,25 +11,39 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
+FLOORPLAN_APP_ROOT = ROOT / "\u5efa\u7b51\u5e73\u9762\u751f\u6210\u80fd\u529b"
+FLOORPLAN_MODEL_ROOT = FLOORPLAN_APP_ROOT / "models"
 CUBICASA_ROOT = ROOT / "third_party" / "CubiCasa5k"
 CUBICASA_BACKBONE_PATH = CUBICASA_ROOT / "floortrans" / "models" / "model_1427.pth"
 MODEL_CANDIDATES = [
+    FLOORPLAN_MODEL_ROOT / "wall-segmentation.onnx",
     ROOT / "models" / "wall-segmentation.onnx",
     ROOT / "floorplan_models" / "wall-segmentation.onnx",
 ]
 RECOGNITION_MODEL_CANDIDATES = {
     "deepfloorplan": [
+        FLOORPLAN_MODEL_ROOT / "deepfloorplan.onnx",
+        FLOORPLAN_MODEL_ROOT / "deepfloorplan.pt",
         ROOT / "models" / "deepfloorplan.onnx",
         ROOT / "floorplan_models" / "deepfloorplan.onnx",
         ROOT / "models" / "deepfloorplan.pt",
     ],
     "unet": [
+        FLOORPLAN_MODEL_ROOT / "floorplan-unet.onnx",
+        FLOORPLAN_MODEL_ROOT / "unet-floorplan.onnx",
+        FLOORPLAN_MODEL_ROOT / "floorplan-unet.pt",
         ROOT / "models" / "floorplan-unet.onnx",
         ROOT / "models" / "unet-floorplan.onnx",
         ROOT / "floorplan_models" / "floorplan-unet.onnx",
         ROOT / "models" / "floorplan-unet.pt",
     ],
     "cubicasa": [
+        FLOORPLAN_MODEL_ROOT / "cubicasa5k.onnx",
+        FLOORPLAN_MODEL_ROOT / "cubicasa5k-floorplan.onnx",
+        FLOORPLAN_MODEL_ROOT / "cubicasa5k.pth",
+        FLOORPLAN_MODEL_ROOT / "cubicasa5k.pt",
+        FLOORPLAN_MODEL_ROOT / "cubicasa5k.pkl",
+        FLOORPLAN_MODEL_ROOT / "model_best_val_loss_var.pkl",
         ROOT / "models" / "cubicasa5k.onnx",
         ROOT / "models" / "cubicasa5k-floorplan.onnx",
         ROOT / "models" / "cubicasa5k.pth",
@@ -453,7 +467,7 @@ def infer_recognition_masks(image, provider, cv2, np):
             "name": "cubicasa5k-backbone-only",
             "active": False,
             "status": "missing-floorplan-checkpoint",
-            "message": "CubiCasa5K backbone is present, but a trained floor-plan checkpoint is required at models/cubicasa5k.pth or models/model_best_val_loss_var.pkl.",
+            "message": "CubiCasa5K backbone is present, but a trained floor-plan checkpoint is required under 建筑平面生成能力/models.",
         }
     masks = fallback_recognition_masks(image, cv2, np)
     return masks, "opencv-fallback", {"path": None, "name": "opencv-fallback", "active": False}

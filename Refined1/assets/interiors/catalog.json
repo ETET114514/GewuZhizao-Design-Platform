@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "gewu-interior-catalog-v1",
+  "name": "Refined1 Interior Catalog",
+  "units": "millimeters",
+  "categories": [
+    { "id": "furniture", "label": "家具" },
+    { "id": "seating", "label": "座椅沙发" },
+    { "id": "tables", "label": "桌台" },
+    { "id": "beds", "label": "床具" },
+    { "id": "storage", "label": "柜体收纳" },
+    { "id": "kitchen", "label": "厨房设施" },
+    { "id": "sanitary", "label": "卫浴洁具" },
+    { "id": "appliance", "label": "家用电器" },
+    { "id": "lighting", "label": "灯具照明" },
+    { "id": "electronics", "label": "智能影音" },
+    { "id": "textile", "label": "软装织物" },
+    { "id": "decor", "label": "装饰陈设" },
+    { "id": "greenery", "label": "绿植" },
+    { "id": "office", "label": "办公用品" },
+    { "id": "fitness", "label": "健身器材" },
+    { "id": "children", "label": "儿童用品" },
+    { "id": "pet", "label": "宠物用品" },
+    { "id": "hvac", "label": "暖通设备" },
+    { "id": "hardware", "label": "五金配件" },
+    { "id": "window", "label": "门窗构件" },
+    { "id": "custom", "label": "其他内饰" }
+  ],
+  "assets": []
+}

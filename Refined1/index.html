@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>建筑平面生成能力</title>
+    <link rel="stylesheet" href="./styles.css?v=20260722-lighting1" />
+  </head>
+  <body class="mode-launch">
+    <section id="modeLauncher" class="mode-launcher" aria-label="选择使用方式">
+      <div class="launch-panel">
+        <div class="launch-copy">
+          <span class="eyebrow">建筑平面生成能力</span>
+          <h1>选择你想进入的操作界面</h1>
+          <p>同一套识别、生成、保存和导出逻辑；只是把操作方式分成新手对话和完整参数两种入口。</p>
+        </div>
+        <div class="mode-options">
+          <button id="beginnerModeButton" class="mode-card recommended" type="button">
+            <span>适合装修小白</span>
+            <strong>对话界面</strong>
+            <small>像 ChatGPT 一样，一步步带你上传图纸、选择识别方式、检查结果并导出。</small>
+          </button>
+          <button id="advancedModeButton" class="mode-card" type="button">
+            <span>适合有基础的人</span>
+            <strong>详细界面</strong>
+            <small>保留当前参数、线框、构件编辑、测量、标定和 3D 视图的完整工具。</small>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>建筑平面生成能力</h1>
+          <p>上传建筑平面图，生成墙体线框、交点、门洞、墙垛和闭合房间。</p>
+        </div>
+        <div class="actions">
+          <button id="modeSwitchButton" type="button">切换入口</button>
+          <button id="uploadButton" type="button">上传平面图</button>
+          <button id="demoButton" type="button">加载样例</button>
+          <button id="saveProjectButton" type="button" disabled>保存项目</button>
+          <button id="openProjectButton" type="button">打开项目</button>
+          <button id="exportJsonButton" type="button" disabled>导出 JSON</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <section id="beginnerChat" class="beginner-chat" aria-label="对话式操作">
+          <header class="chat-top">
+            <div>
+              <span class="eyebrow">对话界面</span>
+              <h2>我来带你生成建筑平面结果</h2>
+            </div>
+          </header>
+
+          <div class="phone-preview" aria-label="实时画布预览">
+            <canvas id="phonePreviewCanvas" width="320" height="220" tabindex="0"></canvas>
+            <span id="phonePreviewLabel">等待图纸</span>
+          </div>
+
+          <div id="phoneChatResizer" class="phone-chat-resizer" role="separator" aria-orientation="horizontal" aria-label="调整画布和对话区高度" tabindex="0"></div>
+
+          <div class="assistant-intro">
+            <div class="assistant-avatar">AI</div>
+            <div>
+              <strong>你只要像聊天一样告诉我想做什么。</strong>
+              <p>例如输入“帮我上传图纸”“先加载样例”“用 AI/CV 识别”“导出 JSON”“进入详细界面”。我会调用同一套识别和编辑逻辑完成操作。</p>
+            </div>
+          </div>
+
+          <div class="beginner-summary" aria-live="polite">
+            <div>
+              <span>当前状态</span>
+              <strong id="chatStatusText">待上传</strong>
+            </div>
+            <div>
+              <span>图纸</span>
+              <strong id="chatImageText">还没有图纸</strong>
+            </div>
+            <div>
+              <span>识别结果</span>
+              <strong id="chatWallText">0 条墙线</strong>
+            </div>
+            <div>
+              <span>空间</span>
+              <strong id="chatRoomText">0 个房间</strong>
+            </div>
+            <div>
+              <span>门窗洞口</span>
+              <strong id="chatOpeningText">0 个</strong>
+            </div>
+            <div>
+              <span>识别方式</span>
+              <strong id="chatModeText">普通识别</strong>
+            </div>
+          </div>
+
+          <div id="chatMessages" class="chat-messages" aria-live="polite">
+            <article class="chat-message assistant">
+              <span>助手</span>
+              <p>你好，我会用装修小白能理解的话来带你操作。你可以直接输入“帮我上传图纸”，或者输入“加载样例”先体验完整流程。</p>
+            </article>
+          </div>
+
+          <form id="chatForm" class="chat-composer">
+            <input id="chatInput" type="text" autocomplete="off" placeholder="输入一句话，例如：帮我上传图纸 / 加载样例 / 用AI识别 / 导出JSON" />
+            <button id="voiceToggleButton" class="voice-toggle" type="button" aria-pressed="false" title="语音输入">语音</button>
+            <button type="submit">发送</button>
+          </form>
+        </section>
+
+        <aside class="panel">
+          <div class="panel-title">
+            <h2>参数</h2>
+            <span id="statusPill">待上传</span>
+          </div>
+
+          <label class="native-upload">
+            备用上传
+            <input id="nativeFileInput" type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" />
+          </label>
+          <input id="fileInput" class="hidden-input" type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" />
+          <input id="projectFileInput" class="hidden-input" type="file" accept=".json,application/json" />
+
+          <label class="control">
+            <span>墙体阈值</span>
+            <input id="thresholdRange" type="range" min="70" max="220" value="145" />
+            <output id="thresholdValue">145</output>
+          </label>
+          <label class="select-control">
+            <span>识别方式</span>
+            <select id="recognitionModeSelect">
+              <option value="deep-learning" selected>智能读图 / 深度学习</option>
+              <option value="ai-cv">AI/CV 分割</option>
+              <option value="browser">浏览器规则</option>
+            </select>
+            <small class="recognition-hint">已接入 CubiCasa5K 深度学习读图，上传后优先调用本地模型服务。</small>
+          </label>
+          <label class="control">
+            <span>最短墙线</span>
+            <input id="minLengthRange" type="range" min="18" max="160" value="84" />
+            <output id="minLengthValue">508 mm</output>
+          </label>
+          <label class="control">
+            <span>合并间距</span>
+            <input id="mergeGapRange" type="range" min="2" max="40" value="6" />
+            <output id="mergeGapValue">71 mm</output>
+          </label>
+          <label class="control">
+            <span>最大墙厚</span>
+            <input id="maxThicknessRange" type="range" min="8" max="64" value="42" />
+            <output id="maxThicknessValue">240 mm</output>
+          </label>
+          <div class="scale-readout">
+            <span>比例估算</span>
+            <strong id="scaleValue">外墙 100-240 mm</strong>
+            <small class="snap-readout">端点粘连 <= 50 mm</small>
+            <small class="snap-readout">手画短墙 >= 20 mm</small>
+            <div class="scale-calibration">
+              <input id="calibrationLengthInput" type="number" min="100" step="100" value="3000" aria-label="标定线实际长度，单位毫米" />
+              <button id="calibrateScaleButton" type="button">标定比例</button>
+            </div>
+          </div>
+          <label class="switch-control">
+            <span>去噪过滤</span>
+            <input id="denoiseToggle" type="checkbox" checked />
+          </label>
+          <label class="control">
+            <span>噪点面积</span>
+            <input id="minNoiseAreaRange" type="range" min="4" max="300" value="220" />
+            <output id="minNoiseAreaValue">4783 mm²</output>
+          </label>
+          <label class="control">
+            <span>最小墙厚</span>
+            <input id="minWallThicknessRange" type="range" min="2" max="24" value="4" />
+            <output id="minWallThicknessValue">100 mm</output>
+          </label>
+          <label class="control">
+            <span>门洞最小</span>
+            <input id="openingMinWidthRange" type="range" min="8" max="120" value="22" />
+            <output id="openingMinWidthValue">155 mm</output>
+          </label>
+          <label class="control">
+            <span>门洞最大</span>
+            <input id="openingMaxWidthRange" type="range" min="32" max="180" value="96" />
+            <output id="openingMaxWidthValue">678 mm</output>
+          </label>
+
+          <div class="stats-grid">
+            <div><span>图像</span><strong id="imageStat">-</strong></div>
+            <div><span>墙线</span><strong id="lineStat">0</strong></div>
+            <div><span>水平</span><strong id="horizontalStat">0</strong></div>
+            <div><span>垂直</span><strong id="verticalStat">0</strong></div>
+            <div><span>去噪像素</span><strong id="noiseStat">0</strong></div>
+            <div><span>交点</span><strong id="intersectionStat">0</strong></div>
+            <div><span>断点</span><strong id="breakStat">0</strong></div>
+            <div><span>门洞</span><strong id="openingStat">0</strong></div>
+            <div><span>墙垛</span><strong id="pierStat">0</strong></div>
+            <div><span>闭合房间</span><strong id="roomStat">0</strong></div>
+            <div><span>模式</span><strong id="modeStat">-</strong></div>
+          </div>
+
+          <button id="processButton" type="button" disabled>重新生成</button>
+        </aside>
+
+        <section class="stage">
+          <div class="stage-header">
+            <div class="tabs">
+              <button class="tab active" id="overlayTab" type="button">叠加</button>
+              <button class="tab" id="vectorTab" type="button">线框</button>
+            </div>
+            <button id="drawWallButton" class="tool-button" type="button">画墙</button>
+            <button id="drawDoorButton" class="tool-button" type="button">门</button>
+            <button id="drawWindowButton" class="tool-button" type="button">窗</button>
+            <button id="drawRailingButton" class="tool-button" type="button">栏杆</button>
+            <button id="openInteriorLibraryButton" class="tool-button" type="button">内饰资源库</button>
+            <button id="calibrateToolButton" class="tool-button" type="button">标定比例</button>
+            <button id="measureToolButton" class="tool-button" type="button">测量</button>
+            <input id="productModelInput" class="hidden-input" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" />
+            <input id="interiorCatalogInput" class="hidden-input" type="file" accept=".json,application/json" />
+            <div class="legend">
+              <span><i class="wall-swatch"></i>墙体</span>
+              <span><i class="center-swatch"></i>中心线</span>
+              <span><i class="node-swatch"></i>交点</span>
+              <span><i class="break-swatch"></i>断点</span>
+              <span><i class="opening-swatch"></i>门洞</span>
+              <span><i class="window-swatch"></i>窗洞</span>
+              <span><i class="generic-opening-swatch"></i>开口</span>
+              <span><i class="uncertain-opening-swatch"></i>疑似</span>
+              <span><i class="railing-swatch"></i>栏杆</span>
+              <span><i class="pier-swatch"></i>墙垛</span>
+              <span><i class="room-swatch"></i>房间</span>
+            </div>
+          </div>
+          <div id="canvasWrap" class="canvas-wrap">
+            <canvas id="previewCanvas" width="1200" height="820"></canvas>
+            <div id="emptyState" class="empty-state">
+              <strong>建筑平面图</strong>
+              <span>PNG / JPG / WebP / SVG，或拖到这里</span>
+            </div>
+            <section id="selectedComponentCard" class="component-card" hidden>
+              <div class="component-title">
+                <span>当前构件</span>
+                <strong id="selectedComponentTitle">未选择</strong>
+              </div>
+              <dl class="component-grid">
+                <div>
+                  <dt>类型</dt>
+                  <dd id="selectedComponentType">-</dd>
+                  <select id="selectedOpeningVariantSelect" class="component-select" hidden>
+                    <option value="door">门</option>
+                    <option value="window">窗</option>
+                    <option value="high-window">高窗</option>
+                    <option value="floor-window">落地窗</option>
+                    <option value="bay-window">飘窗</option>
+                    <option value="opening">开口</option>
+                  </select>
+                </div>
+                <div><dt>方向</dt><dd id="selectedComponentOrientation">-</dd></div>
+                <div>
+                  <dt id="selectedComponentLengthLabel">长度</dt>
+                  <dd class="component-edit">
+                    <input id="selectedComponentLengthInput" class="component-input" type="number" min="1" step="10" disabled />
+                    <span>mm</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt id="selectedComponentThicknessLabel">厚度</dt>
+                  <dd class="component-edit">
+                    <input id="selectedComponentThicknessInput" class="component-input" type="number" min="1" step="10" disabled />
+                    <span>mm</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt id="selectedComponentHeightLabel">高度</dt>
+                  <dd class="component-edit">
+                    <input id="selectedComponentHeightInput" class="component-input" type="number" min="100" step="50" disabled />
+                    <span>mm</span>
+                  </dd>
+                </div>
+                <div><dt>坐标</dt><dd id="selectedComponentCoords">-</dd></div>
+              </dl>
+              <button id="selectedDeleteComponentButton" class="component-delete-button" type="button">删除构件</button>
+            </section>
+          </div>
+
+          <section class="model-window">
+            <div class="model-header">
+              <h2>3D 模型</h2>
+              <div class="model-actions">
+                <button id="threeRoamButton" type="button">漫游</button>
+                <span id="threeStat">0 墙体</span>
+                <button id="threeLightingButton" type="button">灯光</button>
+                <button id="threeRenderButton" type="button">渲染</button>
+                <button id="threeResetButton" type="button">重置视角</button>
+              </div>
+            </div>
+            <div id="threeViewport" class="three-viewport" tabindex="0">
+              <section id="threeComponentCard" class="component-card three-component-card" hidden>
+                <div class="component-title">
+                  <span>3D 构件</span>
+                  <strong id="threeComponentTitle">未选择</strong>
+                </div>
+                <dl class="component-grid">
+                  <div>
+                    <dt>类型</dt>
+                    <dd id="threeComponentType">-</dd>
+                    <select id="threeOpeningVariantSelect" class="component-select" hidden>
+                      <option value="door">门</option>
+                      <option value="window">窗</option>
+                      <option value="high-window">高窗</option>
+                      <option value="floor-window">落地窗</option>
+                      <option value="bay-window">飘窗</option>
+                      <option value="opening">开口</option>
+                    </select>
+                  </div>
+                  <div><dt>方向</dt><dd id="threeComponentOrientation">-</dd></div>
+                  <div>
+                    <dt id="threeComponentLengthLabel">长度</dt>
+                    <dd class="component-edit">
+                      <input id="threeComponentLengthInput" class="component-input" type="number" min="1" step="10" disabled />
+                      <span>mm</span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt id="threeComponentThicknessLabel">厚度</dt>
+                    <dd class="component-edit">
+                      <input id="threeComponentThicknessInput" class="component-input" type="number" min="1" step="10" disabled />
+                      <span>mm</span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt id="threeComponentHeightLabel">高度</dt>
+                    <dd class="component-edit">
+                      <input id="threeComponentHeightInput" class="component-input" type="number" min="100" step="50" disabled />
+                      <span>mm</span>
+                    </dd>
+                  </div>
+                  <div><dt>坐标</dt><dd id="threeComponentCoords">-</dd></div>
+                </dl>
+                <button id="threeDeleteComponentButton" class="component-delete-button" type="button">删除构件</button>
+              </section>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+    <section id="threeRenderModal" class="render-modal" hidden role="dialog" aria-modal="true" aria-labelledby="threeRenderTitle">
+      <div class="render-dialog">
+        <div class="render-dialog-header">
+          <strong id="threeRenderTitle">3D 渲染画面</strong>
+          <button id="threeRenderCloseButton" class="render-close-button" type="button">退出</button>
+        </div>
+        <div class="render-preview-frame">
+          <img id="threeRenderImage" alt="3D 渲染画面" />
+        </div>
+        <div class="render-dialog-actions">
+          <button id="threeRenderSaveButton" type="button">保存</button>
+        </div>
+      </div>
+    </section>
+    <section id="lightingModal" class="lighting-modal" hidden role="dialog" aria-modal="true" aria-labelledby="lightingTitle">
+      <div class="lighting-dialog">
+        <div class="render-dialog-header">
+          <div>
+            <strong id="lightingTitle">灯光管理</strong>
+            <small>手动添加点光源或线光源；灯具资产会自动绑定点光源。</small>
+          </div>
+          <button id="lightingCloseButton" class="render-close-button" type="button">关闭</button>
+        </div>
+        <div class="lighting-toolbar">
+          <button id="addPointLightButton" type="button">添加点光源</button>
+          <button id="addLineLightButton" type="button">添加线光源</button>
+        </div>
+        <label class="lighting-source-picker">
+          <span>当前光源</span>
+          <select id="lightingSourceSelect"></select>
+        </label>
+        <div class="lighting-grid">
+          <label>
+            <span>名称</span>
+            <input id="lightingNameInput" type="text" maxlength="80" />
+          </label>
+          <label class="lighting-check-field">
+            <input id="lightingEnabledInput" type="checkbox" checked />
+            <span>启用光源</span>
+          </label>
+          <label>
+            <span>颜色</span>
+            <input id="lightingColorInput" type="color" value="#ffffff" />
+          </label>
+          <label>
+            <span>色温</span>
+            <span class="lighting-unit-input"><input id="lightingTemperatureInput" type="number" min="1000" max="20000" step="100" value="3000" /><em>K</em></span>
+          </label>
+          <label>
+            <span>亮度</span>
+            <span class="lighting-unit-input"><input id="lightingBrightnessInput" type="number" min="0" max="100000" step="50" value="800" /><em>lm</em></span>
+          </label>
+          <label>
+            <span>高度</span>
+            <span class="lighting-unit-input"><input id="lightingHeightInput" type="number" min="50" max="20000" step="50" value="2400" /><em>mm</em></span>
+          </label>
+          <label>
+            <span>X 坐标</span>
+            <span class="lighting-unit-input"><input id="lightingXInput" type="number" step="10" /><em>mm</em></span>
+          </label>
+          <label>
+            <span>Y 坐标</span>
+            <span class="lighting-unit-input"><input id="lightingYInput" type="number" step="10" /><em>mm</em></span>
+          </label>
+          <label id="lightingLengthField">
+            <span>线光长度</span>
+            <span class="lighting-unit-input"><input id="lightingLengthInput" type="number" min="100" max="20000" step="100" value="1200" /><em>mm</em></span>
+          </label>
+          <label id="lightingRotationField">
+            <span>线光方向</span>
+            <span class="lighting-unit-input"><input id="lightingRotationInput" type="number" min="0" max="359" step="1" value="0" /><em>°</em></span>
+          </label>
+          <label class="lighting-check-field">
+            <input id="lightingShadowInput" type="checkbox" />
+            <span>投射局部阴影</span>
+          </label>
+        </div>
+        <p id="lightingAttachedNote" class="lighting-attached-note" hidden>该点光源已绑定灯具，位置会跟随灯具移动；请移动灯具来调整位置。</p>
+        <div class="lighting-footer">
+          <small>颜色作为色温光的染色值，两者会叠加；线光源由多个均匀分布的点光模拟。</small>
+          <button id="lightingDeleteButton" class="component-delete-button" type="button">删除光源</button>
+        </div>
+      </div>
+    </section>
+    <section id="interiorLibraryModal" class="interior-library-modal" hidden role="dialog" aria-modal="true" aria-labelledby="interiorLibraryTitle">
+      <div class="interior-library-dialog">
+        <div class="render-dialog-header">
+          <div>
+            <strong id="interiorLibraryTitle">内饰资源库</strong>
+            <small>推荐 GLB；资产尺寸和碰撞箱使用毫米。</small>
+          </div>
+          <button id="interiorLibraryCloseButton" class="render-close-button" type="button">关闭</button>
+        </div>
+        <div class="interior-library-grid">
+          <label>
+            <span>内饰分类</span>
+            <select id="interiorCategorySelect"></select>
+          </label>
+          <label>
+            <span>目录资产</span>
+            <select id="interiorAssetSelect"></select>
+          </label>
+        </div>
+        <p id="interiorLibraryStatus" class="interior-library-status">资产目录加载中</p>
+        <div class="interior-library-actions">
+          <button id="addInteriorAssetButton" type="button">添加所选资产</button>
+          <button id="addInteriorPlaceholderButton" type="button">添加分类占位件</button>
+          <button id="importInteriorModelButton" type="button">导入 GLB/GLTF</button>
+          <button id="importInteriorCatalogButton" type="button">导入目录 JSON</button>
+        </div>
+        <p class="interior-library-hint">模型稍后可放入 <code>assets/interiors/models/</code>，并在 <code>catalog.json</code> 注册。放置、移动、旋转和缩放都会检查碰撞。</p>
+      </div>
+    </section>
+    <script src="./app.js?v=20260722-lighting1"></script>
+  </body>
+</html>

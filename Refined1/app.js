@@ -63,6 +63,87 @@ const OPENING_VARIANTS = {
   "bay-window": { kind: "window", label: "飘窗", sill: 550, height: 1400, projection: 450 },
   opening: { kind: "opening", label: "开口", sill: 0, height: 2100 },
 };
+const ROOM_TYPE_DEFINITIONS = Object.freeze({
+  living: { label: "客厅" },
+  bedroom: { label: "卧室" },
+  kitchen: { label: "厨房" },
+  bathroom: { label: "卫生间" },
+  dining: { label: "餐厅" },
+  study: { label: "书房" },
+  balcony: { label: "阳台" },
+  storage: { label: "储物间" },
+  other: { label: "其他空间" },
+});
+const AUTO_LAYOUT_PRESETS = Object.freeze({
+  basic: {
+    label: "基础布置",
+    description: "只放置每种房间最必要的核心家具，保持空间简洁。",
+    clearanceMillimeters: 140,
+  },
+  rental: {
+    label: "出租房",
+    description: "使用更紧凑的家具和较少的数量，优先满足睡眠、用餐与收纳。",
+    clearanceMillimeters: 100,
+  },
+  family: {
+    label: "家庭居住",
+    description: "提供更完整的家具组合，并保留更宽的门前空间和家具间距。",
+    clearanceMillimeters: 220,
+  },
+});
+const AUTO_LAYOUT_ITEM_LIBRARY = Object.freeze({
+  "single-bed": { name: "单人床", category: "beds", productSubtype: "bed", dimensions: [1200, 2000, 550], anchor: "long-wall" },
+  "double-bed": { name: "双人床", category: "beds", productSubtype: "bed", dimensions: [1600, 2100, 600], anchor: "long-wall" },
+  nightstand: { name: "床头柜", category: "tables", productSubtype: "nightstand", dimensions: [450, 420, 520], anchor: "corner" },
+  "compact-sofa": { name: "双人沙发", category: "seating", productSubtype: "sofa", dimensions: [1500, 780, 820], anchor: "long-wall" },
+  sofa: { name: "三人沙发", category: "seating", productSubtype: "sofa", dimensions: [1900, 850, 850], anchor: "long-wall" },
+  "family-sofa": { name: "家庭沙发", category: "seating", productSubtype: "sofa", dimensions: [2200, 900, 880], anchor: "long-wall" },
+  "coffee-table": { name: "茶几", category: "tables", productSubtype: "coffee-table", dimensions: [1000, 550, 450], anchor: "center" },
+  tv: { name: "电视柜", category: "electronics", productSubtype: "tv-console", dimensions: [1500, 320, 580], anchor: "wall" },
+  wardrobe: { name: "衣柜", category: "storage", productSubtype: "wardrobe", dimensions: [1600, 600, 2200], anchor: "wall" },
+  "storage-cabinet": { name: "收纳柜", category: "storage", productSubtype: "cabinet", dimensions: [1200, 450, 1800], anchor: "wall" },
+  "compact-dining-table": { name: "小餐桌", category: "tables", productSubtype: "dining-table", dimensions: [800, 700, 750], anchor: "center" },
+  "dining-table": { name: "餐桌", category: "tables", productSubtype: "dining-table", dimensions: [1200, 750, 750], anchor: "center" },
+  "family-dining-table": { name: "家庭餐桌", category: "tables", productSubtype: "dining-table", dimensions: [1600, 850, 750], anchor: "center" },
+  chair: { name: "餐椅", category: "seating", productSubtype: "chair", dimensions: [480, 500, 850], anchor: "center-ring" },
+  "kitchen-cabinet": { name: "橱柜", category: "kitchen", productSubtype: "cabinet", dimensions: [1800, 600, 900], anchor: "long-wall" },
+  "compact-kitchen-cabinet": { name: "紧凑橱柜", category: "kitchen", productSubtype: "cabinet", dimensions: [1200, 580, 900], anchor: "long-wall" },
+  fridge: { name: "冰箱", category: "appliance", productSubtype: "fridge", dimensions: [700, 700, 1800], anchor: "corner" },
+  sanitary: { name: "卫浴组合", category: "sanitary", productSubtype: "sanitary", dimensions: [900, 650, 850], anchor: "wall" },
+  desk: { name: "书桌", category: "office", productSubtype: "desk", dimensions: [1400, 700, 760], anchor: "long-wall" },
+  "compact-desk": { name: "紧凑书桌", category: "office", productSubtype: "desk", dimensions: [1000, 600, 760], anchor: "long-wall" },
+  bookcase: { name: "书柜", category: "storage", productSubtype: "bookcase", dimensions: [1000, 350, 2000], anchor: "wall" },
+  greenery: { name: "绿植", category: "greenery", productSubtype: "greenery", dimensions: [500, 500, 1200], anchor: "corner" },
+});
+const AUTO_LAYOUT_ROOM_TEMPLATES = Object.freeze({
+  living: {
+    basic: ["sofa", "tv"], rental: ["compact-sofa", "coffee-table"], family: ["family-sofa", "coffee-table", "tv", "storage-cabinet"],
+  },
+  bedroom: {
+    basic: ["double-bed", "wardrobe"], rental: ["single-bed", "wardrobe"], family: ["double-bed", "wardrobe", "nightstand", "nightstand"],
+  },
+  kitchen: {
+    basic: ["kitchen-cabinet", "fridge"], rental: ["compact-kitchen-cabinet", "fridge"], family: ["kitchen-cabinet", "fridge", "storage-cabinet"],
+  },
+  bathroom: {
+    basic: ["sanitary"], rental: ["sanitary"], family: ["sanitary", "storage-cabinet"],
+  },
+  dining: {
+    basic: ["dining-table"], rental: ["compact-dining-table", "chair", "chair"], family: ["family-dining-table", "chair", "chair", "chair", "chair"],
+  },
+  study: {
+    basic: ["desk", "chair"], rental: ["compact-desk", "chair"], family: ["desk", "chair", "bookcase"],
+  },
+  balcony: {
+    basic: ["greenery"], rental: ["compact-dining-table", "chair"], family: ["compact-dining-table", "chair", "chair", "greenery"],
+  },
+  storage: {
+    basic: ["storage-cabinet"], rental: ["storage-cabinet"], family: ["storage-cabinet", "storage-cabinet"],
+  },
+  other: {
+    basic: ["compact-sofa"], rental: ["compact-desk", "chair"], family: ["sofa", "coffee-table"],
+  },
+});
 
 const elements = {
   fileInput: document.querySelector("#fileInput"),
@@ -130,6 +211,18 @@ const elements = {
   drawWindowButton: document.querySelector("#drawWindowButton"),
   drawRailingButton: document.querySelector("#drawRailingButton"),
   openInteriorLibraryButton: document.querySelector("#openInteriorLibraryButton"),
+  autoLayoutButton: document.querySelector("#autoLayoutButton"),
+  autoLayoutModal: document.querySelector("#autoLayoutModal"),
+  autoLayoutCloseButton: document.querySelector("#autoLayoutCloseButton"),
+  autoLayoutPresetSelect: document.querySelector("#autoLayoutPresetSelect"),
+  autoLayoutPresetTitle: document.querySelector("#autoLayoutPresetTitle"),
+  autoLayoutPresetDescription: document.querySelector("#autoLayoutPresetDescription"),
+  autoLayoutRoomCount: document.querySelector("#autoLayoutRoomCount"),
+  autoLayoutProductCount: document.querySelector("#autoLayoutProductCount"),
+  autoLayoutReplaceInput: document.querySelector("#autoLayoutReplaceInput"),
+  autoLayoutStatus: document.querySelector("#autoLayoutStatus"),
+  clearAutoLayoutButton: document.querySelector("#clearAutoLayoutButton"),
+  generateAutoLayoutButton: document.querySelector("#generateAutoLayoutButton"),
   productModelInput: document.querySelector("#productModelInput"),
   interiorCatalogInput: document.querySelector("#interiorCatalogInput"),
   interiorLibraryModal: document.querySelector("#interiorLibraryModal"),
@@ -143,6 +236,22 @@ const elements = {
   importInteriorCatalogButton: document.querySelector("#importInteriorCatalogButton"),
   calibrateToolButton: document.querySelector("#calibrateToolButton"),
   measureToolButton: document.querySelector("#measureToolButton"),
+  roomInfoToggleButton: document.querySelector("#roomInfoToggleButton"),
+  roomEditorButton: document.querySelector("#roomEditorButton"),
+  roomEditorModal: document.querySelector("#roomEditorModal"),
+  roomEditorCloseButton: document.querySelector("#roomEditorCloseButton"),
+  roomEditorSelect: document.querySelector("#roomEditorSelect"),
+  roomNameInput: document.querySelector("#roomNameInput"),
+  roomTypeSelect: document.querySelector("#roomTypeSelect"),
+  roomAreaInput: document.querySelector("#roomAreaInput"),
+  roomInferenceInput: document.querySelector("#roomInferenceInput"),
+  roomTopWallLength: document.querySelector("#roomTopWallLength"),
+  roomRightWallLength: document.querySelector("#roomRightWallLength"),
+  roomBottomWallLength: document.querySelector("#roomBottomWallLength"),
+  roomLeftWallLength: document.querySelector("#roomLeftWallLength"),
+  roomWallSegmentList: document.querySelector("#roomWallSegmentList"),
+  roomResetInferenceButton: document.querySelector("#roomResetInferenceButton"),
+  roomSaveButton: document.querySelector("#roomSaveButton"),
   threeViewport: document.querySelector("#threeViewport"),
   threeStat: document.querySelector("#threeStat"),
   threeRoamButton: document.querySelector("#threeRoamButton"),
@@ -193,6 +302,10 @@ const state = {
   maskImage: null,
   lines: [],
   topology: createEmptyTopology(),
+  roomMetadata: [],
+  selectedRoomId: null,
+  roomInfoVisible: true,
+  autoLayoutPreset: "basic",
   selectedLineIndex: null,
   selectedOpeningIndex: null,
   selectedOpeningId: null,
@@ -270,6 +383,7 @@ const state = {
     wallsGroup: null,
     productsGroup: null,
     lightSourcesGroup: null,
+    roomLabelsGroup: null,
     gltfLoaderClass: null,
     readyPromise: null,
     floor: null,
@@ -387,6 +501,241 @@ function formatSquareMillimeters(value) {
   return `${Math.round(value)} mm2`;
 }
 
+function roomTypeLabel(type) {
+  return ROOM_TYPE_DEFINITIONS[type]?.label || ROOM_TYPE_DEFINITIONS.other.label;
+}
+
+function cloneRoomMetadata(room) {
+  return {
+    id: room.id,
+    x: room.x,
+    y: room.y,
+    width: room.width,
+    height: room.height,
+    area: room.area,
+    areaSquareMeters: room.areaSquareMeters,
+    polygon: (room.polygon || []).map((point) => ({ x: point.x, y: point.y })),
+    center: room.center ? { x: room.center.x, y: room.center.y } : null,
+    wallSegments: (room.wallSegments || []).map((segment) => ({ ...segment })),
+    wallLengthsMillimeters: {
+      ...(room.wallLengthsMillimeters || {}),
+      segments: (room.wallLengthsMillimeters?.segments || []).map((segment) => ({ ...segment })),
+    },
+    type: room.type,
+    name: room.name,
+    typeSource: room.typeSource,
+    nameSource: room.nameSource,
+    inferenceReason: room.inferenceReason,
+  };
+}
+
+function roomAreaSquareMeters(room, settings = getSettings()) {
+  const pixelArea = Number.isFinite(Number(room.area)) ? Number(room.area) : Math.max(0, room.width * room.height);
+  return pxAreaToSquareMillimeters(Math.max(0, pixelArea), settings) / 1000000;
+}
+
+function roomWallLengthsMillimeters(room, settings = getSettings()) {
+  const polygon = roomPolygon(room);
+  const segments = polygon.length >= 3
+    ? polygon.map((point, index) => {
+      const next = polygon[(index + 1) % polygon.length];
+      const pixelLength = distance(point, next);
+      return {
+        index: index + 1,
+        x1: point.x,
+        y1: point.y,
+        x2: next.x,
+        y2: next.y,
+        orientation: Math.abs(next.x - point.x) >= Math.abs(next.y - point.y) ? "horizontal" : "vertical",
+        length: round(pixelLength),
+        lengthMillimeters: round(pxToMillimeters(pixelLength, settings)),
+      };
+    })
+    : [];
+  if (!segments.length) {
+    const horizontal = round(pxToMillimeters(Math.max(0, room.width), settings));
+    const vertical = round(pxToMillimeters(Math.max(0, room.height), settings));
+    return { top: horizontal, right: vertical, bottom: horizontal, left: vertical, segments: [] };
+  }
+  const totals = { top: 0, right: 0, bottom: 0, left: 0 };
+  for (const segment of segments) {
+    if (segment.orientation === "horizontal") {
+      totals[segment.x2 >= segment.x1 ? "top" : "bottom"] += segment.lengthMillimeters;
+    } else {
+      totals[segment.y2 >= segment.y1 ? "right" : "left"] += segment.lengthMillimeters;
+    }
+  }
+  return {
+    top: round(totals.top),
+    right: round(totals.right),
+    bottom: round(totals.bottom),
+    left: round(totals.left),
+    segments,
+  };
+}
+
+function roomPolygon(room) {
+  if (Array.isArray(room?.polygon) && room.polygon.length >= 3) return room.polygon;
+  if (!room) return [];
+  return [
+    { x: room.x, y: room.y },
+    { x: room.x + room.width, y: room.y },
+    { x: room.x + room.width, y: room.y + room.height },
+    { x: room.x, y: room.y + room.height },
+  ];
+}
+
+function polygonSignedArea(polygon) {
+  let twiceArea = 0;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const point = polygon[index];
+    const next = polygon[(index + 1) % polygon.length];
+    twiceArea += point.x * next.y - next.x * point.y;
+  }
+  return twiceArea / 2;
+}
+
+function pointOnSegment(point, segment, tolerance = 0.001) {
+  if (distanceToSegment(point, segment) > tolerance) return false;
+  return point.x >= Math.min(segment.x1, segment.x2) - tolerance
+    && point.x <= Math.max(segment.x1, segment.x2) + tolerance
+    && point.y >= Math.min(segment.y1, segment.y2) - tolerance
+    && point.y <= Math.max(segment.y1, segment.y2) + tolerance;
+}
+
+function pointInRoomPolygon(point, room, includeBoundary = true) {
+  const polygon = roomPolygon(room);
+  if (polygon.length < 3) return false;
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const a = polygon[previous];
+    const b = polygon[index];
+    if (includeBoundary && pointOnSegment(point, { x1: a.x, y1: a.y, x2: b.x, y2: b.y }, 0.02)) return true;
+    const crosses = (a.y > point.y) !== (b.y > point.y)
+      && point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function roomInteriorPoint(room) {
+  if (room?.center && pointInRoomPolygon(room.center, room)) return room.center;
+  return { x: room.x + room.width / 2, y: room.y + room.height / 2 };
+}
+
+function formatRoomWallLength(millimeters) {
+  const value = Math.max(0, Number(millimeters) || 0);
+  if (value >= 1000) return `${(value / 1000).toFixed(2)} m`;
+  return `${Math.round(value)} mm`;
+}
+
+function roomOpeningProfile(room, openings, settings = getSettings()) {
+  const tolerance = Math.max(settings.mergeGap, settings.minWallThickness, 6);
+  const profile = { doors: 0, windows: 0, openings: 0 };
+  const boundary = roomWallLengthsMillimeters(room, settings).segments;
+  for (const opening of openings || []) {
+    const centerX = (Number(opening.x1) + Number(opening.x2)) / 2;
+    const centerY = (Number(opening.y1) + Number(opening.y2)) / 2;
+    if (!boundary.some((segment) => distanceToSegment({ x: centerX, y: centerY }, segment) <= tolerance)) continue;
+    const variant = openingVariantDefinition(opening);
+    if (variant.kind === "door") profile.doors += 1;
+    else if (variant.kind === "window") profile.windows += 1;
+    else profile.openings += 1;
+  }
+  return profile;
+}
+
+function inferRoomType(room, rooms, openings, settings = getSettings()) {
+  const area = roomAreaSquareMeters(room, settings);
+  const shortest = Math.max(1, Math.min(room.width, room.height));
+  const aspectRatio = Math.max(room.width, room.height) / shortest;
+  const largestArea = Math.max(0, ...rooms.map((candidate) => roomAreaSquareMeters(candidate, settings)));
+  const profile = roomOpeningProfile(room, openings, settings);
+
+  if (area >= 12 && area >= largestArea * 0.92) return { type: "living", reason: "面积最大且适合作为公共活动空间" };
+  if (aspectRatio >= 3 && profile.windows > 0 && area <= 10) return { type: "balcony", reason: "空间狭长并连接窗洞" };
+  if (area <= 2.8) return { type: "storage", reason: "面积较小，适合作为储物空间" };
+  if (area <= 6 && profile.windows === 0) return { type: "bathroom", reason: "面积较小且未检测到外窗" };
+  if (aspectRatio >= 2.1 && area <= 13) return { type: "kitchen", reason: "长宽比较大，适合沿墙布置厨具" };
+  if (area <= 6) return { type: "bathroom", reason: "面积落在常见卫浴空间范围" };
+  if (area >= 7 && profile.windows > 0) return { type: "bedroom", reason: "面积适中并检测到采光窗" };
+  if (area >= 10) return { type: "dining", reason: "面积适合作为餐厅或公共空间" };
+  if (area >= 6) return { type: "study", reason: "面积适合作为书房或多功能空间" };
+  return { type: "other", reason: "现有几何信息不足，建议手动确认" };
+}
+
+function roomOverlapRatio(left, right) {
+  const overlapWidth = Math.max(0, Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x));
+  const overlapHeight = Math.max(0, Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y));
+  const overlapArea = overlapWidth * overlapHeight;
+  return overlapArea / Math.max(1, Math.min(left.area || left.width * left.height, right.area || right.width * right.height));
+}
+
+function matchRoomMetadata(room, previous, usedIds) {
+  let best = null;
+  for (const candidate of previous || []) {
+    if (!candidate || usedIds.has(candidate.id)) continue;
+    const score = roomOverlapRatio(room, candidate);
+    if (!best || score > best.score) best = { candidate, score };
+  }
+  if (!best || best.score < 0.55) return null;
+  usedIds.add(best.candidate.id);
+  return best.candidate;
+}
+
+function reconcileRoomMetadata(previous = state.roomMetadata) {
+  const topology = state.topology || createEmptyTopology();
+  const rawRooms = Array.isArray(topology.rooms) ? topology.rooms : [];
+  const openings = Array.isArray(topology.openings) ? topology.openings : [];
+  const settings = getSettings();
+  const usedIds = new Set();
+  const reconciled = rawRooms.map((room, index) => {
+    const matched = matchRoomMetadata(room, previous, usedIds);
+    const inferred = inferRoomType(room, rawRooms, openings, settings);
+    const typeSource = matched?.typeSource === "manual" ? "manual" : "auto";
+    return {
+      id: matched?.id || room.id || `room-${index + 1}`,
+      x: room.x,
+      y: room.y,
+      width: room.width,
+      height: room.height,
+      polygon: roomPolygon(room).map((point) => ({ ...point })),
+      center: room.center ? { ...room.center } : roomInteriorPoint(room),
+      wallSegments: (room.wallSegments || []).map((segment) => ({ ...segment })),
+      area: Number(room.area) || room.width * room.height,
+      areaSquareMeters: round(roomAreaSquareMeters(room, settings)),
+      wallLengthsMillimeters: roomWallLengthsMillimeters(room, settings),
+      type: typeSource === "manual" && ROOM_TYPE_DEFINITIONS[matched.type] ? matched.type : inferred.type,
+      name: matched?.name || "",
+      typeSource,
+      nameSource: matched?.nameSource === "manual" ? "manual" : "auto",
+      inferenceReason: inferred.reason,
+    };
+  });
+
+  const typeCounts = new Map();
+  for (const room of reconciled) {
+    const count = (typeCounts.get(room.type) || 0) + 1;
+    typeCounts.set(room.type, count);
+    if (room.nameSource !== "manual" || !room.name.trim()) room.name = `${roomTypeLabel(room.type)} ${count}`;
+  }
+
+  state.roomMetadata = reconciled;
+  topology.rooms = reconciled;
+  if (state.selectedRoomId && !reconciled.some((room) => room.id === state.selectedRoomId)) state.selectedRoomId = null;
+  elements.roomEditorButton.disabled = reconciled.length === 0;
+  renderRoomEditor();
+  renderAutoLayoutEditor();
+  return reconciled;
+}
+
+function applyAnalyzedTopology(topology) {
+  const previous = state.roomMetadata;
+  state.topology = topology || createEmptyTopology();
+  reconcileRoomMetadata(previous);
+  return state.topology;
+}
+
 function formatPhysicalLength(pixels, settings) {
   return formatMillimeters(pxToMillimeters(pixels, settings));
 }
@@ -428,6 +777,7 @@ function syncControlLabels() {
   elements.minWallThicknessValue.value = formatMillimeters(physicalWallThicknessMillimeters(settings.minWallThickness, settings));
   elements.openingMinWidthValue.value = formatPhysicalLength(settings.openingMinWidth, settings);
   elements.openingMaxWidthValue.value = formatPhysicalLength(settings.openingMaxWidth, settings);
+  if (state.topology.rooms.length) reconcileRoomMetadata();
   updateSelectedComponentInfo();
 }
 
@@ -489,6 +839,7 @@ function pushUndoSnapshot(label) {
     manualRailings: state.manualRailings.map(cloneRailing),
     productModels: state.productModels.map(cloneProductMeta),
     lightSources: state.lightSources.map(cloneLightSource),
+    roomMetadata: state.roomMetadata.map(cloneRoomMetadata),
     hiddenOpeningKeys: [...state.hiddenOpeningKeys],
     selectedLineIndex: state.selectedLineIndex,
     selectedOpeningIndex: state.selectedOpeningIndex,
@@ -496,6 +847,7 @@ function pushUndoSnapshot(label) {
     selectedRailingId: state.selectedRailingId,
     selectedProductId: state.selectedProductId,
     selectedLightSourceId: state.selectedLightSourceId,
+    selectedRoomId: state.selectedRoomId,
     recognitionMode: state.recognitionMode,
     manualMillimetersPerPixel: state.manualMillimetersPerPixel,
   });
@@ -516,6 +868,7 @@ function undoLastEdit() {
   state.productModels = (snapshot.productModels || []).map((product) => normalizeProductMetadata({ ...product, object: null }));
   clearLightSources();
   state.lightSources = (snapshot.lightSources || []).map(normalizeLightSource);
+  state.roomMetadata = (snapshot.roomMetadata || []).map(cloneRoomMetadata);
   state.hiddenOpeningKeys = [...(snapshot.hiddenOpeningKeys || [])];
   state.selectedLineIndex = snapshot.selectedLineIndex;
   state.selectedOpeningIndex = snapshot.selectedOpeningIndex ?? null;
@@ -523,6 +876,7 @@ function undoLastEdit() {
   state.selectedRailingId = snapshot.selectedRailingId || null;
   state.selectedProductId = snapshot.selectedProductId || null;
   state.selectedLightSourceId = snapshot.selectedLightSourceId || null;
+  state.selectedRoomId = snapshot.selectedRoomId || null;
   if (state.selectedProductId && !state.productModels.some((product) => product.id === state.selectedProductId)) state.selectedProductId = null;
   if (state.selectedLightSourceId && !state.lightSources.some((source) => source.id === state.selectedLightSourceId)) state.selectedLightSourceId = null;
   state.manualMillimetersPerPixel = snapshot.manualMillimetersPerPixel;
@@ -541,7 +895,7 @@ function undoLastEdit() {
   state.measurementLine = null;
   state.recognitionMode = snapshot.recognitionMode;
   state.deepLearningInfo = null;
-  state.topology = analyzeTopology(state.lines, getSettings());
+  applyAnalyzedTopology(analyzeTopology(state.lines, getSettings()));
   syncControlLabels();
   updateStats();
   renderPreview();
@@ -562,6 +916,8 @@ function ensureDrawingCanvas() {
   state.maskImage = null;
   state.lines = [];
   state.topology = createEmptyTopology();
+  state.roomMetadata = [];
+  state.selectedRoomId = null;
   state.selectedLineIndex = null;
   state.selectedOpeningIndex = null;
   state.selectedOpeningId = null;
@@ -613,6 +969,8 @@ async function loadImageFromFile(file) {
     state.deepLearningInfo = null;
     state.lines = [];
     state.topology = createEmptyTopology();
+    state.roomMetadata = [];
+    state.selectedRoomId = null;
     state.selectedLineIndex = null;
     state.selectedOpeningIndex = null;
     state.selectedOpeningId = null;
@@ -934,7 +1292,7 @@ function finishRecognition(lines, settings, mode, options = {}) {
   state.manualRailings = [];
   state.hiddenOpeningKeys = [];
   state.undoStack = [];
-  state.topology = analyzeTopology(state.lines, settings);
+  applyAnalyzedTopology(analyzeTopology(state.lines, settings));
   state.recognitionMode = mode;
   state.deepLearningInfo = options.deepLearning || null;
   updateStats();
@@ -1134,14 +1492,10 @@ function analyzeTopology(lines, settings) {
   const constructibleOpenings = openings.filter(isConstructibleOpening);
   const pierIds = new Set(endPiers.filter((pier) => pier.excludeFromRooms).map((pier) => pier.wall));
   const roomLines = closedLines.filter((line) => !pierIds.has(line.id));
-  const rooms = findClosedRooms(
-    roomLines.filter((line) => line.orientation === "horizontal"),
-    roomLines.filter((line) => line.orientation === "vertical"),
-    settings,
-    tolerance,
-  );
+  const roomBridges = bridgeRoomOpenings(constructibleOpenings, roomLines, settings, tolerance);
+  const rooms = findClosedRoomPolygons([...roomLines, ...roomBridges], settings, tolerance);
   const breaks = findBreaks(roomLines, intersections, constructibleOpenings, tolerance);
-  return { intersections, breaks, openings, endPiers, rooms };
+  return { intersections, breaks, openings, endPiers, roomBridges, rooms };
 }
 
 function getClosedWallLines(settings = getSettings()) {
@@ -1591,29 +1945,242 @@ function findBreaks(lines, intersections, openings, tolerance) {
   return dedupePoints(breaks, tolerance, "break");
 }
 
-function findClosedRooms(horizontal, vertical, settings, tolerance) {
-  const rooms = [];
-  const minSide = Math.max(36, settings.minLength * 0.62);
-  const hBands = groupByAxis(horizontal, "horizontal", tolerance);
-  const vBands = groupByAxis(vertical, "vertical", tolerance);
-  for (let topIndex = 0; topIndex < hBands.length - 1; topIndex += 1) {
-    for (let bottomIndex = topIndex + 1; bottomIndex < hBands.length; bottomIndex += 1) {
-      const top = hBands[topIndex];
-      const bottom = hBands[bottomIndex];
-      if (bottom.axis - top.axis < minSide) continue;
-      const bridges = vBands.filter((band) => bandCovers(band, top.axis, bottom.axis, tolerance)).sort((a, b) => a.axis - b.axis);
-      for (let index = 0; index < bridges.length - 1; index += 1) {
-        const left = bridges[index];
-        const right = bridges[index + 1];
-        if (right.axis - left.axis < minSide) continue;
-        if (!bandCovers(top, left.axis, right.axis, tolerance) || !bandCovers(bottom, left.axis, right.axis, tolerance)) continue;
-        const room = { id: `room-${rooms.length + 1}`, x: left.axis, y: top.axis, width: right.axis - left.axis, height: bottom.axis - top.axis };
-        room.area = room.width * room.height;
-        if (!rooms.some((existing) => rectanglesOverlapStrongly(existing, room))) rooms.push(room);
-      }
+function bridgeRoomOpenings(openings, lines, settings, tolerance) {
+  const maximumAxisMiss = Math.max(tolerance, settings.maxThickness);
+  const bridges = [];
+  for (const opening of openings || []) {
+    if (!isConstructibleOpening(opening) || !["door", "window", "opening"].includes(opening.kind)) continue;
+    const orientation = opening.orientation;
+    if (orientation !== "horizontal" && orientation !== "vertical") continue;
+    const start = getLineStart(opening, orientation);
+    const end = getLineEnd(opening, orientation);
+    if (end - start <= 0) continue;
+    const axis = getLineAxis(opening, orientation);
+    const collinearEvidence = lines.some((line) => line.orientation === orientation
+      && Math.abs(getLineAxis(line, orientation) - axis) <= maximumAxisMiss
+      && getLineEnd(line, orientation) >= start - tolerance
+      && getLineStart(line, orientation) <= end + tolerance);
+    if (!collinearEvidence) continue;
+    const bridge = orientation === "horizontal"
+      ? { x1: start, y1: axis, x2: end, y2: axis }
+      : { x1: axis, y1: start, x2: axis, y2: end };
+    bridges.push({
+      ...bridge,
+      id: `room-bridge-${opening.id || bridges.length + 1}`,
+      orientation,
+      length: end - start,
+      thickness: Math.max(1, Number(opening.leftThickness) || Number(opening.rightThickness) || settings.minWallThickness),
+      temporaryRoomBridge: true,
+      openingId: opening.id || null,
+      openingKind: opening.kind,
+    });
+  }
+  return bridges;
+}
+
+function clusterRoomCoordinates(values, tolerance) {
+  const sorted = [...new Set(values.filter(Number.isFinite).map((value) => round(value)))].sort((a, b) => a - b);
+  const clustered = [];
+  for (const value of sorted) {
+    const previous = clustered[clustered.length - 1];
+    if (!previous || value - previous.lastValue > tolerance || value - previous.values[0] > tolerance * 2) {
+      clustered.push({ value, values: [value], lastValue: value });
+    } else {
+      previous.values.push(value);
+      previous.lastValue = value;
+      previous.value = round(previous.values.reduce((sum, item) => sum + item, 0) / previous.values.length);
     }
   }
-  return rooms;
+  return clustered.map((item) => item.value);
+}
+
+function lineBlocksRoomInterval(lines, orientation, axis, start, end, tolerance) {
+  const midpoint = (start + end) / 2;
+  return lines.some((line) => line.orientation === orientation
+    && Math.abs(getLineAxis(line, orientation) - axis) <= tolerance
+    && midpoint >= getLineStart(line, orientation) - tolerance
+    && midpoint <= getLineEnd(line, orientation) + tolerance);
+}
+
+function roomCellKey(column, row) {
+  return `${column}:${row}`;
+}
+
+function traceRoomComponentPolygon(component, xs, ys) {
+  const edges = [];
+  const addEdge = (x1, y1, x2, y2) => edges.push({ x1, y1, x2, y2, used: false });
+  for (const key of component) {
+    const [column, row] = key.split(":").map(Number);
+    if (!component.has(roomCellKey(column, row - 1))) addEdge(xs[column], ys[row], xs[column + 1], ys[row]);
+    if (!component.has(roomCellKey(column + 1, row))) addEdge(xs[column + 1], ys[row], xs[column + 1], ys[row + 1]);
+    if (!component.has(roomCellKey(column, row + 1))) addEdge(xs[column + 1], ys[row + 1], xs[column], ys[row + 1]);
+    if (!component.has(roomCellKey(column - 1, row))) addEdge(xs[column], ys[row + 1], xs[column], ys[row]);
+  }
+  const starts = new Map();
+  for (const edge of edges) {
+    const key = `${edge.x1}:${edge.y1}`;
+    if (!starts.has(key)) starts.set(key, []);
+    starts.get(key).push(edge);
+  }
+  const loops = [];
+  for (const first of edges) {
+    if (first.used) continue;
+    const loop = [];
+    let edge = first;
+    while (edge && !edge.used) {
+      edge.used = true;
+      loop.push({ x: edge.x1, y: edge.y1 });
+      if (edge.x2 === first.x1 && edge.y2 === first.y1) break;
+      edge = (starts.get(`${edge.x2}:${edge.y2}`) || []).find((candidate) => !candidate.used);
+    }
+    if (loop.length >= 4) loops.push(simplifyRoomPolygon(loop));
+  }
+  return loops.sort((left, right) => Math.abs(polygonSignedArea(right)) - Math.abs(polygonSignedArea(left)))[0] || [];
+}
+
+function simplifyRoomPolygon(polygon) {
+  if (polygon.length < 4) return polygon;
+  const simplified = [];
+  for (let index = 0; index < polygon.length; index += 1) {
+    const previous = polygon[(index - 1 + polygon.length) % polygon.length];
+    const point = polygon[index];
+    const next = polygon[(index + 1) % polygon.length];
+    const collinear = (previous.x === point.x && point.x === next.x) || (previous.y === point.y && point.y === next.y);
+    if (!collinear) simplified.push(point);
+  }
+  return simplified;
+}
+
+function roomComponentInteriorPoint(component, xs, ys, polygon) {
+  let best = null;
+  for (const key of component) {
+    const [column, row] = key.split(":").map(Number);
+    const width = xs[column + 1] - xs[column];
+    const height = ys[row + 1] - ys[row];
+    const candidate = {
+      x: (xs[column] + xs[column + 1]) / 2,
+      y: (ys[row] + ys[row + 1]) / 2,
+      score: Math.min(width, height),
+    };
+    if (!best || candidate.score > best.score) best = candidate;
+  }
+  const room = { polygon };
+  const centroid = polygonCentroid(polygon);
+  if (centroid && pointInRoomPolygon(centroid, room, false)) return centroid;
+  return best ? { x: best.x, y: best.y } : null;
+}
+
+function polygonCentroid(polygon) {
+  const signedArea = polygonSignedArea(polygon);
+  if (Math.abs(signedArea) < 0.001) return null;
+  let x = 0;
+  let y = 0;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const point = polygon[index];
+    const next = polygon[(index + 1) % polygon.length];
+    const cross = point.x * next.y - next.x * point.y;
+    x += (point.x + next.x) * cross;
+    y += (point.y + next.y) * cross;
+  }
+  return { x: x / (6 * signedArea), y: y / (6 * signedArea) };
+}
+
+function findClosedRoomPolygons(lines, settings, tolerance) {
+  if (!lines.length) return [];
+  const coordinateTolerance = Math.max(2, Math.min(tolerance * 1.25, settings.maxThickness * 0.55));
+  const xValues = [];
+  const yValues = [];
+  for (const line of lines) {
+    xValues.push(line.x1, line.x2);
+    yValues.push(line.y1, line.y2);
+  }
+  let xs = clusterRoomCoordinates(xValues, coordinateTolerance);
+  let ys = clusterRoomCoordinates(yValues, coordinateTolerance);
+  if (xs.length < 2 || ys.length < 2) return [];
+  const margin = Math.max(12, tolerance * 2);
+  xs = [xs[0] - margin, ...xs, xs[xs.length - 1] + margin];
+  ys = [ys[0] - margin, ...ys, ys[ys.length - 1] + margin];
+  const columns = xs.length - 1;
+  const rows = ys.length - 1;
+  const horizontal = lines.filter((line) => line.orientation === "horizontal");
+  const vertical = lines.filter((line) => line.orientation === "vertical");
+  const outside = new Set();
+  const queue = [];
+  const enqueue = (column, row) => {
+    if (column < 0 || row < 0 || column >= columns || row >= rows) return;
+    const key = roomCellKey(column, row);
+    if (outside.has(key)) return;
+    outside.add(key);
+    queue.push([column, row]);
+  };
+  for (let column = 0; column < columns; column += 1) {
+    enqueue(column, 0);
+    enqueue(column, rows - 1);
+  }
+  for (let row = 0; row < rows; row += 1) {
+    enqueue(0, row);
+    enqueue(columns - 1, row);
+  }
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const [column, row] = queue[cursor];
+    if (column > 0 && !lineBlocksRoomInterval(vertical, "vertical", xs[column], ys[row], ys[row + 1], tolerance)) enqueue(column - 1, row);
+    if (column + 1 < columns && !lineBlocksRoomInterval(vertical, "vertical", xs[column + 1], ys[row], ys[row + 1], tolerance)) enqueue(column + 1, row);
+    if (row > 0 && !lineBlocksRoomInterval(horizontal, "horizontal", ys[row], xs[column], xs[column + 1], tolerance)) enqueue(column, row - 1);
+    if (row + 1 < rows && !lineBlocksRoomInterval(horizontal, "horizontal", ys[row + 1], xs[column], xs[column + 1], tolerance)) enqueue(column, row + 1);
+  }
+  const visited = new Set(outside);
+  const rooms = [];
+  const minimumArea = Math.pow(Math.max(24, settings.minLength * 0.45), 2);
+  for (let row = 1; row < rows - 1; row += 1) {
+    for (let column = 1; column < columns - 1; column += 1) {
+      const firstKey = roomCellKey(column, row);
+      if (visited.has(firstKey)) continue;
+      const component = new Set([firstKey]);
+      const componentQueue = [[column, row]];
+      visited.add(firstKey);
+      for (let cursor = 0; cursor < componentQueue.length; cursor += 1) {
+        const [currentColumn, currentRow] = componentQueue[cursor];
+        const neighbors = [
+          [currentColumn - 1, currentRow, !lineBlocksRoomInterval(vertical, "vertical", xs[currentColumn], ys[currentRow], ys[currentRow + 1], tolerance)],
+          [currentColumn + 1, currentRow, !lineBlocksRoomInterval(vertical, "vertical", xs[currentColumn + 1], ys[currentRow], ys[currentRow + 1], tolerance)],
+          [currentColumn, currentRow - 1, !lineBlocksRoomInterval(horizontal, "horizontal", ys[currentRow], xs[currentColumn], xs[currentColumn + 1], tolerance)],
+          [currentColumn, currentRow + 1, !lineBlocksRoomInterval(horizontal, "horizontal", ys[currentRow + 1], xs[currentColumn], xs[currentColumn + 1], tolerance)],
+        ];
+        for (const [nextColumn, nextRow, open] of neighbors) {
+          if (!open || nextColumn < 0 || nextRow < 0 || nextColumn >= columns || nextRow >= rows) continue;
+          const key = roomCellKey(nextColumn, nextRow);
+          if (visited.has(key)) continue;
+          visited.add(key);
+          component.add(key);
+          componentQueue.push([nextColumn, nextRow]);
+        }
+      }
+      const polygon = traceRoomComponentPolygon(component, xs, ys);
+      const area = Math.abs(polygonSignedArea(polygon));
+      if (polygon.length < 4 || area < minimumArea) continue;
+      const minX = Math.min(...polygon.map((point) => point.x));
+      const maxX = Math.max(...polygon.map((point) => point.x));
+      const minY = Math.min(...polygon.map((point) => point.y));
+      const maxY = Math.max(...polygon.map((point) => point.y));
+      const room = {
+        id: `room-${rooms.length + 1}`,
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        area,
+        polygon,
+        center: roomComponentInteriorPoint(component, xs, ys, polygon),
+      };
+      room.wallSegments = roomWallLengthsMillimeters(room, settings).segments;
+      rooms.push(room);
+    }
+  }
+  return rooms.sort((left, right) => left.y - right.y || left.x - right.x).map((room, index) => ({ ...room, id: `room-${index + 1}` }));
+}
+
+function findClosedRooms(horizontal, vertical, settings, tolerance) {
+  return findClosedRoomPolygons([...horizontal, ...vertical], settings, tolerance);
 }
 
 function groupByAxis(lines, orientation, tolerance) {
@@ -1690,6 +2257,8 @@ function updateStats() {
   elements.openingStat.textContent = String(constructibleOpenings().length);
   elements.pierStat.textContent = String(state.topology.endPiers.length);
   elements.roomStat.textContent = String(state.topology.rooms.length);
+  elements.roomEditorButton.disabled = state.topology.rooms.length === 0;
+  elements.autoLayoutButton.disabled = state.topology.rooms.length === 0;
   elements.modeStat.textContent = recognitionModeLabel();
   updateSelectedComponentInfo();
   updateBeginnerSummary();
@@ -2694,13 +3263,213 @@ function drawTopology(context) {
   context.strokeStyle = "rgba(31,122,107,0.8)";
   context.lineWidth = 2;
   for (const room of rooms) {
-    context.fillRect(room.x, room.y, room.width, room.height);
-    context.strokeRect(room.x, room.y, room.width, room.height);
+    const polygon = roomPolygon(room);
+    context.beginPath();
+    polygon.forEach((point, index) => {
+      if (index === 0) context.moveTo(point.x, point.y);
+      else context.lineTo(point.x, point.y);
+    });
+    context.closePath();
+    context.fill();
+    context.stroke();
   }
+  drawRoomInformation(context, rooms);
   drawOpenings(context, openings);
   drawSegments(context, endPiers, "#8b5cf6", 6);
   for (const point of intersections) drawPoint(context, point.x, point.y, "#12a6a6", 5);
   for (const point of breaks) drawPoint(context, point.x, point.y, "#f28c28", 5);
+}
+
+function drawRoomInformation(context, rooms = state.roomMetadata) {
+  if (!state.roomInfoVisible || !rooms.length) return;
+  context.save();
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  for (const room of rooms) {
+    drawRoomWallDimensions(context, room);
+    const center = roomInteriorPoint(room);
+    const centerX = center.x;
+    const centerY = center.y;
+    const title = room.name || roomTypeLabel(room.type);
+    const detail = `${roomTypeLabel(room.type)} · ${Number(room.areaSquareMeters || 0).toFixed(1)} ㎡`;
+    const titleFontSize = clamp(Math.min(room.width / 7, room.height / 4), 11, 18);
+    const detailFontSize = clamp(titleFontSize * 0.72, 9, 13);
+    context.font = `700 ${titleFontSize}px "Microsoft YaHei", sans-serif`;
+    const titleWidth = context.measureText(title).width;
+    context.font = `500 ${detailFontSize}px "Microsoft YaHei", sans-serif`;
+    const detailWidth = context.measureText(detail).width;
+    const boxWidth = Math.min(Math.max(titleWidth, detailWidth) + 20, Math.max(38, room.width - 8));
+    const boxHeight = titleFontSize + detailFontSize + 17;
+    context.fillStyle = "rgba(255, 255, 255, 0.9)";
+    context.strokeStyle = "rgba(31, 122, 107, 0.72)";
+    context.lineWidth = 1.5;
+    context.beginPath();
+    if (typeof context.roundRect === "function") context.roundRect(centerX - boxWidth / 2, centerY - boxHeight / 2, boxWidth, boxHeight, 6);
+    else context.rect(centerX - boxWidth / 2, centerY - boxHeight / 2, boxWidth, boxHeight);
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#174f45";
+    context.font = `700 ${titleFontSize}px "Microsoft YaHei", sans-serif`;
+    context.fillText(title, centerX, centerY - detailFontSize * 0.62, Math.max(20, boxWidth - 10));
+    context.fillStyle = "#4a685f";
+    context.font = `500 ${detailFontSize}px "Microsoft YaHei", sans-serif`;
+    context.fillText(detail, centerX, centerY + titleFontSize * 0.65, Math.max(20, boxWidth - 10));
+  }
+  context.restore();
+}
+
+function drawRoomWallDimensions(context, room) {
+  const lengths = room.wallLengthsMillimeters || roomWallLengthsMillimeters(room);
+  const fontSize = clamp(Math.min(room.width, room.height) * 0.055, 9, 12);
+  const polygon = roomPolygon(room);
+  const clockwise = polygonSignedArea(polygon) >= 0;
+  for (const segment of lengths.segments || []) {
+    const midpoint = { x: (segment.x1 + segment.x2) / 2, y: (segment.y1 + segment.y2) / 2 };
+    const dx = segment.x2 - segment.x1;
+    const dy = segment.y2 - segment.y1;
+    const segmentLength = Math.max(1, Math.hypot(dx, dy));
+    const inwardSign = clockwise ? 1 : -1;
+    const normal = { x: (-dy / segmentLength) * inwardSign, y: (dx / segmentLength) * inwardSign };
+    const inset = Math.max(10, fontSize + 5);
+    const rotation = segment.orientation === "vertical" ? Math.PI / 2 : 0;
+    drawRoomWallDimensionLabel(
+      context,
+      formatRoomWallLength(segment.lengthMillimeters),
+      midpoint.x + normal.x * inset,
+      midpoint.y + normal.y * inset,
+      rotation,
+      fontSize,
+    );
+  }
+}
+
+function drawRoomWallDimensionLabel(context, text, x, y, rotation, fontSize) {
+  context.save();
+  context.translate(x, y);
+  context.rotate(rotation);
+  context.font = `600 ${fontSize}px "Microsoft YaHei", sans-serif`;
+  const width = context.measureText(text).width + 10;
+  const height = fontSize + 7;
+  context.fillStyle = "rgba(23, 79, 69, 0.88)";
+  context.fillRect(-width / 2, -height / 2, width, height);
+  context.fillStyle = "#fff";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(text, 0, 0);
+  context.restore();
+}
+
+function selectedRoomMetadata() {
+  return state.roomMetadata.find((room) => room.id === state.selectedRoomId) || null;
+}
+
+function syncRoomInfoToggle() {
+  elements.roomInfoToggleButton.classList.toggle("active", state.roomInfoVisible);
+  elements.roomInfoToggleButton.setAttribute("aria-pressed", String(state.roomInfoVisible));
+  elements.roomInfoToggleButton.textContent = `房间信息：${state.roomInfoVisible ? "开" : "关"}`;
+}
+
+function toggleRoomInformation() {
+  state.roomInfoVisible = !state.roomInfoVisible;
+  syncRoomInfoToggle();
+  if (state.analysisCanvas) renderPreview();
+  updateThreeRoomLabels();
+  renderThreeScene();
+  elements.saveProjectButton.disabled = !state.analysisCanvas;
+  setStatus(`房间信息已${state.roomInfoVisible ? "显示" : "隐藏"}`);
+}
+
+function openRoomEditor() {
+  if (!state.roomMetadata.length) {
+    setStatus("还没有识别到闭合房间");
+    return;
+  }
+  if (!selectedRoomMetadata()) state.selectedRoomId = state.roomMetadata[0].id;
+  renderRoomEditor();
+  elements.roomEditorModal.hidden = false;
+  elements.roomEditorSelect.focus({ preventScroll: true });
+}
+
+function closeRoomEditor() {
+  elements.roomEditorModal.hidden = true;
+}
+
+function renderRoomEditor() {
+  if (!elements.roomEditorSelect) return;
+  const rooms = state.roomMetadata || [];
+  elements.roomEditorButton.disabled = rooms.length === 0;
+  elements.roomEditorSelect.replaceChildren();
+  if (!rooms.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "还没有闭合房间";
+    elements.roomEditorSelect.appendChild(option);
+    state.selectedRoomId = null;
+  } else {
+    if (!rooms.some((room) => room.id === state.selectedRoomId)) state.selectedRoomId = rooms[0].id;
+    for (const room of rooms) {
+      const option = document.createElement("option");
+      option.value = room.id;
+      option.textContent = `${room.name} · ${room.areaSquareMeters.toFixed(1)} ㎡`;
+      elements.roomEditorSelect.appendChild(option);
+    }
+    elements.roomEditorSelect.value = state.selectedRoomId;
+  }
+
+  const room = selectedRoomMetadata();
+  for (const input of [elements.roomNameInput, elements.roomTypeSelect, elements.roomResetInferenceButton, elements.roomSaveButton]) {
+    input.disabled = !room;
+  }
+  elements.roomNameInput.value = room?.name || "";
+  elements.roomTypeSelect.value = room?.type || "other";
+  elements.roomAreaInput.value = room ? room.areaSquareMeters.toFixed(2) : "";
+  elements.roomInferenceInput.value = room?.inferenceReason || "";
+  const wallLengths = room?.wallLengthsMillimeters || {};
+  elements.roomTopWallLength.textContent = room ? formatRoomWallLength(wallLengths.top) : "-";
+  elements.roomRightWallLength.textContent = room ? formatRoomWallLength(wallLengths.right) : "-";
+  elements.roomBottomWallLength.textContent = room ? formatRoomWallLength(wallLengths.bottom) : "-";
+  elements.roomLeftWallLength.textContent = room ? formatRoomWallLength(wallLengths.left) : "-";
+  if (elements.roomWallSegmentList) {
+    elements.roomWallSegmentList.replaceChildren();
+    for (const segment of wallLengths.segments || []) {
+      const item = document.createElement("span");
+      item.textContent = `墙段 ${segment.index} · ${formatRoomWallLength(segment.lengthMillimeters)}`;
+      elements.roomWallSegmentList.appendChild(item);
+    }
+  }
+}
+
+function commitRoomEditor() {
+  const room = selectedRoomMetadata();
+  if (!room) return;
+  pushUndoSnapshot("edit-room-info");
+  const previousName = room.name;
+  const previousNameSource = room.nameSource;
+  room.type = ROOM_TYPE_DEFINITIONS[elements.roomTypeSelect.value] ? elements.roomTypeSelect.value : "other";
+  room.typeSource = "manual";
+  const name = elements.roomNameInput.value.trim();
+  room.name = name;
+  room.nameSource = name && (previousNameSource === "manual" || name !== previousName) ? "manual" : "auto";
+  reconcileRoomMetadata(state.roomMetadata);
+  renderPreview();
+  updateThreeRoomLabels();
+  renderThreeScene();
+  elements.saveProjectButton.disabled = false;
+  setStatus("房间信息已更新");
+}
+
+function resetSelectedRoomInference() {
+  const room = selectedRoomMetadata();
+  if (!room) return;
+  pushUndoSnapshot("reset-room-inference");
+  room.typeSource = "auto";
+  room.nameSource = "auto";
+  reconcileRoomMetadata(state.roomMetadata);
+  renderPreview();
+  updateThreeRoomLabels();
+  renderThreeScene();
+  elements.saveProjectButton.disabled = false;
+  setStatus("已恢复自动判断");
 }
 
 function drawSelectedLine(context) {
@@ -3144,7 +3913,7 @@ function drawPoint(context, x, y, color, radius) {
 }
 
 function initThreeViewer() {
-  if (state.three.module && state.three.productsGroup && state.three.lightSourcesGroup) return Promise.resolve(state.three.module);
+  if (state.three.module && state.three.productsGroup && state.three.lightSourcesGroup && state.three.roomLabelsGroup) return Promise.resolve(state.three.module);
   if (state.three.readyPromise) return state.three.readyPromise;
   elements.threeStat.textContent = "3D 加载中";
   state.three.readyPromise = import(THREE_MODULE_URL)
@@ -3164,10 +3933,10 @@ function initThreeViewer() {
 }
 
 async function ensureThreeViewerReady() {
-  if (state.three.module && state.three.productsGroup && state.three.lightSourcesGroup) return true;
+  if (state.three.module && state.three.productsGroup && state.three.lightSourcesGroup && state.three.roomLabelsGroup) return true;
   try {
     await initThreeViewer();
-    return Boolean(state.three.module && state.three.productsGroup && state.three.lightSourcesGroup);
+    return Boolean(state.three.module && state.three.productsGroup && state.three.lightSourcesGroup && state.three.roomLabelsGroup);
   } catch (error) {
     console.warn(error);
     return false;
@@ -3202,6 +3971,8 @@ function setupThreeScene() {
   state.three.scene.add(state.three.productsGroup);
   state.three.lightSourcesGroup = new three.Group();
   state.three.scene.add(state.three.lightSourcesGroup);
+  state.three.roomLabelsGroup = new three.Group();
+  state.three.scene.add(state.three.roomLabelsGroup);
   state.three.center = new three.Vector3(0, WALL_HEIGHT_METERS * 0.42, 0);
   state.three.roamPosition = new three.Vector3(0, 1.55, 0);
   state.three.raycaster = new three.Raycaster();
@@ -3757,6 +4528,7 @@ function updateThreeModel(resetCamera) {
   });
   updateProductModelTransforms(unit, bounds);
   updateThreeLightSources(unit, bounds);
+  updateThreeRoomLabels(unit, bounds);
 
   state.three.center.set(0, maxWallHeight * 0.45, 0);
   state.three.radius = Math.max(7.5, Math.max(floorWidth, floorDepth) * 0.9);
@@ -4071,6 +4843,60 @@ function createThreeRailing(three, railing, unit, bounds) {
 
 function interiorCategoryDefinition(category) {
   return INTERIOR_CATEGORY_DEFINITIONS[category] || INTERIOR_CATEGORY_DEFINITIONS.custom;
+}
+
+function createThreeRoomLabel(three, room, unit, bounds) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 700;
+  canvas.height = 270;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "rgba(255, 255, 255, 0.94)";
+  context.strokeStyle = "rgba(31, 122, 107, 0.9)";
+  context.lineWidth = 8;
+  context.beginPath();
+  if (typeof context.roundRect === "function") context.roundRect(8, 8, canvas.width - 16, canvas.height - 16, 30);
+  else context.rect(8, 8, canvas.width - 16, canvas.height - 16);
+  context.fill();
+  context.stroke();
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = "#174f45";
+  context.font = '700 52px "Microsoft YaHei", sans-serif';
+  context.fillText(room.name || roomTypeLabel(room.type), canvas.width / 2, 58, canvas.width - 40);
+  context.fillStyle = "#4a685f";
+  context.font = '500 34px "Microsoft YaHei", sans-serif';
+  context.fillText(`${roomTypeLabel(room.type)} · ${room.areaSquareMeters.toFixed(1)} ㎡`, canvas.width / 2, 112, canvas.width - 40);
+  const lengths = room.wallLengthsMillimeters || roomWallLengthsMillimeters(room);
+  context.font = '500 27px "Microsoft YaHei", sans-serif';
+  const perimeter = (lengths.segments || []).reduce((sum, segment) => sum + segment.lengthMillimeters, 0);
+  context.fillText(`${(lengths.segments || []).length} 面墙 · 周长 ${formatRoomWallLength(perimeter)}`, canvas.width / 2, 174, canvas.width - 40);
+  context.fillText(`非矩形边界按每个墙段独立标注`, canvas.width / 2, 220, canvas.width - 40);
+
+  const texture = new three.CanvasTexture(canvas);
+  texture.colorSpace = three.SRGBColorSpace;
+  texture.needsUpdate = true;
+  const material = new three.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+  const sprite = new three.Sprite(material);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerY = (bounds.minY + bounds.maxY) / 2;
+  const labelPoint = roomInteriorPoint(room);
+  sprite.position.set((labelPoint.x - centerX) * unit, 0.34, (labelPoint.y - centerY) * unit);
+  const roomWorldWidth = Math.max(0.8, room.width * unit);
+  const labelWidth = clamp(roomWorldWidth * 0.7, 1.25, 2.8);
+  sprite.scale.set(labelWidth, labelWidth * (canvas.height / canvas.width), 1);
+  sprite.renderOrder = 20;
+  sprite.userData.roomId = room.id;
+  sprite.userData.roomInformation = true;
+  return sprite;
+}
+
+function updateThreeRoomLabels(unit = state.three.unit, bounds = state.three.planBounds) {
+  const { module: three, roomLabelsGroup } = state.three;
+  if (!three || !roomLabelsGroup) return;
+  clearThreeObject(roomLabelsGroup);
+  roomLabelsGroup.visible = state.roomInfoVisible;
+  if (!state.roomInfoVisible || !bounds || !Number.isFinite(unit)) return;
+  for (const room of state.roomMetadata) roomLabelsGroup.add(createThreeRoomLabel(three, room, unit, bounds));
 }
 
 function productCategoryLabel(category) {
@@ -4535,6 +5361,24 @@ function railingCollisionObb(railing, settings = getSettings()) {
   };
 }
 
+function openingClearanceObb(opening, settings = getSettings()) {
+  const dx = Number(opening.x2) - Number(opening.x1);
+  const dy = Number(opening.y2) - Number(opening.y1);
+  const definition = openingVariantDefinition(opening);
+  const depthMillimeters = definition.kind === "door" ? 1000 : definition.kind === "window" ? 450 : 800;
+  const sideClearance = millimetersToPixels(120, settings);
+  return {
+    id: opening.id,
+    kind: "opening-clearance",
+    center: { x: (Number(opening.x1) + Number(opening.x2)) / 2, y: (Number(opening.y1) + Number(opening.y2)) / 2 },
+    angle: Math.atan2(dy, dx),
+    halfWidth: Math.max(1, Math.hypot(dx, dy) / 2 + sideClearance),
+    halfDepth: Math.max(1, millimetersToPixels(depthMillimeters, settings) / 2),
+    minHeightMillimeters: 0,
+    maxHeightMillimeters: Math.max(3000, definition.sill + definition.height),
+  };
+}
+
 function findProductCollision(product, options = {}) {
   if (!product) return null;
   const settings = options.settings || getSettings();
@@ -4565,6 +5409,15 @@ function findProductCollision(product, options = {}) {
       return { kind: "railing", id: railing.id, label: "栏杆" };
     }
   }
+  if (options.ignoreOpenings !== true && product.category !== "window") {
+    for (const opening of constructibleOpenings()) {
+      const openingBox = openingClearanceObb(opening, settings);
+      if (verticalCollisionRangesOverlap(box, openingBox) && orientedBoxesOverlap(box, openingBox)) {
+        const definition = openingVariantDefinition(opening);
+        return { kind: "opening-clearance", id: opening.id, label: `${definition.label}前安全区` };
+      }
+    }
+  }
   return null;
 }
 
@@ -4588,6 +5441,298 @@ function findAvailableProductPlacement(product, desiredPoint = defaultProductPla
   product.planX = original.x;
   product.planY = original.y;
   return null;
+}
+
+function autoGeneratedProducts() {
+  return state.productModels.filter((product) => product.autoLayout?.generated === true);
+}
+
+function autoLayoutPresetDefinition(presetId = state.autoLayoutPreset) {
+  return AUTO_LAYOUT_PRESETS[presetId] || AUTO_LAYOUT_PRESETS.basic;
+}
+
+function autoLayoutItemsForRoom(room, presetId) {
+  const templates = AUTO_LAYOUT_ROOM_TEMPLATES[room.type] || AUTO_LAYOUT_ROOM_TEMPLATES.other;
+  return templates[presetId] || templates.basic || [];
+}
+
+function autoLayoutItemDependenciesMet(itemKey, placedKeys) {
+  if (itemKey === "chair") {
+    return ["compact-dining-table", "dining-table", "family-dining-table", "desk", "compact-desk"].some((key) => placedKeys.has(key));
+  }
+  if (itemKey === "nightstand") return placedKeys.has("single-bed") || placedKeys.has("double-bed");
+  if (itemKey === "coffee-table" || itemKey === "tv") return ["compact-sofa", "sofa", "family-sofa"].some((key) => placedKeys.has(key));
+  if (itemKey === "fridge") return placedKeys.has("kitchen-cabinet") || placedKeys.has("compact-kitchen-cabinet");
+  return true;
+}
+
+function createAutoLayoutProduct(itemKey, room, presetId, itemIndex) {
+  const item = AUTO_LAYOUT_ITEM_LIBRARY[itemKey];
+  if (!item) return null;
+  const preset = autoLayoutPresetDefinition(presetId);
+  const product = createInteriorProductMetadata({
+    id: `auto-${presetId}-${room.id}-${itemIndex}-${Date.now()}`,
+    name: item.name,
+    category: item.category,
+    productSubtype: item.productSubtype,
+    dimensionsMillimeters: item.dimensions,
+    point: roomInteriorPoint(room),
+  });
+  product.collision.clearanceMillimeters = item.productSubtype === "chair"
+    ? Math.min(100, preset.clearanceMillimeters)
+    : preset.clearanceMillimeters;
+  product.autoLayout = {
+    generated: true,
+    presetId,
+    roomId: room.id,
+    itemKey,
+    anchor: item.anchor,
+    generatedAt: new Date().toISOString(),
+  };
+  return product;
+}
+
+function productAxisAlignedExtents(product, rotationDegrees, settings = getSettings()) {
+  product.rotationDegrees = normalizeDegrees(rotationDegrees);
+  const box = productCollisionObb(product, settings);
+  const cosine = Math.abs(Math.cos(box.angle));
+  const sine = Math.abs(Math.sin(box.angle));
+  return {
+    x: box.halfWidth * cosine + box.halfDepth * sine,
+    y: box.halfWidth * sine + box.halfDepth * cosine,
+  };
+}
+
+function autoLayoutCandidatePriority(anchor, slot, rotation, room) {
+  if (slot.startsWith("grid")) return anchor === "center" || anchor === "center-ring" ? 2 : 4;
+  if (anchor === "center") return slot === "center" ? 0 : slot.startsWith("ring") ? 1 : 3;
+  if (anchor === "center-ring") return slot.startsWith("ring") ? 0 : slot.startsWith("corner") ? 2 : 3;
+  if (anchor === "corner") return slot.startsWith("corner") ? 0 : slot === "top" || slot === "bottom" ? 2 : 3;
+  if (anchor === "long-wall") {
+    const horizontalRoom = room.width >= room.height;
+    const correctWall = horizontalRoom ? slot === "top" || slot === "bottom" : slot === "left" || slot === "right";
+    const correctRotation = horizontalRoom ? rotation % 180 === 0 : rotation % 180 === 90;
+    if (correctWall && correctRotation) return 0;
+    if (correctWall) return 1;
+    return 3;
+  }
+  return ["top", "right", "bottom", "left"].includes(slot) ? 0 : slot.startsWith("corner") ? 1 : 3;
+}
+
+function generateRoomPlacementCandidates(room, product, anchor) {
+  const settings = getSettings();
+  const padding = Math.max(settings.maxThickness / 2, millimetersToPixels(80, settings));
+  const candidates = [];
+  const roomCenter = roomInteriorPoint(room);
+  for (const rotation of [0, 90]) {
+    const extents = productAxisAlignedExtents(product, rotation, settings);
+    const left = room.x + extents.x + padding;
+    const right = room.x + room.width - extents.x - padding;
+    const top = room.y + extents.y + padding;
+    const bottom = room.y + room.height - extents.y - padding;
+    if (left > right || top > bottom) continue;
+    const centerX = (left + right) / 2;
+    const centerY = (top + bottom) / 2;
+    const ringOffsetX = Math.min((right - left) * 0.34, millimetersToPixels(1200, settings));
+    const ringOffsetY = Math.min((bottom - top) * 0.34, millimetersToPixels(1200, settings));
+    const slots = [
+      ["center", roomCenter.x, roomCenter.y],
+      ["top", centerX, top], ["right", right, centerY], ["bottom", centerX, bottom], ["left", left, centerY],
+      ["corner-tl", left, top], ["corner-tr", right, top], ["corner-br", right, bottom], ["corner-bl", left, bottom],
+      ["ring-top", centerX, centerY - ringOffsetY], ["ring-right", centerX + ringOffsetX, centerY],
+      ["ring-bottom", centerX, centerY + ringOffsetY], ["ring-left", centerX - ringOffsetX, centerY],
+      ["top-left", left + (right - left) * 0.25, top], ["top-right", left + (right - left) * 0.75, top],
+      ["bottom-left", left + (right - left) * 0.25, bottom], ["bottom-right", left + (right - left) * 0.75, bottom],
+    ];
+    for (const [slot, x, y] of slots) {
+      candidates.push({
+        x,
+        y,
+        rotation,
+        slot,
+        priority: autoLayoutCandidatePriority(anchor, slot, rotation, room),
+      });
+    }
+    for (let row = 0; row < 7; row += 1) {
+      for (let column = 0; column < 9; column += 1) {
+        const x = left + (right - left) * (column / 8);
+        const y = top + (bottom - top) * (row / 6);
+        const centerDistance = Math.hypot(column - 4, row - 3) / 10;
+        candidates.push({
+          x,
+          y,
+          rotation,
+          slot: `grid-${row}-${column}`,
+          priority: autoLayoutCandidatePriority(anchor, "grid", rotation, room) + centerDistance,
+        });
+      }
+    }
+  }
+  return candidates.sort((left, right) => left.priority - right.priority);
+}
+
+function productFitsInsideRoom(product, room, settings = getSettings()) {
+  const box = productCollisionObb(product, settings);
+  const rawCorners = productCollisionCorners(box);
+  const corners = [rawCorners[0], rawCorners[2], rawCorners[3], rawCorners[1]];
+  const samples = [{ ...box.center }];
+  for (let index = 0; index < corners.length; index += 1) {
+    const corner = corners[index];
+    const next = corners[(index + 1) % corners.length];
+    samples.push(corner, { x: (corner.x + next.x) / 2, y: (corner.y + next.y) / 2 });
+  }
+  return samples.every((point) => pointInRoomPolygon(point, room, true));
+}
+
+function placeAutoLayoutProduct(product, room, anchor) {
+  const original = {
+    x: product.planX,
+    y: product.planY,
+    rotation: product.rotationDegrees,
+    width: product.widthMillimeters,
+    depth: product.depthMillimeters,
+    height: product.heightMillimeters,
+    clearance: product.collision.clearanceMillimeters,
+  };
+  const presetId = product.autoLayout?.presetId || "basic";
+  const scales = presetId === "rental" ? [1, 0.85, 0.7, 0.55] : presetId === "family" ? [1, 0.9, 0.8, 0.7, 0.6, 0.55] : [1, 0.85, 0.7, 0.62];
+  for (const scale of scales) {
+    product.widthMillimeters = Math.round(original.width * scale);
+    product.depthMillimeters = Math.round(original.depth * scale);
+    product.heightMillimeters = Math.round(original.height * Math.max(0.85, scale));
+    const minimumClearance = presetId === "family" ? 120 : presetId === "rental" ? 80 : 100;
+    product.collision.clearanceMillimeters = Math.max(minimumClearance, Math.round(original.clearance * scale));
+    for (const candidate of generateRoomPlacementCandidates(room, product, anchor)) {
+      product.planX = candidate.x;
+      product.planY = candidate.y;
+      product.rotationDegrees = candidate.rotation;
+      if (!productFitsInsideRoom(product, room)) continue;
+      if (!findProductCollision(product)) {
+        product.autoLayout.scale = scale;
+        return true;
+      }
+    }
+  }
+  product.planX = original.x;
+  product.planY = original.y;
+  product.rotationDegrees = original.rotation;
+  product.widthMillimeters = original.width;
+  product.depthMillimeters = original.depth;
+  product.heightMillimeters = original.height;
+  product.collision.clearanceMillimeters = original.clearance;
+  return false;
+}
+
+function removeAutoLayoutProductsWithoutRefresh() {
+  const generatedIds = new Set(autoGeneratedProducts().map((product) => product.id));
+  if (!generatedIds.size) return 0;
+  for (const product of state.productModels) {
+    if (!generatedIds.has(product.id)) continue;
+    removeLightSourcesForProduct(product.id);
+    if (state.three.productsGroup && product.object) {
+      state.three.productsGroup.remove(product.object);
+      disposeThreeObject(product.object);
+    }
+  }
+  state.productModels = state.productModels.filter((product) => !generatedIds.has(product.id));
+  if (generatedIds.has(state.selectedProductId)) state.selectedProductId = null;
+  return generatedIds.size;
+}
+
+function refreshAfterAutoLayout() {
+  updateThreeModel(false);
+  renderPreview();
+  updateSelectedComponentInfo();
+  updateThreeStat();
+  elements.exportJsonButton.disabled = !hasExportableContent();
+  elements.saveProjectButton.disabled = !state.analysisCanvas;
+  renderAutoLayoutEditor();
+}
+
+function generateAutoLayout() {
+  if (!state.roomMetadata.length) {
+    elements.autoLayoutStatus.textContent = "还没有闭合房间，请先识别或修正墙体。";
+    setStatus("无法智能布置：没有闭合房间");
+    return { placed: 0, skipped: 0 };
+  }
+  const presetId = AUTO_LAYOUT_PRESETS[elements.autoLayoutPresetSelect.value] ? elements.autoLayoutPresetSelect.value : "basic";
+  state.autoLayoutPreset = presetId;
+  pushUndoSnapshot("generate-auto-layout");
+  const removed = elements.autoLayoutReplaceInput.checked ? removeAutoLayoutProductsWithoutRefresh() : 0;
+  let placed = 0;
+  let skipped = 0;
+  let lastProduct = null;
+  for (const room of state.roomMetadata) {
+    const items = autoLayoutItemsForRoom(room, presetId);
+    const placedKeys = new Set();
+    items.forEach((itemKey, itemIndex) => {
+      if (!autoLayoutItemDependenciesMet(itemKey, placedKeys)) {
+        skipped += 1;
+        return;
+      }
+      const item = AUTO_LAYOUT_ITEM_LIBRARY[itemKey];
+      const product = createAutoLayoutProduct(itemKey, room, presetId, itemIndex);
+      if (!item || !product || !placeAutoLayoutProduct(product, room, item.anchor)) {
+        skipped += 1;
+        return;
+      }
+      state.productModels.push(product);
+      placedKeys.add(itemKey);
+      lastProduct = product;
+      placed += 1;
+    });
+  }
+  if (!placed) {
+    undoLastEdit();
+    elements.autoLayoutStatus.textContent = "当前房间没有足够空间放置方案家具；请先标定比例、检查房间边界或选择更紧凑的方案。";
+    setStatus("智能布置未生成：空间不足");
+    return { placed: 0, skipped };
+  }
+  if (lastProduct) selectNewInteriorProduct(lastProduct);
+  refreshAfterAutoLayout();
+  const preset = autoLayoutPresetDefinition(presetId);
+  elements.autoLayoutStatus.textContent = `${preset.label}已生成：放置 ${placed} 件，因空间或碰撞跳过 ${skipped} 件${removed ? `，替换 ${removed} 件旧自动家具` : ""}。`;
+  setStatus(`${preset.label}已生成 · ${placed} 件家具`);
+  return { placed, skipped, removed };
+}
+
+function clearAutoLayout() {
+  const count = autoGeneratedProducts().length;
+  if (!count) return 0;
+  pushUndoSnapshot("clear-auto-layout");
+  removeAutoLayoutProductsWithoutRefresh();
+  refreshAfterAutoLayout();
+  elements.autoLayoutStatus.textContent = `已清除 ${count} 件自动家具，手动添加的家具已保留。`;
+  setStatus("自动布置已清除");
+  return count;
+}
+
+function renderAutoLayoutEditor() {
+  if (!elements.autoLayoutPresetSelect) return;
+  const presetId = AUTO_LAYOUT_PRESETS[state.autoLayoutPreset] ? state.autoLayoutPreset : "basic";
+  const preset = autoLayoutPresetDefinition(presetId);
+  elements.autoLayoutPresetSelect.value = presetId;
+  elements.autoLayoutPresetTitle.textContent = preset.label;
+  elements.autoLayoutPresetDescription.textContent = preset.description;
+  elements.autoLayoutRoomCount.textContent = String(state.roomMetadata.length);
+  elements.autoLayoutProductCount.textContent = String(autoGeneratedProducts().length);
+  elements.autoLayoutButton.disabled = state.roomMetadata.length === 0;
+  elements.generateAutoLayoutButton.disabled = state.roomMetadata.length === 0;
+  elements.clearAutoLayoutButton.disabled = autoGeneratedProducts().length === 0;
+}
+
+function openAutoLayoutEditor() {
+  if (!state.roomMetadata.length) {
+    setStatus("还没有闭合房间，无法智能布置");
+    return;
+  }
+  renderAutoLayoutEditor();
+  elements.autoLayoutModal.hidden = false;
+  elements.autoLayoutPresetSelect.focus({ preventScroll: true });
+}
+
+function closeAutoLayoutEditor() {
+  elements.autoLayoutModal.hidden = true;
 }
 
 function productCollisionStatusMessage(collision) {
@@ -6713,7 +7858,7 @@ function disposeThreeMaterial(material) {
 }
 
 function createEmptyTopology() {
-  return { intersections: [], breaks: [], openings: [], endPiers: [], rooms: [] };
+  return { intersections: [], breaks: [], openings: [], endPiers: [], roomBridges: [], rooms: [] };
 }
 
 function round(value) {
@@ -7809,7 +8954,7 @@ function normalizeEditedLine(line) {
 function refreshAfterEdit(options = {}) {
   const settings = getSettings();
   applyAutoCloseToLines(settings, options);
-  state.topology = analyzeTopology(state.lines, settings);
+  applyAnalyzedTopology(analyzeTopology(state.lines, settings));
   updateStats();
   renderPreview();
   updateThreeModel(false);
@@ -8167,7 +9312,7 @@ function handleCanvasPointerMove(event) {
 
   if (state.draggedEndpoint) {
     moveSelectedEndpoint(state.draggedEndpoint, point);
-    state.topology = analyzeTopology(state.lines, getSettings());
+    applyAnalyzedTopology(analyzeTopology(state.lines, getSettings()));
     updateStats();
     renderPreview();
     updateThreeModel(false);
@@ -8178,7 +9323,7 @@ function handleCanvasPointerMove(event) {
   if (state.draggedLine) {
     moveSelectedLine(state.draggedLine, point);
     if (state.draggedLine.snapshotPushed) {
-      state.topology = analyzeTopology(state.lines, getSettings());
+      applyAnalyzedTopology(analyzeTopology(state.lines, getSettings()));
       updateStats();
       renderPreview();
       updateThreeModel(false);
@@ -8344,6 +9489,7 @@ function exportJson() {
     railings: state.manualRailings.map(cloneRailing),
     products: state.productModels.map(cloneProductMeta),
     lightSources: state.lightSources.map(cloneLightSource),
+    rooms: state.roomMetadata.map(cloneRoomMetadata),
     topology: state.topology,
     settings,
   };
@@ -8369,6 +9515,9 @@ function createProjectArchive() {
     selectedRailingId: state.selectedRailingId,
     selectedProductId: state.selectedProductId,
     selectedLightSourceId: state.selectedLightSourceId,
+    selectedRoomId: state.selectedRoomId,
+    roomInfoVisible: state.roomInfoVisible,
+    autoLayoutPreset: state.autoLayoutPreset,
     manualMillimetersPerPixel: state.manualMillimetersPerPixel,
     calibrationLengthMillimeters: getCalibrationLengthMillimeters(),
     settings: getSettings(),
@@ -8378,6 +9527,7 @@ function createProjectArchive() {
     manualRailings: state.manualRailings.map(cloneRailing),
     products: state.productModels.map(cloneProductMeta),
     lightSources: state.lightSources.map(cloneLightSource),
+    roomMetadata: state.roomMetadata.map(cloneRoomMetadata),
     interiorCatalogSources: [...state.interiorCatalogSources],
     hiddenOpeningKeys: [...state.hiddenOpeningKeys],
   };
@@ -8481,6 +9631,7 @@ async function restoreProjectArchive(archive) {
   state.productModels = Array.isArray(archive.products) ? archive.products.map((product) => normalizeProductMetadata({ ...product, object: null })) : [];
   clearLightSources();
   state.lightSources = Array.isArray(archive.lightSources) ? archive.lightSources.map(normalizeLightSource) : [];
+  state.roomMetadata = Array.isArray(archive.roomMetadata) ? archive.roomMetadata.map(cloneRoomMetadata) : [];
   state.hiddenOpeningKeys = Array.isArray(archive.hiddenOpeningKeys) ? [...archive.hiddenOpeningKeys] : [];
   state.selectedLineIndex = Number.isInteger(archive.selectedLineIndex) ? archive.selectedLineIndex : null;
   if (state.selectedLineIndex !== null && !state.lines[state.selectedLineIndex]) state.selectedLineIndex = null;
@@ -8492,6 +9643,9 @@ async function restoreProjectArchive(archive) {
   if (state.selectedProductId && !state.productModels.some((product) => product.id === state.selectedProductId)) state.selectedProductId = null;
   state.selectedLightSourceId = archive.selectedLightSourceId || null;
   if (state.selectedLightSourceId && !state.lightSources.some((source) => source.id === state.selectedLightSourceId)) state.selectedLightSourceId = null;
+  state.selectedRoomId = archive.selectedRoomId || null;
+  state.roomInfoVisible = archive.roomInfoVisible !== false;
+  state.autoLayoutPreset = AUTO_LAYOUT_PRESETS[archive.autoLayoutPreset] ? archive.autoLayoutPreset : "basic";
   state.draggedEndpoint = null;
   state.draggedLine = null;
   state.draggedOpening = null;
@@ -8514,7 +9668,8 @@ async function restoreProjectArchive(archive) {
   fitCanvasToImage(state.analysisCanvas);
   elements.emptyState.hidden = true;
   elements.imageStat.textContent = `${state.analysisCanvas.width} x ${state.analysisCanvas.height}`;
-  state.topology = analyzeTopology(state.lines, getSettings());
+  applyAnalyzedTopology(analyzeTopology(state.lines, getSettings()));
+  syncRoomInfoToggle();
   setView(archive.view === "vector" ? "vector" : "overlay");
   syncControlLabels();
   updateStats();
@@ -8609,6 +9764,18 @@ function isEditableTarget(target) {
 }
 
 function handleDocumentKeyDown(event) {
+  if (!elements.autoLayoutModal.hidden && event.key === "Escape") {
+    event.preventDefault();
+    closeAutoLayoutEditor();
+    setStatus("已关闭智能布置");
+    return;
+  }
+  if (!elements.roomEditorModal.hidden && event.key === "Escape") {
+    event.preventDefault();
+    closeRoomEditor();
+    setStatus("已关闭房间信息");
+    return;
+  }
   if (!elements.lightingModal.hidden && event.key === "Escape") {
     event.preventDefault();
     closeLightingEditor();
@@ -9240,6 +10407,17 @@ elements.drawDoorButton.addEventListener("click", toggleDrawDoorTool);
 elements.drawWindowButton.addEventListener("click", openWindowModelPicker);
 elements.drawRailingButton.addEventListener("click", toggleDrawRailingTool);
 elements.openInteriorLibraryButton.addEventListener("click", openInteriorLibrary);
+elements.autoLayoutButton.addEventListener("click", openAutoLayoutEditor);
+elements.autoLayoutCloseButton.addEventListener("click", closeAutoLayoutEditor);
+elements.autoLayoutModal.addEventListener("click", (event) => {
+  if (event.target === elements.autoLayoutModal) closeAutoLayoutEditor();
+});
+elements.autoLayoutPresetSelect.addEventListener("change", () => {
+  state.autoLayoutPreset = elements.autoLayoutPresetSelect.value;
+  renderAutoLayoutEditor();
+});
+elements.generateAutoLayoutButton.addEventListener("click", generateAutoLayout);
+elements.clearAutoLayoutButton.addEventListener("click", clearAutoLayout);
 elements.interiorLibraryCloseButton.addEventListener("click", closeInteriorLibrary);
 elements.interiorLibraryModal.addEventListener("click", (event) => {
   if (event.target === elements.interiorLibraryModal) closeInteriorLibrary();
@@ -9266,6 +10444,23 @@ elements.productModelInput.addEventListener("change", (event) => {
 elements.calibrateToolButton.addEventListener("click", toggleCalibrateScaleTool);
 elements.calibrateScaleButton.addEventListener("click", toggleCalibrateScaleTool);
 elements.measureToolButton.addEventListener("click", toggleMeasureTool);
+elements.roomInfoToggleButton.addEventListener("click", toggleRoomInformation);
+elements.roomEditorButton.addEventListener("click", openRoomEditor);
+elements.roomEditorCloseButton.addEventListener("click", closeRoomEditor);
+elements.roomEditorModal.addEventListener("click", (event) => {
+  if (event.target === elements.roomEditorModal) closeRoomEditor();
+});
+elements.roomEditorSelect.addEventListener("change", () => {
+  state.selectedRoomId = elements.roomEditorSelect.value || null;
+  renderRoomEditor();
+});
+elements.roomSaveButton.addEventListener("click", commitRoomEditor);
+elements.roomResetInferenceButton.addEventListener("click", resetSelectedRoomInference);
+elements.roomNameInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  commitRoomEditor();
+});
 elements.threeRoamButton.addEventListener("click", toggleThreeRoamMode);
 elements.threeLightingButton.addEventListener("click", openLightingEditor);
 elements.lightingCloseButton.addEventListener("click", closeLightingEditor);
@@ -9384,6 +10579,8 @@ window.GewuLighting = Object.freeze({
   kelvinToSrgb: (temperatureKelvin) => ({ ...kelvinToSrgb(temperatureKelvin) }),
 });
 ensureInteriorCatalogReady();
+syncRoomInfoToggle();
+renderAutoLayoutEditor();
 syncControlLabels();
 updateBeginnerSummary();
 updateBeginnerPhonePreview();

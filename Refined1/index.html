@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>建筑平面生成能力</title>
-    <link rel="stylesheet" href="./styles.css?v=20260722-lighting1" />
+    <link rel="stylesheet" href="./styles.css?v=20260829-room-polygons1" />
   </head>
   <body class="mode-launch">
     <section id="modeLauncher" class="mode-launcher" aria-label="选择使用方式">
@@ -215,8 +215,11 @@
             <button id="drawWindowButton" class="tool-button" type="button">窗</button>
             <button id="drawRailingButton" class="tool-button" type="button">栏杆</button>
             <button id="openInteriorLibraryButton" class="tool-button" type="button">内饰资源库</button>
+            <button id="autoLayoutButton" class="tool-button" type="button" disabled>智能布置</button>
             <button id="calibrateToolButton" class="tool-button" type="button">标定比例</button>
             <button id="measureToolButton" class="tool-button" type="button">测量</button>
+            <button id="roomInfoToggleButton" class="tool-button active" type="button" aria-pressed="true">房间信息：开</button>
+            <button id="roomEditorButton" class="tool-button" type="button" disabled>编辑房间</button>
             <input id="productModelInput" class="hidden-input" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" />
             <input id="interiorCatalogInput" class="hidden-input" type="file" accept=".json,application/json" />
             <div class="legend">
@@ -459,6 +462,101 @@
         <p class="interior-library-hint">模型稍后可放入 <code>assets/interiors/models/</code>，并在 <code>catalog.json</code> 注册。放置、移动、旋转和缩放都会检查碰撞。</p>
       </div>
     </section>
-    <script src="./app.js?v=20260722-lighting1"></script>
+    <section id="roomEditorModal" class="lighting-modal room-editor-modal" hidden role="dialog" aria-modal="true" aria-labelledby="roomEditorTitle">
+      <div class="lighting-dialog room-editor-dialog">
+        <div class="render-dialog-header">
+          <div>
+            <strong id="roomEditorTitle">房间信息</strong>
+            <small>系统会根据面积、长宽比和门窗关系推测用途，你可以随时修改。</small>
+          </div>
+          <button id="roomEditorCloseButton" class="render-close-button" type="button">关闭</button>
+        </div>
+        <label class="lighting-source-picker room-source-picker">
+          <span>当前房间</span>
+          <select id="roomEditorSelect"></select>
+        </label>
+        <div class="lighting-grid room-editor-grid">
+          <label>
+            <span>房间名称</span>
+            <input id="roomNameInput" type="text" maxlength="40" placeholder="例如：主卧" />
+          </label>
+          <label>
+            <span>房间用途</span>
+            <select id="roomTypeSelect">
+              <option value="living">客厅</option>
+              <option value="bedroom">卧室</option>
+              <option value="kitchen">厨房</option>
+              <option value="bathroom">卫生间</option>
+              <option value="dining">餐厅</option>
+              <option value="study">书房</option>
+              <option value="balcony">阳台</option>
+              <option value="storage">储物间</option>
+              <option value="other">其他空间</option>
+            </select>
+          </label>
+          <label>
+            <span>使用面积</span>
+            <span class="lighting-unit-input"><input id="roomAreaInput" type="text" readonly /><em>㎡</em></span>
+          </label>
+          <label>
+            <span>自动判断依据</span>
+            <input id="roomInferenceInput" type="text" readonly />
+          </label>
+        </div>
+        <section class="room-wall-lengths" aria-labelledby="roomWallLengthsTitle">
+          <strong id="roomWallLengthsTitle">墙壁长度</strong>
+          <div>
+            <span>上墙 <b id="roomTopWallLength">-</b></span>
+            <span>右墙 <b id="roomRightWallLength">-</b></span>
+            <span>下墙 <b id="roomBottomWallLength">-</b></span>
+            <span>左墙 <b id="roomLeftWallLength">-</b></span>
+          </div>
+          <div id="roomWallSegmentList" class="room-wall-segment-list" aria-label="逐段墙壁长度"></div>
+          <small>长度按当前比例计算；标定比例后会自动更新。</small>
+        </section>
+        <div class="lighting-footer room-editor-footer">
+          <button id="roomResetInferenceButton" type="button">恢复自动判断</button>
+          <button id="roomSaveButton" type="button">应用修改</button>
+        </div>
+      </div>
+    </section>
+    <section id="autoLayoutModal" class="lighting-modal auto-layout-modal" hidden role="dialog" aria-modal="true" aria-labelledby="autoLayoutTitle">
+      <div class="lighting-dialog auto-layout-dialog">
+        <div class="render-dialog-header">
+          <div>
+            <strong id="autoLayoutTitle">智能布置</strong>
+            <small>根据房间用途自动放置家具，并避开墙体、门窗、栏杆和已有家具。</small>
+          </div>
+          <button id="autoLayoutCloseButton" class="render-close-button" type="button">关闭</button>
+        </div>
+        <label class="lighting-source-picker auto-layout-picker">
+          <span>布置方案</span>
+          <select id="autoLayoutPresetSelect">
+            <option value="basic">基础布置</option>
+            <option value="rental">出租房</option>
+            <option value="family">家庭居住</option>
+          </select>
+        </label>
+        <section class="auto-layout-summary">
+          <strong id="autoLayoutPresetTitle">基础布置</strong>
+          <p id="autoLayoutPresetDescription">只放置每种房间最必要的核心家具，保持空间简洁。</p>
+          <div>
+            <span>已识别房间 <b id="autoLayoutRoomCount">0</b></span>
+            <span>自动家具 <b id="autoLayoutProductCount">0</b></span>
+            <span>安全通道 <b>门前禁放</b></span>
+          </div>
+        </section>
+        <label class="auto-layout-option">
+          <input id="autoLayoutReplaceInput" type="checkbox" checked />
+          <span>生成前替换上一次自动布置，保留手动添加的家具</span>
+        </label>
+        <p id="autoLayoutStatus" class="interior-library-status">请选择方案后生成；无需外部模型，将先使用分类占位件。</p>
+        <div class="auto-layout-actions">
+          <button id="clearAutoLayoutButton" type="button" disabled>清除自动布置</button>
+          <button id="generateAutoLayoutButton" type="button">生成布置</button>
+        </div>
+      </div>
+    </section>
+    <script src="./app.js?v=20260829-room-polygons1"></script>
   </body>
 </html>

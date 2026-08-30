@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>建筑平面生成能力</title>
-    <link rel="stylesheet" href="./styles.css?v=20260829-room-polygons1" />
+    <link rel="stylesheet" href="./styles.css?v=20260830-quantity-report1" />
   </head>
   <body class="mode-launch">
     <section id="modeLauncher" class="mode-launcher" aria-label="选择使用方式">
@@ -220,6 +220,7 @@
             <button id="measureToolButton" class="tool-button" type="button">测量</button>
             <button id="roomInfoToggleButton" class="tool-button active" type="button" aria-pressed="true">房间信息：开</button>
             <button id="roomEditorButton" class="tool-button" type="button" disabled>编辑房间</button>
+            <button id="quantityReportButton" class="tool-button" type="button" disabled>工程量清单</button>
             <input id="productModelInput" class="hidden-input" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" />
             <input id="interiorCatalogInput" class="hidden-input" type="file" accept=".json,application/json" />
             <div class="legend">
@@ -557,6 +558,89 @@
         </div>
       </div>
     </section>
-    <script src="./app.js?v=20260829-room-polygons1"></script>
+    <section id="quantityReportModal" class="lighting-modal quantity-report-modal" hidden role="dialog" aria-modal="true" aria-labelledby="quantityReportTitle">
+      <div class="lighting-dialog quantity-report-dialog">
+        <div class="render-dialog-header">
+          <div>
+            <strong id="quantityReportTitle">工程量清单</strong>
+            <small>根据当前房间、比例、墙高、门窗、栏杆、家具和灯光实时计算。</small>
+          </div>
+          <button id="quantityReportCloseButton" class="render-close-button" type="button">关闭</button>
+        </div>
+        <div class="quantity-report-toolbar">
+          <span id="quantityScaleStatus" class="quantity-scale-status">比例估算</span>
+          <small>共享门洞会在相邻房间的墙面与踢脚线中分别扣除，项目门窗数量只统计一次。</small>
+        </div>
+        <section id="quantityProjectSummary" class="quantity-project-summary" aria-label="项目工程量汇总"></section>
+        <section class="quantity-section" aria-labelledby="quantityRoomTitle">
+          <div class="quantity-section-title">
+            <strong id="quantityRoomTitle">按房间统计</strong>
+            <small>吊顶面积默认等于地面面积，可直接修改。</small>
+          </div>
+          <div class="quantity-table-wrap">
+            <table class="quantity-table">
+              <thead>
+                <tr>
+                  <th>房间</th>
+                  <th>用途</th>
+                  <th>地面 ㎡</th>
+                  <th>吊顶 ㎡</th>
+                  <th>墙面 ㎡</th>
+                  <th>踢脚线 m</th>
+                  <th>门/窗/开口</th>
+                  <th>栏杆</th>
+                  <th>家具</th>
+                  <th>灯具/点/线</th>
+                </tr>
+              </thead>
+              <tbody id="quantityRoomTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="quantity-section" aria-labelledby="quantityOpeningTitle">
+          <div class="quantity-section-title">
+            <strong id="quantityOpeningTitle">门窗清单</strong>
+            <small>宽度、高度和洞口面积均使用当前比例与构件参数。</small>
+          </div>
+          <div class="quantity-table-wrap">
+            <table class="quantity-table">
+              <thead><tr><th>类型</th><th>数量</th><th>总宽度 m</th><th>高度 m</th><th>总面积 ㎡</th></tr></thead>
+              <tbody id="quantityOpeningTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="quantity-section-grid">
+          <section class="quantity-section" aria-labelledby="quantityRailingTitle">
+            <div class="quantity-section-title"><strong id="quantityRailingTitle">栏杆清单</strong></div>
+            <div class="quantity-table-wrap">
+              <table class="quantity-table">
+                <thead><tr><th>编号</th><th>长度 m</th><th>高度 m</th><th>所属房间</th></tr></thead>
+                <tbody id="quantityRailingTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="quantity-section" aria-labelledby="quantityFurnitureTitle">
+            <div class="quantity-section-title"><strong id="quantityFurnitureTitle">家具清单</strong></div>
+            <div class="quantity-table-wrap">
+              <table class="quantity-table">
+                <thead><tr><th>分类</th><th>手动</th><th>智能</th><th>合计</th></tr></thead>
+                <tbody id="quantityFurnitureTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+        <section class="quantity-section" aria-labelledby="quantityLightingTitle">
+          <div class="quantity-section-title"><strong id="quantityLightingTitle">灯光清单</strong></div>
+          <div id="quantityLightingSummary" class="quantity-lighting-summary"></div>
+        </section>
+        <div class="quantity-report-actions">
+          <button id="quantityResetCeilingsButton" type="button">吊顶恢复为地面面积</button>
+          <span></span>
+          <button id="quantityExportCsvButton" type="button">导出 CSV</button>
+          <button id="quantityExportJsonButton" class="quantity-primary-button" type="button">导出 JSON</button>
+        </div>
+      </div>
+    </section>
+    <script src="./app.js?v=20260830-quantity-report1"></script>
   </body>
 </html>

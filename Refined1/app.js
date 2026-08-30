@@ -252,6 +252,19 @@ const elements = {
   roomWallSegmentList: document.querySelector("#roomWallSegmentList"),
   roomResetInferenceButton: document.querySelector("#roomResetInferenceButton"),
   roomSaveButton: document.querySelector("#roomSaveButton"),
+  quantityReportButton: document.querySelector("#quantityReportButton"),
+  quantityReportModal: document.querySelector("#quantityReportModal"),
+  quantityReportCloseButton: document.querySelector("#quantityReportCloseButton"),
+  quantityScaleStatus: document.querySelector("#quantityScaleStatus"),
+  quantityProjectSummary: document.querySelector("#quantityProjectSummary"),
+  quantityRoomTableBody: document.querySelector("#quantityRoomTableBody"),
+  quantityOpeningTableBody: document.querySelector("#quantityOpeningTableBody"),
+  quantityRailingTableBody: document.querySelector("#quantityRailingTableBody"),
+  quantityFurnitureTableBody: document.querySelector("#quantityFurnitureTableBody"),
+  quantityLightingSummary: document.querySelector("#quantityLightingSummary"),
+  quantityResetCeilingsButton: document.querySelector("#quantityResetCeilingsButton"),
+  quantityExportCsvButton: document.querySelector("#quantityExportCsvButton"),
+  quantityExportJsonButton: document.querySelector("#quantityExportJsonButton"),
   threeViewport: document.querySelector("#threeViewport"),
   threeStat: document.querySelector("#threeStat"),
   threeRoamButton: document.querySelector("#threeRoamButton"),
@@ -526,6 +539,8 @@ function cloneRoomMetadata(room) {
     typeSource: room.typeSource,
     nameSource: room.nameSource,
     inferenceReason: room.inferenceReason,
+    ceilingAreaSquareMeters: Number.isFinite(Number(room.ceilingAreaSquareMeters)) ? Number(room.ceilingAreaSquareMeters) : undefined,
+    ceilingAreaSource: room.ceilingAreaSource === "manual" ? "manual" : "floor-area-default",
   };
 }
 
@@ -693,6 +708,8 @@ function reconcileRoomMetadata(previous = state.roomMetadata) {
     const matched = matchRoomMetadata(room, previous, usedIds);
     const inferred = inferRoomType(room, rawRooms, openings, settings);
     const typeSource = matched?.typeSource === "manual" ? "manual" : "auto";
+    const areaSquareMeters = round(roomAreaSquareMeters(room, settings));
+    const hasManualCeiling = matched?.ceilingAreaSource === "manual" && Number.isFinite(Number(matched.ceilingAreaSquareMeters));
     return {
       id: matched?.id || room.id || `room-${index + 1}`,
       x: room.x,
@@ -703,13 +720,15 @@ function reconcileRoomMetadata(previous = state.roomMetadata) {
       center: room.center ? { ...room.center } : roomInteriorPoint(room),
       wallSegments: (room.wallSegments || []).map((segment) => ({ ...segment })),
       area: Number(room.area) || room.width * room.height,
-      areaSquareMeters: round(roomAreaSquareMeters(room, settings)),
+      areaSquareMeters,
       wallLengthsMillimeters: roomWallLengthsMillimeters(room, settings),
       type: typeSource === "manual" && ROOM_TYPE_DEFINITIONS[matched.type] ? matched.type : inferred.type,
       name: matched?.name || "",
       typeSource,
       nameSource: matched?.nameSource === "manual" ? "manual" : "auto",
       inferenceReason: inferred.reason,
+      ceilingAreaSquareMeters: hasManualCeiling ? Math.max(0, Number(matched.ceilingAreaSquareMeters)) : areaSquareMeters,
+      ceilingAreaSource: hasManualCeiling ? "manual" : "floor-area-default",
     };
   });
 
@@ -724,8 +743,10 @@ function reconcileRoomMetadata(previous = state.roomMetadata) {
   topology.rooms = reconciled;
   if (state.selectedRoomId && !reconciled.some((room) => room.id === state.selectedRoomId)) state.selectedRoomId = null;
   elements.roomEditorButton.disabled = reconciled.length === 0;
+  elements.quantityReportButton.disabled = reconciled.length === 0;
   renderRoomEditor();
   renderAutoLayoutEditor();
+  if (!elements.quantityReportModal.hidden) renderQuantityReport();
   return reconciled;
 }
 
@@ -3470,6 +3491,461 @@ function resetSelectedRoomInference() {
   renderThreeScene();
   elements.saveProjectButton.disabled = false;
   setStatus("已恢复自动判断");
+}
+
+function quantityRoomBoundarySegments(room, settings = getSettings()) {
+  return (room.wallLengthsMillimeters || roomWallLengthsMillimeters(room, settings)).segments || [];
+}
+
+function quantityRoomsForBoundaryComponent(component, settings = getSettings()) {
+  const midpoint = {
+    x: (Number(component.x1) + Number(component.x2)) / 2,
+    y: (Number(component.y1) + Number(component.y2)) / 2,
+  };
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness, settings.minWallThickness, 6) * 1.4;
+  return state.roomMetadata
+    .filter((room) => quantityRoomBoundarySegments(room, settings)
+      .some((segment) => distanceToSegment(midpoint, segment) <= tolerance))
+    .map((room) => room.id);
+}
+
+function quantityRoomForPoint(point, preferredRoomId = null) {
+  if (preferredRoomId) {
+    const preferred = state.roomMetadata.find((room) => room.id === preferredRoomId);
+    if (preferred && pointInRoomPolygon(point, preferred)) return preferred;
+  }
+  return state.roomMetadata.find((room) => pointInRoomPolygon(point, room)) || null;
+}
+
+function quantitySegmentWallHeightMeters(segment, settings = getSettings()) {
+  const midpoint = { x: (segment.x1 + segment.x2) / 2, y: (segment.y1 + segment.y2) / 2 };
+  const tolerance = Math.max(settings.mergeGap, settings.maxThickness, 6) * 1.5;
+  let closest = null;
+  for (const line of state.lines) {
+    if (line.orientation !== segment.orientation) continue;
+    const separation = distanceToSegment(midpoint, line);
+    if (separation > tolerance || (closest && separation >= closest.separation)) continue;
+    closest = { line, separation };
+  }
+  return closest ? lineHeightMeters(closest.line) : WALL_HEIGHT_METERS;
+}
+
+function buildQuantityOpeningItems(settings = getSettings()) {
+  return constructibleOpenings().map((opening, index) => {
+    const profile = openingProfileMillimeters(opening);
+    const widthMillimeters = Math.max(0, pxToMillimeters(distance(
+      { x: Number(opening.x1), y: Number(opening.y1) },
+      { x: Number(opening.x2), y: Number(opening.y2) },
+    ), settings));
+    return {
+      id: opening.id || `opening-${index + 1}`,
+      type: openingVariant(opening),
+      typeLabel: openingKindLabel(opening),
+      kind: openingVariantDefinition(opening).kind,
+      widthMillimeters: round(widthMillimeters),
+      heightMillimeters: round(profile.height),
+      sillHeightMillimeters: round(profile.sill),
+      areaSquareMeters: round((widthMillimeters * profile.height) / 1000000),
+      roomIds: quantityRoomsForBoundaryComponent(opening, settings),
+    };
+  });
+}
+
+function buildQuantityRailingItems(settings = getSettings()) {
+  return state.manualRailings.map((railing, index) => {
+    const midpoint = { x: (railing.x1 + railing.x2) / 2, y: (railing.y1 + railing.y2) / 2 };
+    const room = quantityRoomForPoint(midpoint);
+    return {
+      id: railing.id || `railing-${index + 1}`,
+      lengthMeters: round(pxToMillimeters(distance(
+        { x: railing.x1, y: railing.y1 },
+        { x: railing.x2, y: railing.y2 },
+      ), settings) / 1000),
+      heightMeters: round((Number(railing.heightMillimeters) || RAILING_DEFAULT_HEIGHT_MM) / 1000),
+      roomId: room?.id || null,
+      roomName: room?.name || "未归入房间",
+    };
+  });
+}
+
+function buildQuantityFurnitureItems() {
+  return state.productModels.map((product, index) => {
+    const room = quantityRoomForPoint(
+      { x: Number(product.planX) || 0, y: Number(product.planY) || 0 },
+      product.autoLayout?.roomId || null,
+    );
+    return {
+      id: product.id || `product-${index + 1}`,
+      name: product.name || productSubtypeLabel(product),
+      category: product.category || "custom",
+      categoryLabel: productCategoryLabel(product.category || "custom"),
+      source: product.autoLayout?.generated === true ? "smart-layout" : "manual",
+      roomId: room?.id || null,
+      roomName: room?.name || "未归入房间",
+    };
+  });
+}
+
+function buildQuantityLightItems() {
+  return state.lightSources.map((source, index) => {
+    const room = quantityRoomForPoint({ x: Number(source.planX) || 0, y: Number(source.planY) || 0 });
+    return {
+      id: source.id || `light-${index + 1}`,
+      name: source.name || (source.type === "line" ? "线光源" : "点光源"),
+      type: source.type === "line" ? "line" : "point",
+      attachedToFixture: Boolean(source.ownerProductId),
+      roomId: room?.id || null,
+      roomName: room?.name || "未归入房间",
+    };
+  });
+}
+
+function buildQuantityCategoryRows(items, keyName, labelName) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = item[keyName];
+    if (!groups.has(key)) groups.set(key, { key, label: item[labelName], items: [] });
+    groups.get(key).items.push(item);
+  }
+  return [...groups.values()];
+}
+
+function buildQuantityReport() {
+  const settings = getSettings();
+  const millimetersPerPixel = getMillimetersPerPixel(settings);
+  const openings = buildQuantityOpeningItems(settings);
+  const railings = buildQuantityRailingItems(settings);
+  const furniture = buildQuantityFurnitureItems();
+  const lights = buildQuantityLightItems();
+  const fixtures = furniture.filter((item) => item.category === "lighting");
+  const rooms = state.roomMetadata.map((room) => {
+    const floorAreaSquareMeters = round(roomAreaSquareMeters(room, settings));
+    const ceilingAreaSquareMeters = room.ceilingAreaSource === "manual" && Number.isFinite(Number(room.ceilingAreaSquareMeters))
+      ? round(Math.max(0, Number(room.ceilingAreaSquareMeters)))
+      : floorAreaSquareMeters;
+    const segments = quantityRoomBoundarySegments(room, settings);
+    const perimeterMeters = round(segments.reduce((sum, segment) => sum + segment.lengthMillimeters, 0) / 1000);
+    const roomOpenings = openings.filter((opening) => opening.roomIds.includes(room.id));
+    const grossWallArea = segments.reduce((sum, segment) => (
+      sum + (segment.lengthMillimeters / 1000) * quantitySegmentWallHeightMeters(segment, settings)
+    ), 0);
+    const openingArea = roomOpenings.reduce((sum, opening) => sum + opening.areaSquareMeters, 0);
+    const skirtingDeduction = roomOpenings
+      .filter((opening) => opening.kind === "door" || opening.kind === "opening")
+      .reduce((sum, opening) => sum + opening.widthMillimeters / 1000, 0);
+    const roomRailings = railings.filter((railing) => railing.roomId === room.id);
+    const roomFurniture = furniture.filter((product) => product.roomId === room.id);
+    const roomLights = lights.filter((light) => light.roomId === room.id);
+    const roomFixtures = roomFurniture.filter((product) => product.category === "lighting");
+    return {
+      id: room.id,
+      name: room.name,
+      type: room.type,
+      typeLabel: roomTypeLabel(room.type),
+      floorAreaSquareMeters,
+      ceilingAreaSquareMeters,
+      ceilingAreaSource: room.ceilingAreaSource === "manual" ? "manual" : "floor-area-default",
+      perimeterMeters,
+      wallAreaSquareMeters: round(Math.max(0, grossWallArea - openingArea)),
+      skirtingLengthMeters: round(Math.max(0, perimeterMeters - skirtingDeduction)),
+      openings: {
+        doors: roomOpenings.filter((opening) => opening.kind === "door").length,
+        windows: roomOpenings.filter((opening) => opening.kind === "window").length,
+        openPassages: roomOpenings.filter((opening) => opening.kind === "opening").length,
+        total: roomOpenings.length,
+      },
+      railings: {
+        count: roomRailings.length,
+        totalLengthMeters: round(roomRailings.reduce((sum, railing) => sum + railing.lengthMeters, 0)),
+      },
+      furniture: {
+        manual: roomFurniture.filter((product) => product.source === "manual").length,
+        smartLayout: roomFurniture.filter((product) => product.source === "smart-layout").length,
+        total: roomFurniture.length,
+      },
+      lighting: {
+        fixtures: roomFixtures.length,
+        pointSources: roomLights.filter((light) => light.type === "point").length,
+        lineSources: roomLights.filter((light) => light.type === "line").length,
+      },
+    };
+  });
+  const openingCategories = buildQuantityCategoryRows(openings, "type", "typeLabel").map((group) => ({
+    type: group.key,
+    typeLabel: group.label,
+    count: group.items.length,
+    totalWidthMeters: round(group.items.reduce((sum, item) => sum + item.widthMillimeters, 0) / 1000),
+    minimumHeightMeters: round(Math.min(...group.items.map((item) => item.heightMillimeters)) / 1000),
+    maximumHeightMeters: round(Math.max(...group.items.map((item) => item.heightMillimeters)) / 1000),
+    totalAreaSquareMeters: round(group.items.reduce((sum, item) => sum + item.areaSquareMeters, 0)),
+  }));
+  const furnitureCategories = buildQuantityCategoryRows(furniture, "category", "categoryLabel").map((group) => ({
+    category: group.key,
+    categoryLabel: group.label,
+    manual: group.items.filter((item) => item.source === "manual").length,
+    smartLayout: group.items.filter((item) => item.source === "smart-layout").length,
+    total: group.items.length,
+  }));
+  const project = {
+    roomCount: rooms.length,
+    floorAreaSquareMeters: round(rooms.reduce((sum, room) => sum + room.floorAreaSquareMeters, 0)),
+    ceilingAreaSquareMeters: round(rooms.reduce((sum, room) => sum + room.ceilingAreaSquareMeters, 0)),
+    wallAreaSquareMeters: round(rooms.reduce((sum, room) => sum + room.wallAreaSquareMeters, 0)),
+    skirtingLengthMeters: round(rooms.reduce((sum, room) => sum + room.skirtingLengthMeters, 0)),
+    openingCount: openings.length,
+    openingAreaSquareMeters: round(openings.reduce((sum, opening) => sum + opening.areaSquareMeters, 0)),
+    railingCount: railings.length,
+    railingLengthMeters: round(railings.reduce((sum, railing) => sum + railing.lengthMeters, 0)),
+    furnitureCount: furniture.length,
+    manualFurnitureCount: furniture.filter((item) => item.source === "manual").length,
+    smartLayoutFurnitureCount: furniture.filter((item) => item.source === "smart-layout").length,
+    fixtureCount: fixtures.length,
+    pointLightCount: lights.filter((light) => light.type === "point").length,
+    lineLightCount: lights.filter((light) => light.type === "line").length,
+  };
+  return {
+    schemaVersion: "gewu-quantity-report-v1",
+    generatedAt: new Date().toISOString(),
+    source: state.sourceName,
+    scale: {
+      millimetersPerPixel: round(millimetersPerPixel),
+      source: state.manualMillimetersPerPixel ? "manual-calibration" : "outer-wall-default",
+      calibrated: Boolean(state.manualMillimetersPerPixel),
+    },
+    assumptions: {
+      defaultWallHeightMeters: WALL_HEIGHT_METERS,
+      ceilingArea: "默认等于地面面积，房间可手动调整",
+      wallArea: "房间边界长度乘对应墙高，再扣除门窗洞口面积",
+      skirting: "房间周长扣除门和普通开口宽度",
+    },
+    rooms,
+    components: { openings, railings, furniture, lights },
+    categories: { openings: openingCategories, furniture: furnitureCategories },
+    project,
+  };
+}
+
+function appendQuantityCell(row, value, className = "") {
+  const cell = document.createElement("td");
+  cell.textContent = String(value);
+  if (className) cell.className = className;
+  row.appendChild(cell);
+  return cell;
+}
+
+function appendQuantityEmptyRow(body, columnCount, text = "暂无数据") {
+  const row = document.createElement("tr");
+  const cell = appendQuantityCell(row, text, "quantity-empty-row");
+  cell.colSpan = columnCount;
+  body.appendChild(row);
+}
+
+function renderQuantityMetrics(container, metrics) {
+  container.replaceChildren();
+  for (const [label, value] of metrics) {
+    const item = document.createElement("div");
+    const caption = document.createElement("span");
+    const amount = document.createElement("b");
+    caption.textContent = label;
+    amount.textContent = value;
+    item.append(caption, amount);
+    container.appendChild(item);
+  }
+}
+
+function commitQuantityCeilingArea(roomId, value) {
+  const room = state.roomMetadata.find((candidate) => candidate.id === roomId);
+  const area = Number(value);
+  if (!room || !Number.isFinite(area) || area < 0) {
+    renderQuantityReport();
+    setStatus("吊顶面积必须是大于或等于 0 的数字");
+    return;
+  }
+  pushUndoSnapshot("edit-ceiling-area");
+  room.ceilingAreaSquareMeters = round(area);
+  room.ceilingAreaSource = "manual";
+  elements.saveProjectButton.disabled = false;
+  renderQuantityReport();
+  setStatus(`${room.name}吊顶面积已更新`);
+}
+
+function renderQuantityReport() {
+  const report = buildQuantityReport();
+  elements.quantityReportButton.disabled = report.rooms.length === 0;
+  elements.quantityScaleStatus.textContent = report.scale.calibrated
+    ? `已标定 · ${report.scale.millimetersPerPixel} mm/px`
+    : `比例估算 · ${report.scale.millimetersPerPixel} mm/px`;
+  elements.quantityScaleStatus.classList.toggle("is-calibrated", report.scale.calibrated);
+  renderQuantityMetrics(elements.quantityProjectSummary, [
+    ["房间", `${report.project.roomCount} 个`],
+    ["地面", `${report.project.floorAreaSquareMeters.toFixed(2)} ㎡`],
+    ["吊顶", `${report.project.ceilingAreaSquareMeters.toFixed(2)} ㎡`],
+    ["墙面", `${report.project.wallAreaSquareMeters.toFixed(2)} ㎡`],
+    ["踢脚线", `${report.project.skirtingLengthMeters.toFixed(2)} m`],
+    ["门窗洞口", `${report.project.openingCount} 个 · ${report.project.openingAreaSquareMeters.toFixed(2)} ㎡`],
+    ["栏杆", `${report.project.railingCount} 段 · ${report.project.railingLengthMeters.toFixed(2)} m`],
+    ["家具", `${report.project.furnitureCount} 件`],
+    ["光源", `${report.project.pointLightCount} 点 · ${report.project.lineLightCount} 线`],
+  ]);
+
+  elements.quantityRoomTableBody.replaceChildren();
+  for (const room of report.rooms) {
+    const row = document.createElement("tr");
+    appendQuantityCell(row, room.name);
+    appendQuantityCell(row, room.typeLabel);
+    appendQuantityCell(row, room.floorAreaSquareMeters.toFixed(2));
+    const ceilingCell = document.createElement("td");
+    const ceilingInput = document.createElement("input");
+    ceilingInput.type = "number";
+    ceilingInput.min = "0";
+    ceilingInput.step = "0.01";
+    ceilingInput.value = room.ceilingAreaSquareMeters.toFixed(2);
+    ceilingInput.className = `quantity-ceiling-input${room.ceilingAreaSource === "manual" ? " is-manual" : ""}`;
+    ceilingInput.setAttribute("aria-label", `${room.name}吊顶面积`);
+    ceilingInput.addEventListener("change", () => commitQuantityCeilingArea(room.id, ceilingInput.value));
+    ceilingCell.appendChild(ceilingInput);
+    row.appendChild(ceilingCell);
+    appendQuantityCell(row, room.wallAreaSquareMeters.toFixed(2));
+    appendQuantityCell(row, room.skirtingLengthMeters.toFixed(2));
+    appendQuantityCell(row, `${room.openings.doors}/${room.openings.windows}/${room.openings.openPassages}`);
+    appendQuantityCell(row, `${room.railings.count} · ${room.railings.totalLengthMeters.toFixed(2)}m`);
+    appendQuantityCell(row, `${room.furniture.manual}/${room.furniture.smartLayout}/${room.furniture.total}`);
+    appendQuantityCell(row, `${room.lighting.fixtures}/${room.lighting.pointSources}/${room.lighting.lineSources}`);
+    elements.quantityRoomTableBody.appendChild(row);
+  }
+  if (!report.rooms.length) appendQuantityEmptyRow(elements.quantityRoomTableBody, 10);
+
+  elements.quantityOpeningTableBody.replaceChildren();
+  for (const category of report.categories.openings) {
+    const row = document.createElement("tr");
+    appendQuantityCell(row, category.typeLabel);
+    appendQuantityCell(row, category.count);
+    appendQuantityCell(row, category.totalWidthMeters.toFixed(2));
+    appendQuantityCell(row, category.minimumHeightMeters === category.maximumHeightMeters
+      ? category.minimumHeightMeters.toFixed(2)
+      : `${category.minimumHeightMeters.toFixed(2)}–${category.maximumHeightMeters.toFixed(2)}`);
+    appendQuantityCell(row, category.totalAreaSquareMeters.toFixed(2));
+    elements.quantityOpeningTableBody.appendChild(row);
+  }
+  if (!report.categories.openings.length) appendQuantityEmptyRow(elements.quantityOpeningTableBody, 5);
+
+  elements.quantityRailingTableBody.replaceChildren();
+  for (const railing of report.components.railings) {
+    const row = document.createElement("tr");
+    appendQuantityCell(row, railing.id);
+    appendQuantityCell(row, railing.lengthMeters.toFixed(2));
+    appendQuantityCell(row, railing.heightMeters.toFixed(2));
+    appendQuantityCell(row, railing.roomName);
+    elements.quantityRailingTableBody.appendChild(row);
+  }
+  if (!report.components.railings.length) appendQuantityEmptyRow(elements.quantityRailingTableBody, 4);
+
+  elements.quantityFurnitureTableBody.replaceChildren();
+  for (const category of report.categories.furniture) {
+    const row = document.createElement("tr");
+    appendQuantityCell(row, category.categoryLabel);
+    appendQuantityCell(row, category.manual);
+    appendQuantityCell(row, category.smartLayout);
+    appendQuantityCell(row, category.total);
+    elements.quantityFurnitureTableBody.appendChild(row);
+  }
+  if (!report.categories.furniture.length) appendQuantityEmptyRow(elements.quantityFurnitureTableBody, 4);
+
+  renderQuantityMetrics(elements.quantityLightingSummary, [
+    ["灯具", `${report.project.fixtureCount} 个`],
+    ["点光源", `${report.project.pointLightCount} 个`],
+    ["线光源", `${report.project.lineLightCount} 个`],
+  ]);
+  return report;
+}
+
+function openQuantityReport() {
+  if (!state.roomMetadata.length) {
+    setStatus("还没有可统计的闭合房间");
+    return;
+  }
+  renderQuantityReport();
+  elements.quantityReportModal.hidden = false;
+  elements.quantityReportCloseButton.focus({ preventScroll: true });
+}
+
+function closeQuantityReport() {
+  elements.quantityReportModal.hidden = true;
+}
+
+function resetQuantityCeilingAreas() {
+  const manualRooms = state.roomMetadata.filter((room) => room.ceilingAreaSource === "manual");
+  if (!manualRooms.length) {
+    setStatus("吊顶面积已经使用地面面积");
+    return;
+  }
+  pushUndoSnapshot("reset-ceiling-areas");
+  for (const room of manualRooms) {
+    room.ceilingAreaSquareMeters = round(roomAreaSquareMeters(room));
+    room.ceilingAreaSource = "floor-area-default";
+  }
+  elements.saveProjectButton.disabled = false;
+  renderQuantityReport();
+  setStatus("吊顶面积已恢复为地面面积");
+}
+
+function quantityCsvCell(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function quantityCsvRow(values) {
+  return values.map(quantityCsvCell).join(",");
+}
+
+function quantityReportToCsv(report) {
+  const rows = [
+    quantityCsvRow(["工程量清单"]),
+    quantityCsvRow(["项目", report.source]),
+    quantityCsvRow(["比例来源", report.scale.calibrated ? "手动标定" : "外墙厚度估算"]),
+    quantityCsvRow(["毫米/像素", report.scale.millimetersPerPixel]),
+    "",
+    quantityCsvRow(["按房间统计"]),
+    quantityCsvRow(["房间", "用途", "地面面积(㎡)", "吊顶面积(㎡)", "墙面面积(㎡)", "踢脚线(m)", "门", "窗", "普通开口", "栏杆数", "栏杆长度(m)", "手动家具", "智能家具", "家具合计", "灯具", "点光源", "线光源"]),
+  ];
+  for (const room of report.rooms) rows.push(quantityCsvRow([
+    room.name, room.typeLabel, room.floorAreaSquareMeters, room.ceilingAreaSquareMeters,
+    room.wallAreaSquareMeters, room.skirtingLengthMeters, room.openings.doors, room.openings.windows,
+    room.openings.openPassages, room.railings.count, room.railings.totalLengthMeters,
+    room.furniture.manual, room.furniture.smartLayout, room.furniture.total,
+    room.lighting.fixtures, room.lighting.pointSources, room.lighting.lineSources,
+  ]));
+  rows.push("", quantityCsvRow(["门窗明细"]), quantityCsvRow(["编号", "类型", "宽度(mm)", "高度(mm)", "底边(mm)", "面积(㎡)", "所属房间"]));
+  for (const opening of report.components.openings) rows.push(quantityCsvRow([
+    opening.id, opening.typeLabel, opening.widthMillimeters, opening.heightMillimeters,
+    opening.sillHeightMillimeters, opening.areaSquareMeters,
+    opening.roomIds.map((roomId) => report.rooms.find((room) => room.id === roomId)?.name || roomId).join(" / "),
+  ]));
+  rows.push("", quantityCsvRow(["栏杆明细"]), quantityCsvRow(["编号", "长度(m)", "高度(m)", "所属房间"]));
+  for (const railing of report.components.railings) rows.push(quantityCsvRow([railing.id, railing.lengthMeters, railing.heightMeters, railing.roomName]));
+  rows.push("", quantityCsvRow(["家具分类"]), quantityCsvRow(["分类", "手动", "智能布置", "合计"]));
+  for (const category of report.categories.furniture) rows.push(quantityCsvRow([category.categoryLabel, category.manual, category.smartLayout, category.total]));
+  rows.push("", quantityCsvRow(["灯光汇总"]), quantityCsvRow(["灯具", "点光源", "线光源"]));
+  rows.push(quantityCsvRow([report.project.fixtureCount, report.project.pointLightCount, report.project.lineLightCount]));
+  rows.push("", quantityCsvRow(["项目汇总"]), quantityCsvRow(["房间数", "地面面积(㎡)", "吊顶面积(㎡)", "墙面面积(㎡)", "踢脚线(m)", "门窗数", "门窗面积(㎡)", "栏杆数", "栏杆长度(m)", "家具数", "灯具数", "点光源", "线光源"]));
+  rows.push(quantityCsvRow([
+    report.project.roomCount, report.project.floorAreaSquareMeters, report.project.ceilingAreaSquareMeters,
+    report.project.wallAreaSquareMeters, report.project.skirtingLengthMeters, report.project.openingCount,
+    report.project.openingAreaSquareMeters, report.project.railingCount, report.project.railingLengthMeters,
+    report.project.furnitureCount, report.project.fixtureCount, report.project.pointLightCount, report.project.lineLightCount,
+  ]));
+  return rows.join("\r\n");
+}
+
+function exportQuantityReportJson() {
+  downloadJson(buildQuantityReport(), `${state.sourceName}-quantity-report.json`);
+  setStatus("工程量 JSON 已导出");
+}
+
+function exportQuantityReportCsv() {
+  const csv = quantityReportToCsv(buildQuantityReport());
+  downloadBlob(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }), `${state.sourceName}-quantity-report.csv`);
+  setStatus("工程量 CSV 已导出");
 }
 
 function drawSelectedLine(context) {
@@ -9490,6 +9966,7 @@ function exportJson() {
     products: state.productModels.map(cloneProductMeta),
     lightSources: state.lightSources.map(cloneLightSource),
     rooms: state.roomMetadata.map(cloneRoomMetadata),
+    quantityReport: buildQuantityReport(),
     topology: state.topology,
     settings,
   };
@@ -9764,6 +10241,12 @@ function isEditableTarget(target) {
 }
 
 function handleDocumentKeyDown(event) {
+  if (!elements.quantityReportModal.hidden && event.key === "Escape") {
+    event.preventDefault();
+    closeQuantityReport();
+    setStatus("已关闭工程量清单");
+    return;
+  }
   if (!elements.autoLayoutModal.hidden && event.key === "Escape") {
     event.preventDefault();
     closeAutoLayoutEditor();
@@ -10456,6 +10939,14 @@ elements.roomEditorSelect.addEventListener("change", () => {
 });
 elements.roomSaveButton.addEventListener("click", commitRoomEditor);
 elements.roomResetInferenceButton.addEventListener("click", resetSelectedRoomInference);
+elements.quantityReportButton.addEventListener("click", openQuantityReport);
+elements.quantityReportCloseButton.addEventListener("click", closeQuantityReport);
+elements.quantityReportModal.addEventListener("click", (event) => {
+  if (event.target === elements.quantityReportModal) closeQuantityReport();
+});
+elements.quantityResetCeilingsButton.addEventListener("click", resetQuantityCeilingAreas);
+elements.quantityExportCsvButton.addEventListener("click", exportQuantityReportCsv);
+elements.quantityExportJsonButton.addEventListener("click", exportQuantityReportJson);
 elements.roomNameInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
@@ -10577,6 +11068,12 @@ window.GewuLighting = Object.freeze({
     return deleteSelectedLightSource();
   },
   kelvinToSrgb: (temperatureKelvin) => ({ ...kelvinToSrgb(temperatureKelvin) }),
+});
+window.GewuQuantityReport = Object.freeze({
+  build: () => structuredClone(buildQuantityReport()),
+  toCsv: () => quantityReportToCsv(buildQuantityReport()),
+  exportJson: exportQuantityReportJson,
+  exportCsv: exportQuantityReportCsv,
 });
 ensureInteriorCatalogReady();
 syncRoomInfoToggle();

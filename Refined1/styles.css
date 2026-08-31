@@ -601,7 +601,15 @@ p {
 }
 
 .lighting-dialog.quantity-report-dialog {
-  width: min(1180px, 100%);
+  width: min(920px, calc(100vw - 220px));
+  max-height: calc(100vh - 24px);
+}
+
+.lighting-modal.quantity-report-modal {
+  place-items: center end;
+  padding: 12px;
+  background: rgba(18, 29, 35, 0.22);
+  backdrop-filter: none;
 }
 
 .quantity-report-toolbar {
@@ -629,6 +637,103 @@ p {
 .quantity-scale-status.is-calibrated {
   background: rgba(47, 128, 111, 0.12);
   color: var(--accent);
+}
+
+.quantity-trace-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid rgba(215, 71, 50, 0.3);
+  border-radius: 9px;
+  background: #fff9f5;
+  box-shadow: inset 3px 0 0 #d74732;
+}
+
+.quantity-trace-panel[hidden] {
+  display: none;
+}
+
+.quantity-trace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quantity-trace-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.quantity-trace-header small,
+.quantity-trace-sources > small {
+  color: #9a4a3a;
+  font-weight: 700;
+}
+
+.quantity-trace-result {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.quantity-trace-formula {
+  display: block;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(215, 71, 50, 0.18);
+  border-radius: 7px;
+  background: #fff;
+  color: #7a3024;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  white-space: nowrap;
+}
+
+.quantity-trace-inputs {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.quantity-trace-inputs dt {
+  color: var(--muted);
+}
+
+.quantity-trace-inputs dd {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.quantity-trace-sources {
+  display: grid;
+  gap: 7px;
+}
+
+.quantity-trace-sources > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quantity-source-chip {
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: rgba(215, 71, 50, 0.1);
+  color: #7a3024;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 11px;
+}
+
+.quantity-trace-history {
+  padding-top: 10px;
+  border-top: 1px solid rgba(215, 71, 50, 0.18);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .quantity-project-summary,
@@ -718,6 +823,23 @@ p {
   border-bottom: 0;
 }
 
+.quantity-trace-target {
+  cursor: pointer;
+  text-decoration: underline dotted rgba(215, 71, 50, 0.7);
+  text-underline-offset: 3px;
+}
+
+.quantity-trace-target:hover,
+.quantity-trace-target:focus-visible,
+.quantity-trace-row:hover td,
+.quantity-trace-row:focus-visible td,
+.quantity-trace-target.is-active,
+.quantity-trace-row.is-active td {
+  background: #fff0e9;
+  color: #7a3024;
+  outline: none;
+}
+
 .quantity-ceiling-input {
   width: 86px;
   min-height: 32px;
@@ -753,6 +875,17 @@ p {
 }
 
 @media (max-width: 760px) {
+  .lighting-dialog.quantity-report-dialog {
+    width: 100%;
+  }
+
+  .lighting-modal.quantity-report-modal {
+    place-items: center;
+    padding: 8px;
+    background: rgba(18, 29, 35, 0.62);
+    backdrop-filter: blur(4px);
+  }
+
   .quantity-project-summary,
   .quantity-lighting-summary,
   .quantity-section-grid {

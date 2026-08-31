@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>建筑平面生成能力</title>
-    <link rel="stylesheet" href="./styles.css?v=20260830-quantity-report1" />
+    <link rel="stylesheet" href="./styles.css?v=20260831-quantity-trace1" />
   </head>
   <body class="mode-launch">
     <section id="modeLauncher" class="mode-launcher" aria-label="选择使用方式">
@@ -569,8 +569,25 @@
         </div>
         <div class="quantity-report-toolbar">
           <span id="quantityScaleStatus" class="quantity-scale-status">比例估算</span>
-          <small>共享门洞会在相邻房间的墙面与踢脚线中分别扣除，项目门窗数量只统计一次。</small>
+          <small>点击带下划线的工程量或清单行，可在图纸中高亮来源并查看计算公式。</small>
         </div>
+        <aside id="quantityTracePanel" class="quantity-trace-panel" hidden aria-live="polite">
+          <div class="quantity-trace-header">
+            <div>
+              <small>计算追溯</small>
+              <strong id="quantityTraceTitle">选择一项工程量</strong>
+            </div>
+            <button id="quantityTraceClearButton" type="button">清除高亮</button>
+          </div>
+          <div id="quantityTraceResult" class="quantity-trace-result"></div>
+          <code id="quantityTraceFormula" class="quantity-trace-formula"></code>
+          <dl id="quantityTraceInputs" class="quantity-trace-inputs"></dl>
+          <div class="quantity-trace-sources">
+            <small>来源构件</small>
+            <div id="quantityTraceSourceList"></div>
+          </div>
+          <div id="quantityTraceHistory" class="quantity-trace-history" hidden></div>
+        </aside>
         <section id="quantityProjectSummary" class="quantity-project-summary" aria-label="项目工程量汇总"></section>
         <section class="quantity-section" aria-labelledby="quantityRoomTitle">
           <div class="quantity-section-title">
@@ -641,6 +658,6 @@
         </div>
       </div>
     </section>
-    <script src="./app.js?v=20260830-quantity-report1"></script>
+    <script src="./app.js?v=20260831-quantity-trace1"></script>
   </body>
 </html>

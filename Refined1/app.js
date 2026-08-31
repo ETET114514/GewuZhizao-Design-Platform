@@ -24,6 +24,7 @@ const SNAP_POINT_DISTANCE_MM = 50;
 const MANUAL_WALL_MIN_LENGTH_MM = 20;
 const RAILING_DEFAULT_HEIGHT_MM = 1100;
 const RAILING_DEFAULT_THICKNESS_MM = 50;
+const QUANTITY_RULE_VERSION = "gewu-quantity-rules-2026-08-31";
 const FLOOR_PLAN_AI_PROVIDER = "cubicasa";
 const FLOOR_PLAN_AI_PROVIDER_LABELS = {
   cubicasa: "CubiCasa5K 深度学习",
@@ -256,6 +257,14 @@ const elements = {
   quantityReportModal: document.querySelector("#quantityReportModal"),
   quantityReportCloseButton: document.querySelector("#quantityReportCloseButton"),
   quantityScaleStatus: document.querySelector("#quantityScaleStatus"),
+  quantityTracePanel: document.querySelector("#quantityTracePanel"),
+  quantityTraceTitle: document.querySelector("#quantityTraceTitle"),
+  quantityTraceResult: document.querySelector("#quantityTraceResult"),
+  quantityTraceFormula: document.querySelector("#quantityTraceFormula"),
+  quantityTraceInputs: document.querySelector("#quantityTraceInputs"),
+  quantityTraceSourceList: document.querySelector("#quantityTraceSourceList"),
+  quantityTraceHistory: document.querySelector("#quantityTraceHistory"),
+  quantityTraceClearButton: document.querySelector("#quantityTraceClearButton"),
   quantityProjectSummary: document.querySelector("#quantityProjectSummary"),
   quantityRoomTableBody: document.querySelector("#quantityRoomTableBody"),
   quantityOpeningTableBody: document.querySelector("#quantityOpeningTableBody"),
@@ -317,6 +326,7 @@ const state = {
   topology: createEmptyTopology(),
   roomMetadata: [],
   selectedRoomId: null,
+  quantityTraceSelection: null,
   roomInfoVisible: true,
   autoLayoutPreset: "basic",
   selectedLineIndex: null,
@@ -541,6 +551,9 @@ function cloneRoomMetadata(room) {
     inferenceReason: room.inferenceReason,
     ceilingAreaSquareMeters: Number.isFinite(Number(room.ceilingAreaSquareMeters)) ? Number(room.ceilingAreaSquareMeters) : undefined,
     ceilingAreaSource: room.ceilingAreaSource === "manual" ? "manual" : "floor-area-default",
+    ceilingAreaAdjustments: Array.isArray(room.ceilingAreaAdjustments)
+      ? room.ceilingAreaAdjustments.map((adjustment) => ({ ...adjustment }))
+      : [],
   };
 }
 
@@ -729,6 +742,9 @@ function reconcileRoomMetadata(previous = state.roomMetadata) {
       inferenceReason: inferred.reason,
       ceilingAreaSquareMeters: hasManualCeiling ? Math.max(0, Number(matched.ceilingAreaSquareMeters)) : areaSquareMeters,
       ceilingAreaSource: hasManualCeiling ? "manual" : "floor-area-default",
+      ceilingAreaAdjustments: Array.isArray(matched?.ceilingAreaAdjustments)
+        ? matched.ceilingAreaAdjustments.map((adjustment) => ({ ...adjustment }))
+        : [],
     };
   });
 
@@ -939,6 +955,7 @@ function ensureDrawingCanvas() {
   state.topology = createEmptyTopology();
   state.roomMetadata = [];
   state.selectedRoomId = null;
+  state.quantityTraceSelection = null;
   state.selectedLineIndex = null;
   state.selectedOpeningIndex = null;
   state.selectedOpeningId = null;
@@ -992,6 +1009,7 @@ async function loadImageFromFile(file) {
     state.topology = createEmptyTopology();
     state.roomMetadata = [];
     state.selectedRoomId = null;
+    state.quantityTraceSelection = null;
     state.selectedLineIndex = null;
     state.selectedOpeningIndex = null;
     state.selectedOpeningId = null;
@@ -2906,6 +2924,7 @@ function renderPreview() {
   drawOpeningContinuity(ctx);
   drawSelectedLine(ctx);
   drawTopology(ctx);
+  drawQuantityTraceHighlight(ctx);
   drawRailings(ctx);
   drawProductModels(ctx);
   drawLightSources(ctx);
@@ -3517,7 +3536,7 @@ function quantityRoomForPoint(point, preferredRoomId = null) {
   return state.roomMetadata.find((room) => pointInRoomPolygon(point, room)) || null;
 }
 
-function quantitySegmentWallHeightMeters(segment, settings = getSettings()) {
+function quantitySegmentWallMatch(segment, settings = getSettings()) {
   const midpoint = { x: (segment.x1 + segment.x2) / 2, y: (segment.y1 + segment.y2) / 2 };
   const tolerance = Math.max(settings.mergeGap, settings.maxThickness, 6) * 1.5;
   let closest = null;
@@ -3527,6 +3546,11 @@ function quantitySegmentWallHeightMeters(segment, settings = getSettings()) {
     if (separation > tolerance || (closest && separation >= closest.separation)) continue;
     closest = { line, separation };
   }
+  return closest;
+}
+
+function quantitySegmentWallHeightMeters(segment, settings = getSettings()) {
+  const closest = quantitySegmentWallMatch(segment, settings);
   return closest ? lineHeightMeters(closest.line) : WALL_HEIGHT_METERS;
 }
 
@@ -3537,16 +3561,31 @@ function buildQuantityOpeningItems(settings = getSettings()) {
       { x: Number(opening.x1), y: Number(opening.y1) },
       { x: Number(opening.x2), y: Number(opening.y2) },
     ), settings));
+    const id = opening.id || `opening-${index + 1}`;
+    const areaSquareMeters = round((widthMillimeters * profile.height) / 1000000);
     return {
-      id: opening.id || `opening-${index + 1}`,
+      id,
       type: openingVariant(opening),
       typeLabel: openingKindLabel(opening),
       kind: openingVariantDefinition(opening).kind,
       widthMillimeters: round(widthMillimeters),
       heightMillimeters: round(profile.height),
       sillHeightMillimeters: round(profile.sill),
-      areaSquareMeters: round((widthMillimeters * profile.height) / 1000000),
+      areaSquareMeters,
       roomIds: quantityRoomsForBoundaryComponent(opening, settings),
+      trace: {
+        ruleVersion: QUANTITY_RULE_VERSION,
+        title: `${openingKindLabel(opening)} ${id}`,
+        result: `${areaSquareMeters.toFixed(2)} ㎡`,
+        formula: "洞口宽度 × 洞口高度",
+        expression: `${round(widthMillimeters)} mm × ${round(profile.height)} mm ÷ 1,000,000`,
+        inputs: [
+          { label: "宽度", value: `${round(widthMillimeters)} mm` },
+          { label: "高度", value: `${round(profile.height)} mm` },
+          { label: "窗台/底边", value: `${round(profile.sill)} mm` },
+        ],
+        sourceIds: [id],
+      },
     };
   });
 }
@@ -3555,15 +3594,31 @@ function buildQuantityRailingItems(settings = getSettings()) {
   return state.manualRailings.map((railing, index) => {
     const midpoint = { x: (railing.x1 + railing.x2) / 2, y: (railing.y1 + railing.y2) / 2 };
     const room = quantityRoomForPoint(midpoint);
-    return {
-      id: railing.id || `railing-${index + 1}`,
-      lengthMeters: round(pxToMillimeters(distance(
+    const id = railing.id || `railing-${index + 1}`;
+    const pixelLength = distance(
         { x: railing.x1, y: railing.y1 },
         { x: railing.x2, y: railing.y2 },
-      ), settings) / 1000),
-      heightMeters: round((Number(railing.heightMillimeters) || RAILING_DEFAULT_HEIGHT_MM) / 1000),
+      );
+    const lengthMeters = round(pxToMillimeters(pixelLength, settings) / 1000);
+    const heightMeters = round((Number(railing.heightMillimeters) || RAILING_DEFAULT_HEIGHT_MM) / 1000);
+    return {
+      id,
+      lengthMeters,
+      heightMeters,
       roomId: room?.id || null,
       roomName: room?.name || "未归入房间",
+      trace: {
+        ruleVersion: QUANTITY_RULE_VERSION,
+        title: `栏杆 ${id}`,
+        result: `${lengthMeters.toFixed(2)} m`,
+        formula: "图上长度 × 当前比例",
+        expression: `${round(pixelLength)} px × ${round(getMillimetersPerPixel(settings))} mm/px ÷ 1,000`,
+        inputs: [
+          { label: "图上长度", value: `${round(pixelLength)} px` },
+          { label: "栏杆高度", value: `${heightMeters.toFixed(2)} m` },
+        ],
+        sourceIds: [id],
+      },
     };
   });
 }
@@ -3574,14 +3629,24 @@ function buildQuantityFurnitureItems() {
       { x: Number(product.planX) || 0, y: Number(product.planY) || 0 },
       product.autoLayout?.roomId || null,
     );
+    const id = product.id || `product-${index + 1}`;
     return {
-      id: product.id || `product-${index + 1}`,
+      id,
       name: product.name || productSubtypeLabel(product),
       category: product.category || "custom",
       categoryLabel: productCategoryLabel(product.category || "custom"),
       source: product.autoLayout?.generated === true ? "smart-layout" : "manual",
       roomId: room?.id || null,
       roomName: room?.name || "未归入房间",
+      trace: {
+        ruleVersion: QUANTITY_RULE_VERSION,
+        title: product.name || productSubtypeLabel(product),
+        result: "1 件",
+        formula: "按当前项目中的独立产品实例计数",
+        expression: "实例数量 = 1",
+        inputs: [{ label: "来源", value: product.autoLayout?.generated === true ? "智能布置" : "手动添加" }],
+        sourceIds: [id],
+      },
     };
   });
 }
@@ -3589,13 +3654,23 @@ function buildQuantityFurnitureItems() {
 function buildQuantityLightItems() {
   return state.lightSources.map((source, index) => {
     const room = quantityRoomForPoint({ x: Number(source.planX) || 0, y: Number(source.planY) || 0 });
+    const id = source.id || `light-${index + 1}`;
     return {
-      id: source.id || `light-${index + 1}`,
+      id,
       name: source.name || (source.type === "line" ? "线光源" : "点光源"),
       type: source.type === "line" ? "line" : "point",
       attachedToFixture: Boolean(source.ownerProductId),
       roomId: room?.id || null,
       roomName: room?.name || "未归入房间",
+      trace: {
+        ruleVersion: QUANTITY_RULE_VERSION,
+        title: source.name || (source.type === "line" ? "线光源" : "点光源"),
+        result: "1 个",
+        formula: "按当前项目中的独立光源实例计数",
+        expression: "实例数量 = 1",
+        inputs: [{ label: "绑定灯具", value: source.ownerProductId || "无" }],
+        sourceIds: [id, ...(source.ownerProductId ? [source.ownerProductId] : [])],
+      },
     };
   });
 }
@@ -3619,6 +3694,7 @@ function buildQuantityReport() {
   const lights = buildQuantityLightItems();
   const fixtures = furniture.filter((item) => item.category === "lighting");
   const rooms = state.roomMetadata.map((room) => {
+    const polygonAreaPixels = Math.max(0, Number.isFinite(Number(room.area)) ? Number(room.area) : room.width * room.height);
     const floorAreaSquareMeters = round(roomAreaSquareMeters(room, settings));
     const ceilingAreaSquareMeters = room.ceilingAreaSource === "manual" && Number.isFinite(Number(room.ceilingAreaSquareMeters))
       ? round(Math.max(0, Number(room.ceilingAreaSquareMeters)))
@@ -3626,6 +3702,18 @@ function buildQuantityReport() {
     const segments = quantityRoomBoundarySegments(room, settings);
     const perimeterMeters = round(segments.reduce((sum, segment) => sum + segment.lengthMillimeters, 0) / 1000);
     const roomOpenings = openings.filter((opening) => opening.roomIds.includes(room.id));
+    const segmentCalculations = segments.map((segment) => {
+      const match = quantitySegmentWallMatch(segment, settings);
+      const lengthMeters = segment.lengthMillimeters / 1000;
+      const heightMeters = match ? lineHeightMeters(match.line) : WALL_HEIGHT_METERS;
+      return {
+        sourceId: match?.line?.id || `${room.id}:boundary-${segment.index}`,
+        segmentIndex: segment.index,
+        lengthMeters: round(lengthMeters),
+        heightMeters: round(heightMeters),
+        grossAreaSquareMeters: round(lengthMeters * heightMeters),
+      };
+    });
     const grossWallArea = segments.reduce((sum, segment) => (
       sum + (segment.lengthMillimeters / 1000) * quantitySegmentWallHeightMeters(segment, settings)
     ), 0);
@@ -3637,6 +3725,14 @@ function buildQuantityReport() {
     const roomFurniture = furniture.filter((product) => product.roomId === room.id);
     const roomLights = lights.filter((light) => light.roomId === room.id);
     const roomFixtures = roomFurniture.filter((product) => product.category === "lighting");
+    const wallAreaSquareMeters = round(Math.max(0, grossWallArea - openingArea));
+    const skirtingLengthMeters = round(Math.max(0, perimeterMeters - skirtingDeduction));
+    const scaleSourceLabel = state.manualMillimetersPerPixel ? "手动比例标定" : "外墙厚度估算";
+    const boundarySourceIds = segmentCalculations.map((segment) => segment.sourceId);
+    const openingSourceIds = roomOpenings.map((opening) => opening.id);
+    const ceilingHistory = Array.isArray(room.ceilingAreaAdjustments)
+      ? room.ceilingAreaAdjustments.map((adjustment) => ({ ...adjustment }))
+      : [];
     return {
       id: room.id,
       name: room.name,
@@ -3646,8 +3742,8 @@ function buildQuantityReport() {
       ceilingAreaSquareMeters,
       ceilingAreaSource: room.ceilingAreaSource === "manual" ? "manual" : "floor-area-default",
       perimeterMeters,
-      wallAreaSquareMeters: round(Math.max(0, grossWallArea - openingArea)),
-      skirtingLengthMeters: round(Math.max(0, perimeterMeters - skirtingDeduction)),
+      wallAreaSquareMeters,
+      skirtingLengthMeters,
       openings: {
         doors: roomOpenings.filter((opening) => opening.kind === "door").length,
         windows: roomOpenings.filter((opening) => opening.kind === "window").length,
@@ -3668,6 +3764,62 @@ function buildQuantityReport() {
         pointSources: roomLights.filter((light) => light.type === "point").length,
         lineSources: roomLights.filter((light) => light.type === "line").length,
       },
+      trace: {
+        ruleVersion: QUANTITY_RULE_VERSION,
+        floorArea: {
+          title: `${room.name} · 地面面积`,
+          result: `${floorAreaSquareMeters.toFixed(2)} ㎡`,
+          formula: "房间多边形像素面积 × (毫米/像素)² ÷ 1,000,000",
+          expression: `${round(polygonAreaPixels)} px² × (${round(millimetersPerPixel)} mm/px)² ÷ 1,000,000`,
+          inputs: [
+            { label: "多边形面积", value: `${round(polygonAreaPixels)} px²` },
+            { label: "当前比例", value: `${round(millimetersPerPixel)} mm/px（${scaleSourceLabel}）` },
+          ],
+          sourceIds: [room.id],
+        },
+        ceilingArea: {
+          title: `${room.name} · 吊顶面积`,
+          result: `${ceilingAreaSquareMeters.toFixed(2)} ㎡`,
+          formula: room.ceilingAreaSource === "manual" ? "采用人工调整值" : "吊顶面积默认等于地面面积",
+          expression: room.ceilingAreaSource === "manual"
+            ? `人工输入 ${ceilingAreaSquareMeters.toFixed(2)} ㎡`
+            : `${floorAreaSquareMeters.toFixed(2)} ㎡`,
+          inputs: [
+            { label: "计算来源", value: room.ceilingAreaSource === "manual" ? "人工调整" : "地面面积默认值" },
+            { label: "地面面积", value: `${floorAreaSquareMeters.toFixed(2)} ㎡` },
+          ],
+          sourceIds: [room.id],
+          history: ceilingHistory,
+        },
+        wallArea: {
+          title: `${room.name} · 墙面面积`,
+          result: `${wallAreaSquareMeters.toFixed(2)} ㎡`,
+          formula: "Σ(墙段长度 × 墙高) − Σ(门窗洞口面积)",
+          expression: `${round(grossWallArea).toFixed(2)} ㎡ − ${round(openingArea).toFixed(2)} ㎡`,
+          inputs: [
+            { label: "墙段毛面积", value: `${round(grossWallArea).toFixed(2)} ㎡（${segments.length} 段）` },
+            { label: "洞口扣减", value: `${round(openingArea).toFixed(2)} ㎡（${roomOpenings.length} 个）` },
+            { label: "墙高", value: "优先采用对应墙体高度，无匹配时按 2.80 m" },
+          ],
+          sourceIds: [...boundarySourceIds, ...openingSourceIds],
+          segments: segmentCalculations,
+          deductions: roomOpenings.map((opening) => ({ sourceId: opening.id, areaSquareMeters: opening.areaSquareMeters })),
+        },
+        skirting: {
+          title: `${room.name} · 踢脚线`,
+          result: `${skirtingLengthMeters.toFixed(2)} m`,
+          formula: "房间周长 − 门及普通开口宽度",
+          expression: `${perimeterMeters.toFixed(2)} m − ${round(skirtingDeduction).toFixed(2)} m`,
+          inputs: [
+            { label: "房间周长", value: `${perimeterMeters.toFixed(2)} m` },
+            { label: "门/开口扣减", value: `${round(skirtingDeduction).toFixed(2)} m` },
+            { label: "窗洞规则", value: "不扣减" },
+          ],
+          sourceIds: [...boundarySourceIds, ...roomOpenings
+            .filter((opening) => opening.kind === "door" || opening.kind === "opening")
+            .map((opening) => opening.id)],
+        },
+      },
     };
   });
   const openingCategories = buildQuantityCategoryRows(openings, "type", "typeLabel").map((group) => ({
@@ -3678,6 +3830,18 @@ function buildQuantityReport() {
     minimumHeightMeters: round(Math.min(...group.items.map((item) => item.heightMillimeters)) / 1000),
     maximumHeightMeters: round(Math.max(...group.items.map((item) => item.heightMillimeters)) / 1000),
     totalAreaSquareMeters: round(group.items.reduce((sum, item) => sum + item.areaSquareMeters, 0)),
+    trace: {
+      ruleVersion: QUANTITY_RULE_VERSION,
+      title: `${group.label} · 分类汇总`,
+      result: `${group.items.length} 个`,
+      formula: "同类型构件实例计数；面积为逐件洞口面积之和",
+      expression: group.items.map((item) => item.areaSquareMeters.toFixed(2)).join(" + ") || "0",
+      inputs: [
+        { label: "数量", value: `${group.items.length} 个` },
+        { label: "总面积", value: `${round(group.items.reduce((sum, item) => sum + item.areaSquareMeters, 0)).toFixed(2)} ㎡` },
+      ],
+      sourceIds: group.items.map((item) => item.id),
+    },
   }));
   const furnitureCategories = buildQuantityCategoryRows(furniture, "category", "categoryLabel").map((group) => ({
     category: group.key,
@@ -3685,6 +3849,18 @@ function buildQuantityReport() {
     manual: group.items.filter((item) => item.source === "manual").length,
     smartLayout: group.items.filter((item) => item.source === "smart-layout").length,
     total: group.items.length,
+    trace: {
+      ruleVersion: QUANTITY_RULE_VERSION,
+      title: `${group.label} · 家具汇总`,
+      result: `${group.items.length} 件`,
+      formula: "同分类产品实例计数",
+      expression: `${group.items.filter((item) => item.source === "manual").length} 手动 + ${group.items.filter((item) => item.source === "smart-layout").length} 智能布置`,
+      inputs: [
+        { label: "手动添加", value: `${group.items.filter((item) => item.source === "manual").length} 件` },
+        { label: "智能布置", value: `${group.items.filter((item) => item.source === "smart-layout").length} 件` },
+      ],
+      sourceIds: group.items.map((item) => item.id),
+    },
   }));
   const project = {
     roomCount: rooms.length,
@@ -3705,6 +3881,7 @@ function buildQuantityReport() {
   };
   return {
     schemaVersion: "gewu-quantity-report-v1",
+    ruleVersion: QUANTITY_RULE_VERSION,
     generatedAt: new Date().toISOString(),
     source: state.sourceName,
     scale: {
@@ -3740,6 +3917,138 @@ function appendQuantityEmptyRow(body, columnCount, text = "暂无数据") {
   body.appendChild(row);
 }
 
+function quantityTraceSelectionKey(selection) {
+  if (!selection) return "";
+  return [selection.kind, selection.id || "", selection.metric || ""].join(":");
+}
+
+function resolveQuantityTrace(report, selection = state.quantityTraceSelection) {
+  if (!selection) return null;
+  if (selection.kind === "room") {
+    const room = report.rooms.find((candidate) => candidate.id === selection.id);
+    return room?.trace?.[selection.metric] || null;
+  }
+  if (selection.kind === "opening-category") {
+    return report.categories.openings.find((category) => category.type === selection.id)?.trace || null;
+  }
+  if (selection.kind === "railing") {
+    return report.components.railings.find((railing) => railing.id === selection.id)?.trace || null;
+  }
+  if (selection.kind === "furniture-category") {
+    return report.categories.furniture.find((category) => category.category === selection.id)?.trace || null;
+  }
+  if (selection.kind === "lighting") {
+    return {
+      ruleVersion: QUANTITY_RULE_VERSION,
+      title: "灯光 · 项目汇总",
+      result: `${report.project.fixtureCount} 灯具 / ${report.project.pointLightCount} 点光源 / ${report.project.lineLightCount} 线光源`,
+      formula: "按灯具产品与独立光源实例分别计数",
+      expression: "灯具、点光源和线光源各自去重计数",
+      inputs: [
+        { label: "灯具产品", value: `${report.project.fixtureCount} 个` },
+        { label: "点光源", value: `${report.project.pointLightCount} 个` },
+        { label: "线光源", value: `${report.project.lineLightCount} 个` },
+      ],
+      sourceIds: [
+        ...report.components.furniture.filter((item) => item.category === "lighting").map((item) => item.id),
+        ...report.components.lights.map((light) => light.id),
+      ],
+    };
+  }
+  return null;
+}
+
+function renderQuantityTracePanel(report) {
+  const trace = resolveQuantityTrace(report);
+  if (!trace) {
+    state.quantityTraceSelection = null;
+    elements.quantityTracePanel.hidden = true;
+    return;
+  }
+  elements.quantityTracePanel.hidden = false;
+  elements.quantityTraceTitle.textContent = trace.title;
+  elements.quantityTraceResult.textContent = trace.result;
+  elements.quantityTraceFormula.textContent = `${trace.formula} = ${trace.expression}`;
+  elements.quantityTraceInputs.replaceChildren();
+  for (const input of trace.inputs || []) {
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = input.label;
+    description.textContent = input.value;
+    elements.quantityTraceInputs.append(term, description);
+  }
+  const ruleTerm = document.createElement("dt");
+  const ruleValue = document.createElement("dd");
+  ruleTerm.textContent = "规则版本";
+  ruleValue.textContent = trace.ruleVersion || report.ruleVersion;
+  const scaleTerm = document.createElement("dt");
+  const scaleValue = document.createElement("dd");
+  scaleTerm.textContent = "比例来源";
+  scaleValue.textContent = report.scale.calibrated
+    ? `手动标定 · ${report.scale.millimetersPerPixel} mm/px`
+    : `外墙厚度估算 · ${report.scale.millimetersPerPixel} mm/px`;
+  elements.quantityTraceInputs.append(ruleTerm, ruleValue, scaleTerm, scaleValue);
+  elements.quantityTraceSourceList.replaceChildren();
+  for (const sourceId of trace.sourceIds || []) {
+    const chip = document.createElement("span");
+    chip.className = "quantity-source-chip";
+    chip.textContent = sourceId;
+    elements.quantityTraceSourceList.appendChild(chip);
+  }
+  const history = trace.history || [];
+  elements.quantityTraceHistory.hidden = history.length === 0;
+  elements.quantityTraceHistory.replaceChildren();
+  if (history.length) {
+    const heading = document.createElement("strong");
+    heading.textContent = "人工调整记录";
+    elements.quantityTraceHistory.appendChild(heading);
+    for (const adjustment of [...history].reverse()) {
+      const row = document.createElement("div");
+      const action = adjustment.action === "reset-to-floor-area" ? "恢复默认" : "人工修改";
+      const changedAt = adjustment.changedAt ? new Date(adjustment.changedAt).toLocaleString() : "时间未知";
+      row.textContent = `${changedAt} · ${action}：${Number(adjustment.previousSquareMeters).toFixed(2)} → ${Number(adjustment.nextSquareMeters).toFixed(2)} ㎡`;
+      elements.quantityTraceHistory.appendChild(row);
+    }
+  }
+}
+
+function updateQuantityTraceTargetStates() {
+  const activeKey = quantityTraceSelectionKey(state.quantityTraceSelection);
+  for (const target of elements.quantityReportModal.querySelectorAll("[data-quantity-trace-key]")) {
+    target.classList.toggle("is-active", target.dataset.quantityTraceKey === activeKey);
+  }
+}
+
+function selectQuantityTrace(selection, report = buildQuantityReport()) {
+  state.quantityTraceSelection = { ...selection };
+  renderQuantityTracePanel(report);
+  updateQuantityTraceTargetStates();
+  if (state.analysisCanvas) renderPreview();
+  setStatus("已在图纸中高亮工程量来源");
+}
+
+function clearQuantityTrace() {
+  state.quantityTraceSelection = null;
+  elements.quantityTracePanel.hidden = true;
+  updateQuantityTraceTargetStates();
+  if (state.analysisCanvas) renderPreview();
+  setStatus("已清除工程量来源高亮");
+}
+
+function bindQuantityTraceTarget(target, selection, report) {
+  target.classList.add(target.tagName === "TR" ? "quantity-trace-row" : "quantity-trace-target");
+  target.tabIndex = 0;
+  target.setAttribute("role", "button");
+  target.dataset.quantityTraceKey = quantityTraceSelectionKey(selection);
+  const activate = () => selectQuantityTrace(selection, report);
+  target.addEventListener("click", activate);
+  target.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    activate();
+  });
+}
+
 function renderQuantityMetrics(container, metrics) {
   container.replaceChildren();
   for (const [label, value] of metrics) {
@@ -3761,8 +4070,22 @@ function commitQuantityCeilingArea(roomId, value) {
     setStatus("吊顶面积必须是大于或等于 0 的数字");
     return;
   }
+  const previousArea = room.ceilingAreaSource === "manual" && Number.isFinite(Number(room.ceilingAreaSquareMeters))
+    ? Number(room.ceilingAreaSquareMeters)
+    : roomAreaSquareMeters(room);
+  const nextArea = round(area);
+  if (round(previousArea) === nextArea && room.ceilingAreaSource === "manual") return;
   pushUndoSnapshot("edit-ceiling-area");
-  room.ceilingAreaSquareMeters = round(area);
+  room.ceilingAreaAdjustments = [
+    ...(Array.isArray(room.ceilingAreaAdjustments) ? room.ceilingAreaAdjustments : []),
+    {
+      changedAt: new Date().toISOString(),
+      action: "manual-edit",
+      previousSquareMeters: round(previousArea),
+      nextSquareMeters: nextArea,
+    },
+  ].slice(-20);
+  room.ceilingAreaSquareMeters = nextArea;
   room.ceilingAreaSource = "manual";
   elements.saveProjectButton.disabled = false;
   renderQuantityReport();
@@ -3791,9 +4114,11 @@ function renderQuantityReport() {
   elements.quantityRoomTableBody.replaceChildren();
   for (const room of report.rooms) {
     const row = document.createElement("tr");
-    appendQuantityCell(row, room.name);
+    const roomNameCell = appendQuantityCell(row, room.name);
+    bindQuantityTraceTarget(roomNameCell, { kind: "room", id: room.id, metric: "floorArea" }, report);
     appendQuantityCell(row, room.typeLabel);
-    appendQuantityCell(row, room.floorAreaSquareMeters.toFixed(2));
+    const floorCell = appendQuantityCell(row, room.floorAreaSquareMeters.toFixed(2));
+    bindQuantityTraceTarget(floorCell, { kind: "room", id: room.id, metric: "floorArea" }, report);
     const ceilingCell = document.createElement("td");
     const ceilingInput = document.createElement("input");
     ceilingInput.type = "number";
@@ -3805,8 +4130,11 @@ function renderQuantityReport() {
     ceilingInput.addEventListener("change", () => commitQuantityCeilingArea(room.id, ceilingInput.value));
     ceilingCell.appendChild(ceilingInput);
     row.appendChild(ceilingCell);
-    appendQuantityCell(row, room.wallAreaSquareMeters.toFixed(2));
-    appendQuantityCell(row, room.skirtingLengthMeters.toFixed(2));
+    bindQuantityTraceTarget(ceilingCell, { kind: "room", id: room.id, metric: "ceilingArea" }, report);
+    const wallCell = appendQuantityCell(row, room.wallAreaSquareMeters.toFixed(2));
+    bindQuantityTraceTarget(wallCell, { kind: "room", id: room.id, metric: "wallArea" }, report);
+    const skirtingCell = appendQuantityCell(row, room.skirtingLengthMeters.toFixed(2));
+    bindQuantityTraceTarget(skirtingCell, { kind: "room", id: room.id, metric: "skirting" }, report);
     appendQuantityCell(row, `${room.openings.doors}/${room.openings.windows}/${room.openings.openPassages}`);
     appendQuantityCell(row, `${room.railings.count} · ${room.railings.totalLengthMeters.toFixed(2)}m`);
     appendQuantityCell(row, `${room.furniture.manual}/${room.furniture.smartLayout}/${room.furniture.total}`);
@@ -3825,6 +4153,7 @@ function renderQuantityReport() {
       ? category.minimumHeightMeters.toFixed(2)
       : `${category.minimumHeightMeters.toFixed(2)}–${category.maximumHeightMeters.toFixed(2)}`);
     appendQuantityCell(row, category.totalAreaSquareMeters.toFixed(2));
+    bindQuantityTraceTarget(row, { kind: "opening-category", id: category.type }, report);
     elements.quantityOpeningTableBody.appendChild(row);
   }
   if (!report.categories.openings.length) appendQuantityEmptyRow(elements.quantityOpeningTableBody, 5);
@@ -3836,6 +4165,7 @@ function renderQuantityReport() {
     appendQuantityCell(row, railing.lengthMeters.toFixed(2));
     appendQuantityCell(row, railing.heightMeters.toFixed(2));
     appendQuantityCell(row, railing.roomName);
+    bindQuantityTraceTarget(row, { kind: "railing", id: railing.id }, report);
     elements.quantityRailingTableBody.appendChild(row);
   }
   if (!report.components.railings.length) appendQuantityEmptyRow(elements.quantityRailingTableBody, 4);
@@ -3847,6 +4177,7 @@ function renderQuantityReport() {
     appendQuantityCell(row, category.manual);
     appendQuantityCell(row, category.smartLayout);
     appendQuantityCell(row, category.total);
+    bindQuantityTraceTarget(row, { kind: "furniture-category", id: category.category }, report);
     elements.quantityFurnitureTableBody.appendChild(row);
   }
   if (!report.categories.furniture.length) appendQuantityEmptyRow(elements.quantityFurnitureTableBody, 4);
@@ -3856,6 +4187,11 @@ function renderQuantityReport() {
     ["点光源", `${report.project.pointLightCount} 个`],
     ["线光源", `${report.project.lineLightCount} 个`],
   ]);
+  for (const item of elements.quantityLightingSummary.children) {
+    bindQuantityTraceTarget(item, { kind: "lighting", id: "project" }, report);
+  }
+  renderQuantityTracePanel(report);
+  updateQuantityTraceTargetStates();
   return report;
 }
 
@@ -3881,7 +4217,18 @@ function resetQuantityCeilingAreas() {
   }
   pushUndoSnapshot("reset-ceiling-areas");
   for (const room of manualRooms) {
-    room.ceilingAreaSquareMeters = round(roomAreaSquareMeters(room));
+    const previousArea = round(room.ceilingAreaSquareMeters);
+    const nextArea = round(roomAreaSquareMeters(room));
+    room.ceilingAreaAdjustments = [
+      ...(Array.isArray(room.ceilingAreaAdjustments) ? room.ceilingAreaAdjustments : []),
+      {
+        changedAt: new Date().toISOString(),
+        action: "reset-to-floor-area",
+        previousSquareMeters: previousArea,
+        nextSquareMeters: nextArea,
+      },
+    ].slice(-20);
+    room.ceilingAreaSquareMeters = nextArea;
     room.ceilingAreaSource = "floor-area-default";
   }
   elements.saveProjectButton.disabled = false;
@@ -3946,6 +4293,84 @@ function exportQuantityReportCsv() {
   const csv = quantityReportToCsv(buildQuantityReport());
   downloadBlob(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }), `${state.sourceName}-quantity-report.csv`);
   setStatus("工程量 CSV 已导出");
+}
+
+function drawQuantityTraceHighlight(context) {
+  const selection = state.quantityTraceSelection;
+  if (!selection) return;
+  context.save();
+  context.strokeStyle = "#d74732";
+  context.fillStyle = "rgba(255, 117, 72, 0.22)";
+  context.lineWidth = 7;
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.setLineDash([14, 8]);
+
+  if (selection.kind === "room") {
+    const room = state.roomMetadata.find((candidate) => candidate.id === selection.id);
+    const polygon = roomPolygon(room);
+    if (polygon.length >= 3) {
+      context.beginPath();
+      polygon.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x, point.y);
+        else context.lineTo(point.x, point.y);
+      });
+      context.closePath();
+      context.fill();
+      context.stroke();
+    }
+  } else if (selection.kind === "opening-category") {
+    constructibleOpenings().forEach((opening, index) => {
+      const id = opening.id || `opening-${index + 1}`;
+      if (openingVariant(opening) !== selection.id) return;
+      context.beginPath();
+      context.moveTo(opening.x1, opening.y1);
+      context.lineTo(opening.x2, opening.y2);
+      context.stroke();
+      const midpoint = { x: (opening.x1 + opening.x2) / 2, y: (opening.y1 + opening.y2) / 2 };
+      drawQuantityTraceMarker(context, midpoint.x, midpoint.y, id);
+    });
+  } else if (selection.kind === "railing") {
+    const railing = state.manualRailings.find((candidate) => candidate.id === selection.id);
+    if (railing) {
+      context.beginPath();
+      context.moveTo(railing.x1, railing.y1);
+      context.lineTo(railing.x2, railing.y2);
+      context.stroke();
+    }
+  } else if (selection.kind === "furniture-category") {
+    const settings = getSettings();
+    for (const product of state.productModels.filter((candidate) => (candidate.category || "custom") === selection.id)) {
+      const { width, depth } = productFootprintPixels(product, settings);
+      context.save();
+      context.translate(product.planX, product.planY);
+      context.rotate(((Number(product.rotationDegrees) || 0) * Math.PI) / 180);
+      context.strokeRect(-width / 2 - 5, -depth / 2 - 5, width + 10, depth + 10);
+      context.restore();
+    }
+  } else if (selection.kind === "lighting") {
+    for (const source of state.lightSources) {
+      context.beginPath();
+      context.arc(Number(source.planX) || 0, Number(source.planY) || 0, 18, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
+    }
+  }
+  context.restore();
+}
+
+function drawQuantityTraceMarker(context, x, y, label) {
+  context.save();
+  context.setLineDash([]);
+  context.fillStyle = "#d74732";
+  context.beginPath();
+  context.arc(x, y, 7, 0, Math.PI * 2);
+  context.fill();
+  context.font = "bold 11px Microsoft YaHei, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "bottom";
+  context.fillText(label, x, y - 10);
+  context.restore();
 }
 
 function drawSelectedLine(context) {
@@ -10109,6 +10534,7 @@ async function restoreProjectArchive(archive) {
   clearLightSources();
   state.lightSources = Array.isArray(archive.lightSources) ? archive.lightSources.map(normalizeLightSource) : [];
   state.roomMetadata = Array.isArray(archive.roomMetadata) ? archive.roomMetadata.map(cloneRoomMetadata) : [];
+  state.quantityTraceSelection = null;
   state.hiddenOpeningKeys = Array.isArray(archive.hiddenOpeningKeys) ? [...archive.hiddenOpeningKeys] : [];
   state.selectedLineIndex = Number.isInteger(archive.selectedLineIndex) ? archive.selectedLineIndex : null;
   if (state.selectedLineIndex !== null && !state.lines[state.selectedLineIndex]) state.selectedLineIndex = null;
@@ -10941,6 +11367,7 @@ elements.roomSaveButton.addEventListener("click", commitRoomEditor);
 elements.roomResetInferenceButton.addEventListener("click", resetSelectedRoomInference);
 elements.quantityReportButton.addEventListener("click", openQuantityReport);
 elements.quantityReportCloseButton.addEventListener("click", closeQuantityReport);
+elements.quantityTraceClearButton.addEventListener("click", clearQuantityTrace);
 elements.quantityReportModal.addEventListener("click", (event) => {
   if (event.target === elements.quantityReportModal) closeQuantityReport();
 });

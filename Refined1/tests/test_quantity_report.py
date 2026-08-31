@@ -19,6 +19,10 @@ class QuantityReportContractTests(unittest.TestCase):
             "quantityRailingTableBody",
             "quantityFurnitureTableBody",
             "quantityLightingSummary",
+            "quantityTracePanel",
+            "quantityTraceFormula",
+            "quantityTraceSourceList",
+            "quantityTraceHistory",
             "quantityExportCsvButton",
             "quantityExportJsonButton",
         ):
@@ -51,8 +55,28 @@ class QuantityReportContractTests(unittest.TestCase):
         self.assertIn('schemaVersion: "gewu-quantity-report-v1"', APP_SOURCE)
         self.assertIn("window.GewuQuantityReport", APP_SOURCE)
 
+    def test_quantity_items_include_formula_and_source_traceability(self):
+        for contract in (
+            'QUANTITY_RULE_VERSION = "gewu-quantity-rules-2026-08-31"',
+            "function resolveQuantityTrace",
+            "function bindQuantityTraceTarget",
+            "function drawQuantityTraceHighlight",
+            "sourceIds",
+            "segmentCalculations",
+            "deductions",
+        ):
+            self.assertIn(contract, APP_SOURCE)
+
+    def test_ceiling_adjustments_are_recorded_and_persisted(self):
+        self.assertIn("ceilingAreaAdjustments", APP_SOURCE)
+        self.assertIn('action: "manual-edit"', APP_SOURCE)
+        self.assertIn('action: "reset-to-floor-area"', APP_SOURCE)
+        self.assertIn("previousSquareMeters", APP_SOURCE)
+        self.assertIn("nextSquareMeters", APP_SOURCE)
+        self.assertIn(".slice(-20)", APP_SOURCE)
+
     def test_feature_list_documents_quantity_report(self):
-        for phrase in ("地面面积", "吊顶面积", "墙面面积", "踢脚线", "门窗清单", "家具清单", "灯光清单", "导出 CSV"):
+        for phrase in ("地面面积", "吊顶面积", "墙面面积", "踢脚线", "门窗清单", "家具清单", "灯光清单", "导出 CSV", "计算追溯", "吊顶调整记录"):
             self.assertIn(phrase, FEATURES_SOURCE)
 
 
